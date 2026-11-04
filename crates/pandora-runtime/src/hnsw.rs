@@ -139,6 +139,7 @@ impl HnswConfig {
 }
 
 /// Dual vector representation supporting uncompressed `[f32; 128]` and Int8 `QuantizedVector`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum HnswVector {
     F32([f32; 128]),
@@ -526,10 +527,11 @@ impl HnswIndex {
         }
 
         while let Some(c) = candidates.pop() {
-            if let Some(furthest) = results.peek() {
-                if c.distance > furthest.distance && results.len() >= ef {
-                    break;
-                }
+            if results
+                .peek()
+                .is_some_and(|f| c.distance > f.distance && results.len() >= ef)
+            {
+                break;
             }
 
             if c.node_id >= self.nodes.len() || level >= self.nodes[c.node_id].neighbors.len() {
@@ -975,9 +977,9 @@ impl HnswIndex {
                         return Err(HnswError::TruncatedData);
                     }
                     let mut data = [0.0f32; 128];
-                    for i in 0..128 {
+                    for item in &mut data {
                         let f_bytes = &bytes[offset..offset + 4];
-                        data[i] = f32::from_le_bytes(f_bytes.try_into().unwrap());
+                        *item = f32::from_le_bytes(f_bytes.try_into().unwrap());
                         offset += 4;
                     }
                     vectors.push(HnswVector::F32(data));
@@ -989,8 +991,8 @@ impl HnswIndex {
                     let scale = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
                     offset += 4;
                     let mut data = [0i8; 128];
-                    for i in 0..128 {
-                        data[i] = bytes[offset] as i8;
+                    for item in &mut data {
+                        *item = bytes[offset] as i8;
                         offset += 1;
                     }
                     vectors.push(HnswVector::Quantized(QuantizedVector { scale, data }));
@@ -1109,9 +1111,9 @@ mod tests {
     fn generate_deterministic_vector(seed: usize) -> [f32; 128] {
         let mut vec = [0.0f32; 128];
         let mut norm_sq = 0.0f32;
-        for i in 0..128 {
+        for (i, elem) in vec.iter_mut().enumerate() {
             let val = (((seed + 1) * 31 + (i + 1) * 17) % 1000) as f32 / 1000.0 - 0.5;
-            vec[i] = val;
+            *elem = val;
             norm_sq += val * val;
         }
         let norm = norm_sq.sqrt().max(1e-9);

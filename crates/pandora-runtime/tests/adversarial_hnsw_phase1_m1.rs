@@ -23,13 +23,13 @@ fn make_unit_vector(seed: u64, offset: f32) -> [f32; 128] {
     let mut state = seed
         .wrapping_mul(6364136223846793005)
         .wrapping_add(1442695040888963407);
-    for i in 0..128 {
+    for elem in &mut v {
         state = state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         let raw = ((state >> 32) as i32) as f32 / (i32::MAX as f32);
         let val = raw + offset;
-        v[i] = val;
+        *elem = val;
         norm_sq += val * val;
     }
     let norm = norm_sq.sqrt().max(1e-9);
@@ -222,15 +222,15 @@ fn test_adversarial_distance_metric_properties() {
         "symmetry violated: d12={d12}, d21={d21}"
     );
     assert!(
-        d12 >= 0.0 && d12 <= 2.0,
+        (0.0..=2.0).contains(&d12),
         "distance out of [0.0, 2.0] bounds"
     );
 
     // Inverted vector has cosine distance 2.0
     let mut inv = [0.0f32; 128];
     let raw = make_unit_vector(3, 0.0);
-    for i in 0..128 {
-        inv[i] = -raw[i];
+    for (dest, src) in inv.iter_mut().zip(raw.iter()) {
+        *dest = -*src;
     }
     let v_inv = HnswVector::F32(inv);
     let d_inv = cosine_distance(&HnswVector::F32(raw), &v_inv);

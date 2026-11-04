@@ -1413,6 +1413,7 @@ impl ContextVfs {
 
     /// Serializes the cached HNSW index to disk in binary PVHN v1 format at `path`
     /// (or `.pandora/indices/vfs_hnsw.idx` if unspecified) using safe atomic disk write.
+    #[allow(clippy::collapsible_if)]
     pub fn save_hnsw_index(&self, path: Option<&Path>) -> Result<PathBuf, VfsError> {
         let target_path = match path {
             Some(p) => p.to_path_buf(),
@@ -1461,6 +1462,7 @@ impl ContextVfs {
 
     /// Checks freshness of the HNSW index; if a fresh index file exists on disk
     /// (or fresh index in cache), loads/reuses it; otherwise builds and saves a new one.
+    #[allow(clippy::collapsible_if)]
     pub fn load_or_build_hnsw_index(&self) -> Result<Arc<HnswIndex>, VfsError> {
         let docs = self.collect_all_documents()?;
         let current_corpus_hash = compute_corpus_hash(&docs);

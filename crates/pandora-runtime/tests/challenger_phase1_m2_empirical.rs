@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::needless_update, clippy::needless_range_loop)]
 
 //! Challenger Phase 1 Milestone 2 Empirical Verification Suite.
 //!
