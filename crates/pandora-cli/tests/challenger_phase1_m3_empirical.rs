@@ -95,7 +95,11 @@ fn test_cli_hnsw_build_and_search_roundtrip_json() {
 
     // Verify cold-start load latency
     let cold_start_us = build_json["cold_start_load_us"].as_u64().unwrap_or(0);
-    let max_cold_start = if cfg!(debug_assertions) { 10_000 } else { 1_000 };
+    let max_cold_start = if cfg!(debug_assertions) {
+        10_000
+    } else {
+        1_000
+    };
     assert!(
         cold_start_us < max_cold_start,
         "Cold start load latency should be within budget (< {max_cold_start} µs), got {cold_start_us} µs"
