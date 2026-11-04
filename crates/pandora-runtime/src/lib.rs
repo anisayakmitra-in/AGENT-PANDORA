@@ -85,6 +85,7 @@ pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
+pub mod swarm_mesh;
 pub mod synthetic_canvas;
 pub mod tool_engine;
 pub mod tripartite_governance;
@@ -337,6 +338,10 @@ pub use subagent::{
 pub use subagent_store::{
     ClaimedSubagent, SubagentPreparation, SubagentRecord, SubagentScope, SubagentStore,
     SubagentStoreError,
+};
+pub use swarm_mesh::{
+    BftConsensus, BloomFilter, ConsensusDecision, GossipMessage, GossipNode, Proposal, SwarmError,
+    TaskDag, TaskNode, VectorClock, Vote,
 };
 pub use synthetic_canvas::{PNG_SIGNATURE, SyntheticCanvas, adler32, crc32};
 pub use tool_engine::{
