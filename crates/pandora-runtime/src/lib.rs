@@ -89,6 +89,7 @@ pub mod swarm_mesh;
 pub mod synthetic_canvas;
 pub mod tool_engine;
 pub mod tripartite_governance;
+pub mod visual_graph;
 pub mod voyager_curriculum;
 pub mod wasm;
 pub mod worktree_isolation;
@@ -350,6 +351,9 @@ pub use tool_engine::{
 pub use tripartite_governance::{
     TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,
     TripartiteProposal, TripartiteRole, branch_name_for_proposal,
+};
+pub use visual_graph::{
+    AsciiGridRenderer, ForceDirectedLayout, Point2D, ViewportCamera, VisualNode,
 };
 pub use voyager_curriculum::{CurriculumDifficulty, CurriculumSummary, VoyagerCurriculum};
 pub use wasm::{

@@ -1567,8 +1567,8 @@ impl ContextVfs {
         Ok(index.stats())
     }
 
-    /// Checks if the persistent HNSW index file exists on disk, is valid, has matching corpus hash,
-    /// and its modification time is at or newer than the latest buffer modification.
+    /// Checks if the persistent HNSW index file exists on disk, is valid,
+    /// and has matching cryptographic corpus hash with current VFS documents.
     pub fn is_hnsw_index_fresh(&self) -> bool {
         let index_path = match self.hnsw_index_path.read() {
             Ok(guard) => match guard.as_ref() {
@@ -1582,25 +1582,7 @@ impl ContextVfs {
             return false;
         }
 
-        let Ok(metadata) = std::fs::metadata(&index_path) else {
-            return false;
-        };
-        let Ok(modified) = metadata.modified() else {
-            return false;
-        };
-        let file_mtime_secs = match modified.duration_since(UNIX_EPOCH) {
-            Ok(d) => d.as_secs(),
-            Err(_) => 0,
-        };
-
-        let last_mod = self
-            .last_modified_unix
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if file_mtime_secs < last_mod {
-            return false;
-        }
-
-        // Also verify integrity and corpus hash match
+        // Verify integrity and corpus hash match
         let Ok(docs) = self.collect_all_documents() else {
             return false;
         };
