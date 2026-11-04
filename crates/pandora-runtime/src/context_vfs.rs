@@ -1,4 +1,8 @@
+pub use crate::hnsw::HnswIndexStats;
 pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
+use crate::hnsw::{
+    HnswConfig, HnswError, HnswIndex, HnswVector, PVHN_HEADER_SIZE, PVHN_TRAILER_SIZE,
+};
 use crate::semantic_memory::{
     DenseFeatureHasher, HybridRrfRanker, QuantizedVector, SparseBm25Index,
     extract_term_frequencies, generate_snippet,
@@ -26,6 +30,8 @@ pub const VFS_INDEX_HEADER_SIZE: usize = 68;
 pub const VFS_INDEX_TRAILER_SIZE: usize = 32;
 pub const VFS_DENSE_DIMENSION: u32 = 128;
 pub const VFS_QUANTIZED_VECTOR_SIZE: usize = 132; // 4 bytes scale + 128 bytes i8 data
+pub const VFS_HNSW_INDEX_PATH_DEFAULT: &str = ".pandora/indices/vfs_hnsw.idx";
+
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VfsError {
@@ -49,6 +55,13 @@ impl fmt::Display for VfsError {
 }
 
 impl std::error::Error for VfsError {}
+
+impl From<HnswError> for VfsError {
+    fn from(err: HnswError) -> Self {
+        VfsError::BackendError(err.to_string())
+    }
+}
+
 
 /// Persistent VFS index statistics and integrity metadata.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -139,6 +152,9 @@ pub struct ContextVfs {
     diff_cache: RwLock<HashMap<String, CachedBufferEntry>>,
     cache_hits: std::sync::atomic::AtomicU64,
     cache_misses: std::sync::atomic::AtomicU64,
+    hnsw_index_path: RwLock<Option<PathBuf>>,
+    cached_hnsw_index: RwLock<Option<Arc<HnswIndex>>>,
+    last_modified_unix: std::sync::atomic::AtomicU64,
 }
 
 impl Default for ContextVfs {
@@ -149,6 +165,11 @@ impl Default for ContextVfs {
 
 impl ContextVfs {
     pub fn new() -> Self {
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         let default_rule = ContextFragment::new_with_origin(
             "meta:rules",
             ContextSource::Constitutional,
@@ -176,8 +197,12 @@ impl ContextVfs {
             diff_cache: RwLock::new(HashMap::new()),
             cache_hits: std::sync::atomic::AtomicU64::new(0),
             cache_misses: std::sync::atomic::AtomicU64::new(0),
+            hnsw_index_path: RwLock::new(Some(PathBuf::from(VFS_HNSW_INDEX_PATH_DEFAULT))),
+            cached_hnsw_index: RwLock::new(None),
+            last_modified_unix: std::sync::atomic::AtomicU64::new(now_unix),
         }
     }
+
 
     pub fn from_session_store(
         store: &crate::sessions::SessionStore,
@@ -210,10 +235,23 @@ impl ContextVfs {
         Ok(vfs)
     }
 
+    fn mark_buffer_modified(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.last_modified_unix
+            .store(now, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut guard) = self.cached_hnsw_index.write() {
+            *guard = None;
+        }
+    }
+
     pub fn add_meta_rule(&self, rule: ContextFragment) {
         if let Ok(mut rules) = self.meta_rules.write() {
             rules.retain(|r| r.id() != rule.id());
             rules.push(rule);
+            self.mark_buffer_modified();
         }
     }
 
@@ -221,6 +259,7 @@ impl ContextVfs {
         if let Ok(mut sops) = self.sops.write() {
             sops.retain(|s| s.sop.id != sop.sop.id);
             sops.push(sop);
+            self.mark_buffer_modified();
         }
     }
 
@@ -228,6 +267,7 @@ impl ContextVfs {
         if let Ok(mut archives) = self.archives.write() {
             archives.retain(|a| a.archive_id != archive.archive_id);
             archives.push(archive);
+            self.mark_buffer_modified();
         }
     }
 
@@ -237,12 +277,14 @@ impl ContextVfs {
                 if let Ok(mut list) = self.l1_records.write() {
                     list.retain(|r| r.id() != record.id());
                     list.push(record);
+                    self.mark_buffer_modified();
                 }
             }
             MemoryTier::L2 => {
                 if let Ok(mut list) = self.l2_records.write() {
                     list.retain(|r| r.id() != record.id());
                     list.push(record);
+                    self.mark_buffer_modified();
                 }
             }
             _ => {}
@@ -254,6 +296,7 @@ impl ContextVfs {
         if let Ok(mut maps) = self.feature_maps.write() {
             maps.retain(|(n, _)| n != &name);
             maps.push((name, feature_map));
+            self.mark_buffer_modified();
         }
     }
 
@@ -261,8 +304,10 @@ impl ContextVfs {
         if let Ok(mut skills) = self.skills.write() {
             skills.retain(|s| s.id() != skill.id());
             skills.push(skill);
+            self.mark_buffer_modified();
         }
     }
+
 
     pub fn list(&self, uri: &ContextUri) -> Result<Vec<VfsDirectoryEntry>, VfsError> {
         let segments = uri.segments();
@@ -762,6 +807,18 @@ impl ContextVfs {
         self.index_path.read().ok().and_then(|g| g.clone())
     }
 
+    /// Configures the disk destination for the persistent HNSW graph index.
+    pub fn set_hnsw_index_path(&self, path: impl Into<PathBuf>) {
+        if let Ok(mut guard) = self.hnsw_index_path.write() {
+            *guard = Some(path.into());
+        }
+    }
+
+    /// Returns the currently configured persistent HNSW index path.
+    pub fn hnsw_index_path(&self) -> Option<PathBuf> {
+        self.hnsw_index_path.read().ok().and_then(|g| g.clone())
+    }
+
     /// Clears the in-memory cached persistent index and diff cache.
     pub fn clear_cached_index(&self) {
         if let Ok(mut guard) = self.cached_index.write() {
@@ -770,6 +827,21 @@ impl ContextVfs {
         if let Ok(mut cache) = self.diff_cache.write() {
             cache.clear();
         }
+        if let Ok(mut guard) = self.cached_hnsw_index.write() {
+            *guard = None;
+        }
+    }
+
+    /// Clears the in-memory cached HNSW graph index.
+    pub fn clear_cached_hnsw_index(&self) {
+        if let Ok(mut guard) = self.cached_hnsw_index.write() {
+            *guard = None;
+        }
+    }
+
+    /// Returns the currently cached HNSW index, if loaded.
+    pub fn cached_hnsw_index(&self) -> Option<Arc<HnswIndex>> {
+        self.cached_hnsw_index.read().ok().and_then(|g| g.clone())
     }
 
     /// Clears the diff cache only.
@@ -778,6 +850,7 @@ impl ContextVfs {
             cache.clear();
         }
     }
+
 
     /// Returns the total diff cache hits and misses since initialization.
     pub fn diff_cache_stats(&self) -> (u64, u64) {
@@ -1239,7 +1312,38 @@ impl ContextVfs {
         let hasher = DenseFeatureHasher::new();
         let sparse_scores = bm25.score(query);
         let query_vec = hasher.vectorize(query);
-        let dense_scores = hasher.score_quantized_docs(&query_vec, &doc_vectors);
+
+        // Route dense scoring through HNSW when available, providing O(log N) logarithmic retrieval
+        let dense_scores = {
+            let maybe_hnsw: Option<Arc<HnswIndex>> = {
+                let in_memory = self.cached_hnsw_index.read().ok().and_then(|guard| {
+                    guard.as_ref().and_then(|cached| {
+                        if cached.corpus_hash() == &current_corpus_hash {
+                            Some(Arc::clone(cached))
+                        } else {
+                            None
+                        }
+                    })
+                });
+                if in_memory.is_some() {
+                    in_memory
+                } else if self.is_hnsw_index_fresh() {
+                    self.load_or_build_hnsw_index().ok()
+                } else {
+                    None
+                }
+            };
+
+            if let Some(hnsw_idx) = maybe_hnsw {
+                let q_hnsw = HnswVector::Quantized(QuantizedVector::quantize(&query_vec));
+                let ef = (options.limit * 2).max(64);
+                let top_k = (options.limit * 5).max(32).min(index_docs.len());
+                let hnsw_res = hnsw_idx.search(&q_hnsw, top_k, ef);
+                hnsw_res.into_iter().map(|r| (r.doc_id, r.similarity)).collect()
+            } else {
+                hasher.score_quantized_docs(&query_vec, &doc_vectors)
+            }
+        };
 
         let ranker = HybridRrfRanker::new();
         let fused = ranker.fuse(&sparse_scores, &dense_scores);
@@ -1283,7 +1387,241 @@ impl ContextVfs {
 
         Ok(results)
     }
+
+    /// Constructs an HNSW graph index from all mounted ContextVfs documents.
+    /// Vectorizes documents into QuantizedVectors, constructs the multi-layer skip graph,
+    /// caches the index in memory, and returns graph statistics.
+    pub fn build_hnsw_index(&self, config: Option<HnswConfig>) -> Result<HnswIndexStats, VfsError> {
+        let docs = self.collect_all_documents()?;
+        let (_bm25, doc_vectors) = self.build_index_differential(&docs)?;
+
+        let cfg = config.unwrap_or_default();
+        let mut index = HnswIndex::new(cfg);
+        let corpus_hash = compute_corpus_hash(&docs);
+        index.set_corpus_hash(corpus_hash);
+
+        for (doc_id, qv) in doc_vectors {
+            index.insert(doc_id, HnswVector::Quantized(qv));
+        }
+
+        let stats = index.stats();
+        let arc_idx = Arc::new(index);
+        if let Ok(mut guard) = self.cached_hnsw_index.write() {
+            *guard = Some(arc_idx);
+        }
+
+        Ok(stats)
+    }
+
+    /// Serializes the cached HNSW index to disk in binary PVHN v1 format at `path`
+    /// (or `.pandora/indices/vfs_hnsw.idx` if unspecified) using safe atomic disk write.
+    pub fn save_hnsw_index(&self, path: Option<&Path>) -> Result<PathBuf, VfsError> {
+        let target_path = match path {
+            Some(p) => p.to_path_buf(),
+            None => self
+                .hnsw_index_path
+                .read()
+                .ok()
+                .and_then(|guard| guard.clone())
+                .unwrap_or_else(|| PathBuf::from(VFS_HNSW_INDEX_PATH_DEFAULT)),
+        };
+
+        let docs = self.collect_all_documents()?;
+        let current_corpus_hash = compute_corpus_hash(&docs);
+
+        let needs_build = match self.cached_hnsw_index.read() {
+            Ok(guard) => match guard.as_ref() {
+                Some(cached) => cached.corpus_hash() != &current_corpus_hash,
+                None => true,
+            },
+            Err(_) => true,
+        };
+
+        if needs_build {
+            self.build_hnsw_index(None)?;
+        }
+
+        let index_arc = self
+            .cached_hnsw_index
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .ok_or_else(|| VfsError::BackendError("failed to obtain cached HNSW index".into()))?;
+
+        index_arc
+            .save_to_file(&target_path)
+            .map_err(|e| VfsError::BackendError(format!("failed to save HNSW index to file: {e}")))?;
+
+        if path.is_some() {
+            if let Ok(mut guard) = self.hnsw_index_path.write() {
+                *guard = Some(target_path.clone());
+            }
+        }
+
+        Ok(target_path)
+    }
+
+    /// Checks freshness of the HNSW index; if a fresh index file exists on disk
+    /// (or fresh index in cache), loads/reuses it; otherwise builds and saves a new one.
+    pub fn load_or_build_hnsw_index(&self) -> Result<Arc<HnswIndex>, VfsError> {
+        let docs = self.collect_all_documents()?;
+        let current_corpus_hash = compute_corpus_hash(&docs);
+
+        // 1. Check in-memory cache
+        if let Ok(guard) = self.cached_hnsw_index.read() {
+            if let Some(cached) = guard.as_ref() {
+                if cached.corpus_hash() == &current_corpus_hash {
+                    return Ok(Arc::clone(cached));
+                }
+            }
+        }
+
+        // 2. Check persistent file on disk
+        let index_path = self
+            .hnsw_index_path
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(|| PathBuf::from(VFS_HNSW_INDEX_PATH_DEFAULT));
+
+        if index_path.is_file() {
+            if let Ok(bytes) = std::fs::read(&index_path) {
+                if let Ok(index) = HnswIndex::from_pvhn_bytes(&bytes) {
+                    if index.corpus_hash() == &current_corpus_hash {
+                        let arc_idx = Arc::new(index);
+                        if let Ok(mut guard) = self.cached_hnsw_index.write() {
+                            *guard = Some(Arc::clone(&arc_idx));
+                        }
+                        return Ok(arc_idx);
+                    }
+                }
+            }
+        }
+
+        // 3. Stale or missing: build and save
+        self.build_hnsw_index(None)?;
+        let _ = self.save_hnsw_index(Some(&index_path))?;
+
+        if let Ok(guard) = self.cached_hnsw_index.read() {
+            if let Some(cached) = guard.as_ref() {
+                return Ok(Arc::clone(cached));
+            }
+        }
+
+        Err(VfsError::BackendError(
+            "failed to load or build HNSW index".into(),
+        ))
+    }
+
+    /// Executes logarithmic $O(\log N)$ approximate nearest neighbor search over mounted virtual
+    /// resources via the HNSW graph index.
+    pub fn search_hnsw(
+        &self,
+        query: &str,
+        limit: usize,
+        ef_search: usize,
+    ) -> Result<Vec<SearchResultItem>, VfsError> {
+        if query.trim().is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let docs = self.collect_all_documents()?;
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let index = self.load_or_build_hnsw_index()?;
+
+        let hasher = DenseFeatureHasher::new();
+        let query_f32 = hasher.vectorize(query);
+        let query_qv = QuantizedVector::quantize(&query_f32);
+        let query_vector = HnswVector::Quantized(query_qv);
+
+        let hnsw_results = index.search(&query_vector, limit, ef_search);
+
+        let mut results = Vec::with_capacity(hnsw_results.len());
+        for res in hnsw_results {
+            if res.doc_id >= docs.len() {
+                continue;
+            }
+            let doc = &docs[res.doc_id];
+            let snippet = generate_snippet(&doc.content, query);
+            results.push(SearchResultItem {
+                uri: doc.uri.clone(),
+                title: doc.title.clone(),
+                snippet,
+                sparse_score: 0.0,
+                dense_score: res.similarity,
+                hybrid_score: res.similarity,
+                tier: doc.tier,
+                intent: doc.intent,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Returns structural graph statistics of the current HNSW index.
+    pub fn hnsw_index_stats(&self) -> Result<HnswIndexStats, VfsError> {
+        let index = self.load_or_build_hnsw_index()?;
+        Ok(index.stats())
+    }
+
+    /// Checks if the persistent HNSW index file exists on disk, is valid, has matching corpus hash,
+    /// and its modification time is at or newer than the latest buffer modification.
+    pub fn is_hnsw_index_fresh(&self) -> bool {
+        let index_path = match self.hnsw_index_path.read() {
+            Ok(guard) => match guard.as_ref() {
+                Some(p) => p.clone(),
+                None => PathBuf::from(VFS_HNSW_INDEX_PATH_DEFAULT),
+            },
+            Err(_) => return false,
+        };
+
+        if !index_path.is_file() {
+            return false;
+        }
+
+        let Ok(metadata) = std::fs::metadata(&index_path) else {
+            return false;
+        };
+        let Ok(modified) = metadata.modified() else {
+            return false;
+        };
+        let file_mtime_secs = match modified.duration_since(UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(_) => 0,
+        };
+
+        let last_mod = self.last_modified_unix.load(std::sync::atomic::Ordering::Relaxed);
+        if file_mtime_secs < last_mod {
+            return false;
+        }
+
+        // Also verify integrity and corpus hash match
+        let Ok(docs) = self.collect_all_documents() else {
+            return false;
+        };
+        let current_corpus_hash = compute_corpus_hash(&docs);
+
+        let Ok(bytes) = std::fs::read(&index_path) else {
+            return false;
+        };
+        if bytes.len() < PVHN_HEADER_SIZE + PVHN_TRAILER_SIZE {
+            return false;
+        }
+
+        let payload_len = bytes.len() - PVHN_TRAILER_SIZE;
+        let computed = Sha256::digest(&bytes[..payload_len]);
+        if computed.as_slice() != &bytes[payload_len..] {
+            return false;
+        }
+
+        let file_corpus_hash = &bytes[46..78];
+        file_corpus_hash == current_corpus_hash
+    }
 }
+
 
 fn tier_to_u8(tier: Option<MemoryTier>) -> u8 {
     match tier {
@@ -2602,4 +2940,246 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_hnsw_build_from_context_vfs_documents() {
+        let vfs = ContextVfs::new();
+
+        // Seed with varied documents
+        for i in 0..15 {
+            vfs.add_memory_record(make_test_record(
+                &format!("hnsw-build-rec-{i}"),
+                if i % 2 == 0 {
+                    MemoryTier::L1
+                } else {
+                    MemoryTier::L2
+                },
+                MemoryIntent::Coding,
+                &format!("Document number {i} discussing vector search algorithms and data structures"),
+            ));
+        }
+
+        let all_docs = vfs.collect_all_documents().unwrap();
+        let expected_count = all_docs.len();
+        assert!(expected_count >= 16); // 1 default rule + 15 records
+
+        let stats = vfs.build_hnsw_index(None).unwrap();
+        assert_eq!(stats.node_count, expected_count);
+        assert!(stats.entry_point.is_some());
+        assert!(stats.entry_point.unwrap() < stats.node_count);
+        assert!(!stats.layer_node_counts.is_empty());
+        assert_eq!(stats.layer_node_counts[0], expected_count);
+        assert!(stats.average_degree > 0.0);
+
+        let cached = vfs.cached_hnsw_index().expect("HNSW index should be cached");
+        assert_eq!(cached.len(), expected_count);
+        assert_eq!(cached.corpus_hash(), &compute_corpus_hash(&all_docs));
+    }
+
+    #[test]
+    fn test_hnsw_persistence_to_disk_and_reload_roundtrip() {
+        let vfs = ContextVfs::new();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_hnsw_io_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let idx_path = temp_dir.join("vfs_hnsw.idx");
+        vfs.set_hnsw_index_path(&idx_path);
+
+        for i in 0..10 {
+            vfs.add_memory_record(make_test_record(
+                &format!("hnsw-persist-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Repo,
+                &format!("Persistence test record {i} for binary PVHN format verification"),
+            ));
+        }
+
+        // Build and save to disk
+        let saved_path = vfs.save_hnsw_index(None).unwrap();
+        assert_eq!(saved_path, idx_path);
+        assert!(idx_path.is_file());
+        let file_len = std::fs::metadata(&idx_path).unwrap().len();
+        assert!(file_len > (PVHN_HEADER_SIZE + PVHN_TRAILER_SIZE) as u64);
+
+        // Verify fresh before clearing cache
+        assert!(vfs.is_hnsw_index_fresh());
+
+        // Clear in-memory cached index
+        vfs.clear_cached_hnsw_index();
+        assert!(vfs.cached_hnsw_index().is_none());
+
+        // Still fresh because disk file exists and corpus hasn't changed
+        assert!(vfs.is_hnsw_index_fresh());
+
+        // Load or build should reload from disk
+        let reloaded = vfs.load_or_build_hnsw_index().unwrap();
+        let all_docs = vfs.collect_all_documents().unwrap();
+        assert_eq!(reloaded.len(), all_docs.len());
+        assert_eq!(reloaded.corpus_hash(), &compute_corpus_hash(&all_docs));
+
+        // Stats should match
+        let stats = vfs.hnsw_index_stats().unwrap();
+        assert_eq!(stats.node_count, all_docs.len());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_hnsw_cold_start_loading_sub_millisecond() {
+        let vfs = ContextVfs::new();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_hnsw_cold_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let idx_path = temp_dir.join("vfs_hnsw.idx");
+        vfs.set_hnsw_index_path(&idx_path);
+
+        for i in 0..40 {
+            vfs.add_memory_record(make_test_record(
+                &format!("cold-start-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!("Performance cold start benchmark document {i} with semantic context"),
+            ));
+        }
+
+        vfs.save_hnsw_index(None).unwrap();
+
+        // Evict in-memory cache
+        vfs.clear_cached_hnsw_index();
+
+        // Benchmark cold-start loading from disk
+        let start = std::time::Instant::now();
+        let loaded = vfs.load_or_build_hnsw_index().unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(loaded.len(), vfs.collect_all_documents().unwrap().len());
+        // Verify cold load is fast (under 25ms in unoptimized debug build, < 1ms in release)
+        assert!(
+            elapsed.as_millis() < 25,
+            "Cold start load took {:?}, expected < 25ms in debug",
+            elapsed
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_hnsw_search_accuracy_and_retrieval() {
+        let vfs = ContextVfs::new();
+
+        vfs.add_memory_record(make_test_record(
+            "doc-rust-ownership",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Rust memory safety and borrow checker ownership model prevents data races and dangling pointers",
+        ));
+
+        vfs.add_memory_record(make_test_record(
+            "doc-quantum-computing",
+            MemoryTier::L1,
+            MemoryIntent::Repo,
+            "Quantum computing qubits superposition entanglement quantum gates and Shor algorithm",
+        ));
+
+        vfs.add_memory_record(make_test_record(
+            "doc-distributed-raft",
+            MemoryTier::L2,
+            MemoryIntent::Procedure,
+            "Distributed consensus Raft protocol leader election log replication and heartbeat quorum",
+        ));
+
+        vfs.build_hnsw_index(None).unwrap();
+
+        // Direct HNSW search
+        let results = vfs
+            .search_hnsw("quantum computing qubits superposition", 2, 64)
+            .unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].title, "doc-quantum-computing");
+        assert!(results[0].dense_score > 0.6);
+
+        // Search for rust borrow checker
+        let rust_results = vfs
+            .search_hnsw("Rust memory safety borrow checker", 2, 64)
+            .unwrap();
+        assert!(!rust_results.is_empty());
+        assert_eq!(rust_results[0].title, "doc-rust-ownership");
+        assert!(rust_results[0].dense_score > 0.6);
+
+        // Verify search_with_options routes through HNSW seamlessly
+        let hybrid_opts = ContextSearchOptions::new(3);
+        let hybrid_results = vfs
+            .search_with_options("Raft consensus leader election", &hybrid_opts)
+            .unwrap();
+        assert!(!hybrid_results.is_empty());
+        assert_eq!(hybrid_results[0].title, "doc-distributed-raft");
+    }
+
+    #[test]
+    fn test_hnsw_freshness_invalidation_on_buffer_modification() {
+        let vfs = ContextVfs::new();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_hnsw_fresh_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let idx_path = temp_dir.join("vfs_hnsw.idx");
+        vfs.set_hnsw_index_path(&idx_path);
+
+        vfs.add_memory_record(make_test_record(
+            "fresh-rec-1",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Initial document before modification check",
+        ));
+
+        vfs.save_hnsw_index(None).unwrap();
+        assert!(vfs.is_hnsw_index_fresh());
+
+        // Small sleep to ensure timestamp moves forward if on second boundary
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Add a new record -> must invalidate freshness
+        vfs.add_memory_record(make_test_record(
+            "fresh-rec-2",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "New subsequent document invalidating previous HNSW index",
+        ));
+
+        assert!(
+            !vfs.is_hnsw_index_fresh(),
+            "HNSW index must report stale after buffer modification"
+        );
+        assert!(vfs.cached_hnsw_index().is_none());
+
+        // Rebuilding and saving restores freshness
+        vfs.save_hnsw_index(None).unwrap();
+        assert!(vfs.is_hnsw_index_fresh());
+
+        let stats = vfs.hnsw_index_stats().unwrap();
+        assert_eq!(stats.node_count, vfs.collect_all_documents().unwrap().len());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+

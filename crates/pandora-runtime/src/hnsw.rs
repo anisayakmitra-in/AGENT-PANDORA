@@ -225,6 +225,17 @@ impl HnswSearchResult {
     }
 }
 
+/// Structural summary statistics characterizing an HNSW graph index.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HnswIndexStats {
+    pub node_count: usize,
+    pub max_level: usize,
+    pub layer_node_counts: Vec<usize>,
+    pub average_degree: f32,
+    pub entry_point: Option<usize>,
+}
+
+
 /// A node in the multi-layer HNSW graph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HnswNode {
@@ -411,6 +422,50 @@ impl HnswIndex {
     pub fn node(&self, idx: usize) -> Option<&HnswNode> {
         self.nodes.get(idx)
     }
+
+    pub fn created_at_unix(&self) -> u64 {
+        self.created_at_unix
+    }
+
+    /// Computes and returns topology statistics for the index.
+    pub fn stats(&self) -> HnswIndexStats {
+        let node_count = self.nodes.len();
+        if node_count == 0 {
+            return HnswIndexStats {
+                node_count: 0,
+                max_level: 0,
+                layer_node_counts: Vec::new(),
+                average_degree: 0.0,
+                entry_point: None,
+            };
+        }
+
+        let mut layer_node_counts = vec![0; self.max_level + 1];
+        let mut total_edges = 0usize;
+        for node in &self.nodes {
+            for (lvl, neighbors) in node.neighbors.iter().enumerate() {
+                if lvl <= self.max_level {
+                    layer_node_counts[lvl] += 1;
+                }
+                total_edges += neighbors.len();
+            }
+        }
+
+        let average_degree = if node_count > 0 {
+            total_edges as f32 / node_count as f32
+        } else {
+            0.0
+        };
+
+        HnswIndexStats {
+            node_count,
+            max_level: self.max_level,
+            layer_node_counts,
+            average_degree,
+            entry_point: self.entry_point,
+        }
+    }
+
 
     #[inline]
     fn distance_to_node(&self, query: &HnswVector, node_id: usize) -> f32 {
@@ -846,12 +901,29 @@ impl HnswIndex {
         let max_level = u32::from_le_bytes(bytes[38..42].try_into().unwrap()) as usize;
         let ep_val = u32::from_le_bytes(bytes[42..46].try_into().unwrap());
         let entry_point = if ep_val == u32::MAX {
+            if node_count > 0 {
+                return Err(HnswError::InvalidData(
+                    "missing entry point for non-empty index".into(),
+                ));
+            }
             None
         } else {
-            Some(ep_val as usize)
+            let ep = ep_val as usize;
+            if ep >= node_count {
+                return Err(HnswError::InvalidData(format!(
+                    "entry_point {ep} out of bounds (node_count = {node_count})"
+                )));
+            }
+            Some(ep)
         };
         let mut corpus_hash = [0u8; 32];
         corpus_hash.copy_from_slice(&bytes[46..78]);
+
+        // Guard against memory allocation exhaustion from malformed node_count
+        let min_required_payload = PVHN_HEADER_SIZE.saturating_add(node_count.saturating_mul(149));
+        if payload_len < min_required_payload {
+            return Err(HnswError::TruncatedData);
+        }
 
         let config = HnswConfig {
             m,
@@ -947,6 +1019,11 @@ impl HnswIndex {
                     let nb =
                         u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
                     offset += 4;
+                    if nb >= node_count {
+                        return Err(HnswError::InvalidData(format!(
+                            "neighbor ID {nb} out of bounds (node_count = {node_count})"
+                        )));
+                    }
                     layer_neighbors.push(nb);
                 }
                 layers.push(layer_neighbors);
@@ -962,17 +1039,25 @@ impl HnswIndex {
 
         let mut nodes = Vec::with_capacity(node_count);
         let mut doc_ids = Vec::with_capacity(node_count);
-        for i in 0..node_count {
-            let meta = &metas[i];
+        let mut vec_iter = vectors.into_iter();
+        let mut nb_iter = all_neighbors.into_iter();
+        for (i, meta) in metas.into_iter().enumerate() {
             doc_ids.push(meta.doc_id);
+            let vector = vec_iter
+                .next()
+                .ok_or_else(|| HnswError::InvalidData("vector missing for node".into()))?;
+            let neighbors = nb_iter
+                .next()
+                .ok_or_else(|| HnswError::InvalidData("neighbors missing for node".into()))?;
             nodes.push(HnswNode {
                 id: i,
                 doc_id: meta.doc_id,
                 level: meta.level,
-                vector: vectors.remove(0),
-                neighbors: all_neighbors.remove(0),
+                vector,
+                neighbors,
             });
         }
+
 
         Ok(Self {
             config,
