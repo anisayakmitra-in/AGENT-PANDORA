@@ -36,6 +36,7 @@ pub mod graph_intelligence;
 pub mod hardware_autopilot;
 pub mod harness_evolution;
 pub mod harness_registry;
+pub mod hnsw;
 pub mod hooks;
 pub mod human_review;
 pub mod identity;
@@ -211,6 +212,11 @@ pub use harness_evolution::{
 pub use harness_registry::{
     HarnessRegistry, HarnessRegistryError, PackageRecord, PackageState, PublisherTrustRoot,
     PublisherTrustRoots,
+};
+pub use hnsw::{
+    DEFAULT_HNSW_EF_CONSTRUCTION, DEFAULT_HNSW_EF_SEARCH, DEFAULT_HNSW_M, DEFAULT_HNSW_M_MAX_0,
+    HnswConfig, HnswError, HnswIndex, HnswNode, HnswSearchResult, HnswVector, HnswVectorType,
+    PVHN_HEADER_SIZE, PVHN_MAGIC, PVHN_TRAILER_SIZE, PVHN_VERSION, cosine_distance,
 };
 pub use hooks::{HookPoint, HookSelector, HooksLoadError, LifecycleHook, LifecycleHooks};
 pub use human_review::{
