@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod rpc_ledger;
+pub mod websocket;
 
 use crate::rpc_ledger::{DurableRpcLedger, RpcBegin, RpcRequestKey, digest_bytes, digest_request};
 use axum::{

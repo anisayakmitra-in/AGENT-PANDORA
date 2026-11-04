@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
+base64.workspace = true
 pandora-runtime = { path = "../pandora-runtime" }
 pandora-types = { path = "../pandora-types" }
 rusqlite.workspace = true

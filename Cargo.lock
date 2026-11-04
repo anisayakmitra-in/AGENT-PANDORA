@@ -1300,6 +1300,7 @@ name = "pandora-service"
 version = "3.0.3"
 dependencies = [
  "axum",
+ "base64",
  "pandora-runtime",
  "pandora-types",
  "rusqlite",
