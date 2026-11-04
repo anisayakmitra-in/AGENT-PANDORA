@@ -10,6 +10,10 @@ use pandora_runtime::{
     MemorySynthesisScheduleStore, MeshSyncEngine, PeerIdentity, ReflexionCrystallizer, VfsError,
     read_index_stats,
 };
+use pandora_runtime::hnsw::{
+    DEFAULT_HNSW_EF_CONSTRUCTION, DEFAULT_HNSW_EF_SEARCH, DEFAULT_HNSW_M, HnswConfig, HnswIndex,
+};
+use sha2::{Digest, Sha256};
 use pandora_types::{
     ContextClassification, ContextUri, ExecutionId, FeatureMap, GeneId, JobWorkerId,
     MemoryApproval, MemoryCapsule, MemoryConflictRule, MemoryConsolidationBoundary,
@@ -753,7 +757,9 @@ fn capsule_import(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("memory vfs requires 'ls', 'cat', 'search', 'index', or 'stats'")
+        CliError::usage(
+            "memory vfs requires 'ls', 'cat', 'search', 'index', 'stats', 'hnsw-build', or 'hnsw-search'",
+        )
     })?;
     match subcommand.as_str() {
         "ls" => vfs_ls(&args[1..]),
@@ -761,6 +767,8 @@ fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
         "search" => vfs_search(&args[1..]),
         "index" => vfs_index(&args[1..]),
         "stats" => vfs_stats(&args[1..]),
+        "hnsw-build" => vfs_hnsw_build(&args[1..]),
+        "hnsw-search" => vfs_hnsw_search(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory vfs command '{unknown}'"
         ))),
@@ -1181,6 +1189,349 @@ fn vfs_stats(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("memory vfs stats", payload, human))
+}
+
+fn vfs_hnsw_build(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "output",
+            "m",
+            "ef-construction",
+            "quantized",
+            "rebuild",
+        ],
+    )?;
+
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "memory vfs hnsw-build does not accept positional arguments",
+        ));
+    }
+
+    let m = parsed
+        .value("m")
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| CliError::usage("m must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_HNSW_M);
+
+    if m == 0 {
+        return Err(CliError::usage("m must be a positive integer"));
+    }
+
+    let ef_construction = parsed
+        .value("ef-construction")
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| CliError::usage("ef-construction must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_HNSW_EF_CONSTRUCTION);
+
+    if ef_construction == 0 {
+        return Err(CliError::usage("ef-construction must be a positive integer"));
+    }
+
+    let rebuild = parsed.has_flag("rebuild");
+    let _quantized = parsed.has_flag("quantized");
+
+    let config = load_config(&parsed)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let vfs = if config.config_path().is_file() {
+        if let Ok(store) = session_store(&config) {
+            if let Ok(vfs) = ContextVfs::from_session_store(&store, &tenant, &workspace) {
+                load_workspace_feature_map(config.workspace_dir(), &vfs);
+                vfs
+            } else {
+                ContextVfs::new()
+            }
+        } else {
+            ContextVfs::new()
+        }
+    } else {
+        ContextVfs::new()
+    };
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let output_path = if let Some(out) = parsed.value("output") {
+        std::path::PathBuf::from(out)
+    } else {
+        config.workspace_dir().join(".pandora/indices/vfs_hnsw.idx")
+    };
+    vfs.set_hnsw_index_path(&output_path);
+
+    let hnsw_config = HnswConfig::new(m, ef_construction, DEFAULT_HNSW_EF_SEARCH);
+
+    let is_already_fresh = !rebuild && vfs.is_hnsw_index_fresh();
+
+    let start_time = std::time::Instant::now();
+    let (status, stats) = if is_already_fresh {
+        let stats = vfs.hnsw_index_stats().map_err(|e| {
+            CliError::execution(
+                e.to_string(),
+                json!({"path": output_path.display().to_string()}),
+            )
+        })?;
+        ("up_to_date", stats)
+    } else {
+        let stats = vfs.build_hnsw_index(Some(hnsw_config)).map_err(|e| {
+            CliError::execution(
+                e.to_string(),
+                json!({"path": output_path.display().to_string()}),
+            )
+        })?;
+        vfs.save_hnsw_index(Some(&output_path)).map_err(|e| {
+            CliError::execution(
+                e.to_string(),
+                json!({"path": output_path.display().to_string()}),
+            )
+        })?;
+        let status = if rebuild { "rebuilt" } else { "built" };
+        (status, stats)
+    };
+    let build_duration = start_time.elapsed();
+
+    let (size_bytes, sha256_hex, cold_start_load_us) = if output_path.is_file() {
+        let file_bytes = std::fs::read(&output_path).unwrap_or_default();
+        let size = file_bytes.len() as u64;
+        let hash = format!("{:x}", Sha256::digest(&file_bytes));
+        let load_start = std::time::Instant::now();
+        let _ = HnswIndex::from_pvhn_bytes(&file_bytes);
+        let cold_us = load_start.elapsed().as_micros() as u64;
+        (size, hash, cold_us)
+    } else {
+        (0, String::new(), 0)
+    };
+
+    let sha_prefix = if sha256_hex.len() >= 8 {
+        &sha256_hex[..8]
+    } else {
+        &sha256_hex
+    };
+
+    let num_layers = if stats.node_count == 0 {
+        0
+    } else {
+        stats.max_level + 1
+    };
+
+    let payload = json!({
+        "path": output_path.display().to_string(),
+        "status": status,
+        "doc_count": stats.node_count,
+        "node_count": stats.node_count,
+        "num_layers": num_layers,
+        "max_level": stats.max_level,
+        "layer_node_counts": stats.layer_node_counts,
+        "average_degree": stats.average_degree,
+        "entry_point": stats.entry_point,
+        "m": hnsw_config.m,
+        "m_max0": hnsw_config.m_max_0,
+        "ef_construction": hnsw_config.ef_construction,
+        "size_bytes": size_bytes,
+        "vector_type": "quantized_int8",
+        "sha256": sha256_hex,
+        "build_time_ms": (build_duration.as_secs_f64() * 1000.0 * 100.0).round() / 100.0,
+        "cold_start_load_us": cold_start_load_us,
+    });
+
+    let human = format!(
+        "Built ContextVfs HNSW index at {} ({} documents, {} layers, M={}, efConstruction={}, {} bytes, SHA-256: {}, cold-start load: {} \u{b5}s, status: {})",
+        output_path.display(),
+        stats.node_count,
+        num_layers,
+        hnsw_config.m,
+        hnsw_config.ef_construction,
+        size_bytes,
+        sha_prefix,
+        cold_start_load_us,
+        status,
+    );
+
+    Ok(success("memory vfs hnsw-build", payload, human))
+}
+
+fn vfs_hnsw_search(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "path",
+            "limit",
+            "ef-search",
+            "tier",
+            "intent",
+        ],
+    )?;
+
+    let query = if !parsed.positionals.is_empty() {
+        parsed.positionals.join(" ")
+    } else {
+        return Err(CliError::usage("memory vfs hnsw-search requires '<query>'"));
+    };
+
+    if query.trim().is_empty() {
+        return Err(CliError::usage("memory vfs hnsw-search requires '<query>'"));
+    }
+
+    let limit = parsed
+        .value("limit")
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| CliError::usage("limit must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(5);
+
+    if limit == 0 {
+        return Err(CliError::usage("limit must be greater than zero"));
+    }
+
+    let ef_search = parsed
+        .value("ef-search")
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| CliError::usage("ef-search must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_HNSW_EF_SEARCH);
+
+    if ef_search == 0 {
+        return Err(CliError::usage("ef-search must be greater than zero"));
+    }
+
+    let tier_filter = if let Some(tier_str) = parsed.value("tier") {
+        Some(parse_tier(Some(tier_str))?)
+    } else {
+        None
+    };
+
+    let intent_filter = parse_intent(parsed.value("intent"))?;
+
+    let config = load_config(&parsed)?;
+    let (_, tenant, default_workspace) = session_scope();
+    let workspace = parsed
+        .value("workspace")
+        .map(|v| WorkspaceId::new(v.to_owned()))
+        .transpose()
+        .map_err(|_| CliError::usage("workspace ID is invalid"))?
+        .unwrap_or(default_workspace);
+
+    let vfs = if config.config_path().is_file() {
+        if let Ok(store) = session_store(&config) {
+            if let Ok(vfs) = ContextVfs::from_session_store(&store, &tenant, &workspace) {
+                load_workspace_feature_map(config.workspace_dir(), &vfs);
+                vfs
+            } else {
+                ContextVfs::new()
+            }
+        } else {
+            ContextVfs::new()
+        }
+    } else {
+        ContextVfs::new()
+    };
+    load_workspace_feature_map(config.workspace_dir(), &vfs);
+
+    let index_path = if let Some(p) = parsed.value("path") {
+        std::path::PathBuf::from(p)
+    } else {
+        config.workspace_dir().join(".pandora/indices/vfs_hnsw.idx")
+    };
+    vfs.set_hnsw_index_path(&index_path);
+
+    let search_limit = if tier_filter.is_some() || intent_filter.is_some() {
+        (limit * 4).max(ef_search).max(32)
+    } else {
+        limit
+    };
+
+    let start_time = std::time::Instant::now();
+    let raw_results = vfs
+        .search_hnsw(&query, search_limit, ef_search)
+        .map_err(|e| CliError::execution(e.to_string(), json!({"query": query})))?;
+    let search_duration = start_time.elapsed();
+
+    let mut filtered_results = raw_results;
+    if let Some(tier) = tier_filter {
+        filtered_results.retain(|item| item.tier == Some(tier));
+    }
+    if let Some(intent) = intent_filter {
+        filtered_results.retain(|item| item.intent == Some(intent));
+    }
+    filtered_results.truncate(limit);
+
+    let count = filtered_results.len();
+    let results_json: Vec<serde_json::Value> = filtered_results
+        .iter()
+        .map(|item| {
+            let distance = (1.0 - item.dense_score).max(0.0);
+            json!({
+                "uri": item.uri.as_str(),
+                "title": item.title,
+                "snippet": item.snippet,
+                "distance": (distance * 10000.0).round() / 10000.0,
+                "similarity": (item.dense_score * 10000.0).round() / 10000.0,
+                "dense_score": item.dense_score,
+                "sparse_score": item.sparse_score,
+                "hybrid_score": item.hybrid_score,
+                "tier": item.tier.map(|t| t.as_str()),
+                "intent": item.intent.map(|i| i.as_str()),
+            })
+        })
+        .collect();
+
+    let search_time_us = search_duration.as_micros() as u64;
+
+    let human = if count == 0 {
+        format!(
+            "Found 0 result(s) for query '{query}' in ContextVfs HNSW index in {search_time_us} \u{b5}s (efSearch={ef_search})"
+        )
+    } else {
+        let mut msg = format!(
+            "Found {count} result(s) for query '{query}' in ContextVfs HNSW index in {search_time_us} \u{b5}s (efSearch={ef_search}):"
+        );
+        for (i, item) in filtered_results.iter().enumerate() {
+            let tier_str = item.tier.map_or("none", |t| t.as_str());
+            let intent_str = item.intent.map_or("none", |it| it.as_str());
+            msg.push_str(&format!(
+                "\n  {}. [{:.4}] {} (tier: {}, intent: {})\n     \"{}\"",
+                i + 1,
+                item.dense_score,
+                item.uri.as_str(),
+                tier_str,
+                intent_str,
+                item.snippet.replace('\r', "").replace('\n', " "),
+            ));
+        }
+        msg
+    };
+
+    let payload = json!({
+        "query": query,
+        "count": count,
+        "results": results_json,
+        "ef_search": ef_search,
+        "limit": limit,
+        "search_time_us": search_time_us,
+    });
+
+    Ok(success("memory vfs hnsw-search", payload, human))
 }
 
 fn load_workspace_feature_map(workspace_dir: &std::path::Path, vfs: &ContextVfs) {
@@ -2683,4 +3034,203 @@ fn mesh_sync(args: &[String]) -> Result<CommandResult, CliError> {
             sync_result.promoted.len()
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vfs_hnsw_build_and_search_roundtrip() {
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_hnsw_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let index_path = tmp_dir.join("vfs_hnsw.idx");
+
+        // 1. Build HNSW index via CLI
+        let build_args = vec![
+            "--output".to_string(),
+            index_path.to_str().unwrap().to_string(),
+            "--m".to_string(),
+            "16".to_string(),
+            "--ef-construction".to_string(),
+            "32".to_string(),
+            "--quantized".to_string(),
+        ];
+        let build_res = vfs_hnsw_build(&build_args).expect("vfs_hnsw_build should succeed");
+        assert_eq!(build_res.command, "memory vfs hnsw-build");
+        assert_eq!(build_res.data["status"], "built");
+        assert_eq!(build_res.data["m"], 16);
+        assert_eq!(build_res.data["ef_construction"], 32);
+        assert_eq!(build_res.data["vector_type"], "quantized_int8");
+        assert!(index_path.is_file());
+
+        // 2. Freshness check: build again without --rebuild returns up_to_date
+        let build_res2 =
+            vfs_hnsw_build(&build_args).expect("vfs_hnsw_build fresh check should succeed");
+        assert_eq!(build_res2.data["status"], "up_to_date");
+
+        // 3. Rebuild flag forces rebuild
+        let mut rebuild_args = build_args.clone();
+        rebuild_args.push("--rebuild".to_string());
+        let build_res3 =
+            vfs_hnsw_build(&rebuild_args).expect("vfs_hnsw_build rebuild should succeed");
+        assert_eq!(build_res3.data["status"], "rebuilt");
+
+        // 4. Search HNSW index via CLI
+        let search_args = vec![
+            "quantization".to_string(),
+            "error".to_string(),
+            "--path".to_string(),
+            index_path.to_str().unwrap().to_string(),
+            "--limit".to_string(),
+            "3".to_string(),
+            "--ef-search".to_string(),
+            "32".to_string(),
+        ];
+        let search_res = vfs_hnsw_search(&search_args).expect("vfs_hnsw_search should succeed");
+        assert_eq!(search_res.command, "memory vfs hnsw-search");
+        assert_eq!(search_res.data["query"], "quantization error");
+        assert_eq!(search_res.data["limit"], 3);
+        assert_eq!(search_res.data["ef_search"], 32);
+        assert!(search_res.data["results"].is_array());
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    fn assert_err(res: Result<CommandResult, CliError>, expected_substr: &str) {
+        match res {
+            Err(err) => assert!(
+                err.message.contains(expected_substr),
+                "expected '{}' in error message '{}'",
+                expected_substr,
+                err.message
+            ),
+            Ok(_) => panic!("expected error containing '{expected_substr}', got Ok"),
+        }
+    }
+
+    #[test]
+    fn vfs_hnsw_search_error_cases() {
+        // Missing query
+        assert_err(vfs_hnsw_search(&[]), "requires '<query>'");
+
+        // Whitespace only query
+        assert_err(vfs_hnsw_search(&["   ".to_string()]), "requires '<query>'");
+
+        // Invalid limit
+        assert_err(
+            vfs_hnsw_search(&["test".to_string(), "--limit".to_string(), "0".to_string()]),
+            "limit must be greater than zero",
+        );
+
+        assert_err(
+            vfs_hnsw_search(&[
+                "test".to_string(),
+                "--limit".to_string(),
+                "invalid".to_string(),
+            ]),
+            "limit must be a positive integer",
+        );
+
+        // Invalid ef-search
+        assert_err(
+            vfs_hnsw_search(&[
+                "test".to_string(),
+                "--ef-search".to_string(),
+                "0".to_string(),
+            ]),
+            "ef-search must be greater than zero",
+        );
+
+        assert_err(
+            vfs_hnsw_search(&[
+                "test".to_string(),
+                "--ef-search".to_string(),
+                "bad".to_string(),
+            ]),
+            "ef-search must be a positive integer",
+        );
+
+        // Invalid tier
+        assert_err(
+            vfs_hnsw_search(&[
+                "test".to_string(),
+                "--tier".to_string(),
+                "invalid".to_string(),
+            ]),
+            "memory tier must be",
+        );
+
+        // Invalid intent
+        assert_err(
+            vfs_hnsw_search(&[
+                "test".to_string(),
+                "--intent".to_string(),
+                "invalid".to_string(),
+            ]),
+            "memory intent must be",
+        );
+
+        // Unknown option
+        assert_err(
+            vfs_hnsw_search(&["test".to_string(), "--bogus".to_string()]),
+            "unknown option",
+        );
+    }
+
+    #[test]
+    fn vfs_hnsw_build_error_cases() {
+        // Positional arguments rejected
+        assert_err(
+            vfs_hnsw_build(&["positional".to_string()]),
+            "does not accept positional arguments",
+        );
+
+        // Invalid m
+        assert_err(
+            vfs_hnsw_build(&["--m".to_string(), "0".to_string()]),
+            "m must be a positive integer",
+        );
+
+        assert_err(
+            vfs_hnsw_build(&["--m".to_string(), "xyz".to_string()]),
+            "m must be a positive integer",
+        );
+
+        // Invalid ef-construction
+        assert_err(
+            vfs_hnsw_build(&["--ef-construction".to_string(), "0".to_string()]),
+            "ef-construction must be a positive integer",
+        );
+
+        assert_err(
+            vfs_hnsw_build(&["--ef-construction".to_string(), "xyz".to_string()]),
+            "ef-construction must be a positive integer",
+        );
+
+        // Unknown option
+        assert_err(
+            vfs_hnsw_build(&["--unknown".to_string()]),
+            "unknown option",
+        );
+    }
+
+    #[test]
+    fn vfs_dispatcher_subcommands() {
+        // Missing subcommand
+        assert_err(vfs(&[]), "hnsw-build");
+        assert_err(vfs(&[]), "hnsw-search");
+
+        // Unknown subcommand
+        assert_err(
+            vfs(&["unknown_cmd".to_string()]),
+            "unknown memory vfs command 'unknown_cmd'",
+        );
+    }
 }

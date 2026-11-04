@@ -81,7 +81,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'capsule') {
         'export','import'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'vfs') {
-        'ls','cat','search'
+        'ls','cat','search','index','stats','hnsw-build','hnsw-search'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
         'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive','capsule','vfs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
@@ -212,7 +212,7 @@ fn bash() -> &'static str {
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "capsule" ]]; then
         COMPREPLY=( $(compgen -W 'export import' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "vfs" ]]; then
-        COMPREPLY=( $(compgen -W 'ls cat search' -- "$current") )
+        COMPREPLY=( $(compgen -W 'ls cat search index stats hnsw-build hnsw-search' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
         COMPREPLY=( $(compgen -W 'recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
@@ -343,7 +343,7 @@ elif [[ ${words[2]} == memory && ${words[3]} == archive ]]; then
 elif [[ ${words[2]} == memory && ${words[3]} == capsule ]]; then
     _arguments '3:memory capsule command:(export import)'
 elif [[ ${words[2]} == memory && ${words[3]} == vfs ]]; then
-    _arguments '3:memory vfs command:(ls cat search)'
+    _arguments '3:memory vfs command:(ls cat search index stats hnsw-build hnsw-search)'
 elif [[ ${words[2]} == memory ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy cron prompt dsrs gepa prp branch pr lsp release)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs)'
 elif [[ ${words[2]} == approval ]]; then
@@ -443,7 +443,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_s
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from sop' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from archive' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from capsule' -a 'export import'
-complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search index stats hnsw-build hnsw-search'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set add remove use login accounts test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set add add-http login logout remove catalog call'
@@ -823,5 +823,25 @@ mod tests {
         ));
 
         assert!(fish.contains("__fish_seen_subcommand_from lsp' -a 'status servers definition references type-definition diagnostics'"));
+    }
+
+    #[test]
+    fn vfs_hnsw_completion_covers_subcommands_across_shells() {
+        let powershell = powershell();
+        let bash = bash();
+        let zsh = zsh();
+        let fish = fish();
+
+        assert!(powershell.contains("-eq 'memory' -and $elements[2] -eq 'vfs'"));
+        assert!(powershell.contains("'ls','cat','search','index','stats','hnsw-build','hnsw-search'"));
+
+        assert!(bash.contains(r#"[[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "vfs" ]]"#));
+        assert!(bash.contains("compgen -W 'ls cat search index stats hnsw-build hnsw-search'"));
+
+        assert!(zsh.contains("'3:memory vfs command:(ls cat search index stats hnsw-build hnsw-search)'"));
+
+        assert!(fish.contains(
+            "__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search index stats hnsw-build hnsw-search'"
+        ));
     }
 }
