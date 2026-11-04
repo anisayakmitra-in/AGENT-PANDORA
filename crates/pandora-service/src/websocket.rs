@@ -171,7 +171,6 @@ impl std::error::Error for WebSocketError {}
 
 /// Pure RFC 3174 SHA-1 digest implementation strictly under `#![forbid(unsafe_code)]`.
 /// Required by RFC 6455 Section 1.3 for WebSocket handshake `Sec-WebSocket-Accept`.
-#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn sha1_digest(data: &[u8]) -> [u8; 20] {
     let mut h0: u32 = 0x67452301;
     let mut h1: u32 = 0xEFCDAB89;
@@ -187,7 +186,10 @@ pub fn sha1_digest(data: &[u8]) -> [u8; 20] {
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
 
-    for chunk in msg.chunks_exact(64) {
+    let mut offset = 0;
+    while offset + 64 <= msg.len() {
+        let chunk = &msg[offset..offset + 64];
+        offset += 64;
         let mut w = [0u32; 80];
         for (i, slot) in w.iter_mut().take(16).enumerate() {
             let start = i * 4;
