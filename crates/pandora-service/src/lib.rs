@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use pandora_runtime::{
     DeviceProofRequest, IdentityStore, RuntimeService, RuntimeServiceError, RuntimeServiceScope,
@@ -113,13 +113,17 @@ impl LocalService {
     }
 
     fn router(&self) -> Router {
-        Router::new()
+        let rpc_router = Router::new()
             .route("/v1/rpc", post(handle_rpc))
             .layer(DefaultBodyLimit::max(MAX_RPC_BODY_BYTES))
             .layer(middleware::from_fn_with_state(
                 Arc::clone(&self.state),
                 require_bearer,
-            ))
+            ));
+
+        Router::new()
+            .route("/v1/ws", get(handle_ws_handshake))
+            .merge(rpc_router)
             .with_state(Arc::clone(&self.state))
     }
 
@@ -301,6 +305,146 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .ok()?
         .strip_prefix("Bearer ")
         .filter(|candidate| !candidate.is_empty())
+}
+
+async fn handle_ws_handshake(
+    State(state): State<Arc<TransportState>>,
+    request: Request,
+) -> Response {
+    let has_ws_upgrade = request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|val| val.to_str().ok())
+        .is_some_and(|s| s.eq_ignore_ascii_case("websocket"));
+    if !has_ws_upgrade {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    let has_upgrade_conn = request
+        .headers()
+        .get(header::CONNECTION)
+        .and_then(|val| val.to_str().ok())
+        .is_some_and(|s| {
+            s.split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("upgrade"))
+        });
+    if !has_upgrade_conn {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    let Some(sec_key) = request
+        .headers()
+        .get("sec-websocket-key")
+        .and_then(|val| val.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+    else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+
+    let token_candidate = bearer_token(request.headers())
+        .or_else(|| {
+            request.uri().query().and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let (key, val) = pair.split_once('=')?;
+                    if key == "token" || key == "bearer" || key == "session_token" {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
+        .or_else(|| {
+            request
+                .headers()
+                .get("sec-websocket-protocol")
+                .and_then(|val| val.to_str().ok())
+                .and_then(|proto| {
+                    let mut parts = proto.split(',').map(str::trim);
+                    while let Some(part) = parts.next() {
+                        if part.eq_ignore_ascii_case("bearer") {
+                            return parts.next();
+                        }
+                    }
+                    None
+                })
+        });
+
+    let authenticated = match &state.authentication {
+        AuthenticationConfig::Legacy(token_store) => {
+            if let Some(candidate) = token_candidate {
+                let token_matched = token_store.token().matches(candidate);
+                let session_matched = std::fs::read(token_store.path())
+                    .map(|bytes| {
+                        crate::websocket::verify_session_token(
+                            &bytes,
+                            candidate,
+                            now_timestamp().as_unix_seconds(),
+                        )
+                        .is_ok()
+                    })
+                    .unwrap_or(false);
+                token_matched || session_matched
+            } else {
+                false
+            }
+        }
+        AuthenticationConfig::Identities(identities) => {
+            if let Some(candidate) = token_candidate {
+                let device_id = request
+                    .headers()
+                    .get(DEVICE_ID_HEADER)
+                    .and_then(|val| val.to_str().ok())
+                    .or_else(|| {
+                        request.uri().query().and_then(|q| {
+                            q.split('&').find_map(|pair| {
+                                let mut parts = pair.splitn(2, '=');
+                                if parts.next()? == "device_id" {
+                                    parts.next()
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    });
+                if let Some(device_id) = device_id {
+                    identities
+                        .authenticate(candidate, device_id)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+    };
+
+    if !authenticated {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    let accept = crate::websocket::compute_websocket_accept(sec_key);
+    let mut builder = Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(header::UPGRADE, "websocket")
+        .header(header::CONNECTION, "Upgrade")
+        .header("sec-websocket-accept", accept);
+
+    if let Some(_proto) = request
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|val| val.to_str().ok())
+        .filter(|proto| proto.contains("pandora-v1"))
+    {
+        builder = builder.header("sec-websocket-protocol", "pandora-v1");
+    }
+
+    builder
+        .body(Body::empty())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 async fn handle_rpc(
@@ -1906,5 +2050,135 @@ mod tests {
         .with_artifact_catalog(Arc::new(
             ArtifactCatalog::open(root.join("artifact-catalog.sqlite3")).unwrap(),
         ))
+    }
+
+    #[tokio::test]
+    async fn ws_handshake_successful_with_valid_key_and_token() {
+        let fixture = Fixture::new();
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let expected_accept = crate::websocket::compute_websocket_accept(key);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/ws")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header("sec-websocket-key", key)
+            .header("sec-websocket-version", "13")
+            .header(header::AUTHORIZATION, format!("Bearer {}", fixture.token))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = fixture.service.router().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::UPGRADE)
+                .and_then(|v| v.to_str().ok()),
+            Some("websocket")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("sec-websocket-accept")
+                .and_then(|v| v.to_str().ok()),
+            Some(expected_accept.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn ws_handshake_rejects_missing_upgrade_or_key() {
+        let fixture = Fixture::new();
+
+        // Missing Upgrade header
+        let req1 = Request::builder()
+            .method("GET")
+            .uri("/v1/ws")
+            .header(header::AUTHORIZATION, format!("Bearer {}", fixture.token))
+            .body(Body::empty())
+            .unwrap();
+        let res1 = fixture.service.router().oneshot(req1).await.unwrap();
+        assert_eq!(res1.status(), StatusCode::BAD_REQUEST);
+
+        // Missing sec-websocket-key
+        let req2 = Request::builder()
+            .method("GET")
+            .uri("/v1/ws")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::AUTHORIZATION, format!("Bearer {}", fixture.token))
+            .body(Body::empty())
+            .unwrap();
+        let res2 = fixture.service.router().oneshot(req2).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn ws_handshake_rejects_unauthorized() {
+        let fixture = Fixture::new();
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+
+        // No token
+        let req1 = Request::builder()
+            .method("GET")
+            .uri("/v1/ws")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header("sec-websocket-key", key)
+            .body(Body::empty())
+            .unwrap();
+        let res1 = fixture.service.router().oneshot(req1).await.unwrap();
+        assert_eq!(res1.status(), StatusCode::UNAUTHORIZED);
+
+        // Invalid token
+        let req2 = Request::builder()
+            .method("GET")
+            .uri("/v1/ws")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header("sec-websocket-key", key)
+            .header(header::AUTHORIZATION, "Bearer invalid-token")
+            .body(Body::empty())
+            .unwrap();
+        let res2 = fixture.service.router().oneshot(req2).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn ws_handshake_supports_query_token_and_session_token() {
+        let fixture = Fixture::new();
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+
+        // Token in query param
+        let req1 = Request::builder()
+            .method("GET")
+            .uri(format!("/v1/ws?token={}", fixture.token))
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header("sec-websocket-key", key)
+            .body(Body::empty())
+            .unwrap();
+        let res1 = fixture.service.router().oneshot(req1).await.unwrap();
+        assert_eq!(res1.status(), StatusCode::SWITCHING_PROTOCOLS);
+
+        // Session token
+        let token_bytes = std::fs::read(fixture._root.root.join("service-token")).unwrap();
+        let session_token = crate::websocket::create_session_token(
+            &token_bytes,
+            "session-agent-1",
+            super::now_timestamp().as_unix_seconds() + 3600,
+        );
+        let req2 = Request::builder()
+            .method("GET")
+            .uri("/v1/ws")
+            .header(header::UPGRADE, "websocket")
+            .header(header::CONNECTION, "Upgrade")
+            .header("sec-websocket-key", key)
+            .header(header::AUTHORIZATION, format!("Bearer {session_token}"))
+            .body(Body::empty())
+            .unwrap();
+        let res2 = fixture.service.router().oneshot(req2).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::SWITCHING_PROTOCOLS);
     }
 }

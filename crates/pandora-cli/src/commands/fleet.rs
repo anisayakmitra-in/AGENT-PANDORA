@@ -1,8 +1,9 @@
 use super::{load_config, parse_options, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    FleetBudget, FleetEngine, FleetError, FleetLease, FleetLeaseState, FleetNode, FleetSupervisor,
-    FleetSupervisorState, JobStore, OrchestrationStore,
+    BftConsensus, ConsensusDecision, FleetBudget, FleetEngine, FleetError, FleetLease,
+    FleetLeaseState, FleetNode, FleetSupervisor, FleetSupervisorState, JobStore, OrchestrationStore,
+    TaskDag,
 };
 use pandora_types::{JobStatus, OrchestrationBudgetAmount};
 use serde_json::{Value, json};
@@ -14,7 +15,7 @@ const MAX_OPERATIONS_DETAIL_RECORDS: usize = 64;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("fleet requires 'dashboard', 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'supervisor', 'quarantine', 'revoke', or 'kill'"))?;
+        .ok_or_else(|| CliError::usage("fleet requires 'dashboard', 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'supervisor', 'quarantine', 'revoke', 'kill', 'quorum', or 'dag'"))?;
     match subcommand.as_str() {
         "dashboard" => dashboard(&args[1..]),
         "list" => list(&args[1..]),
@@ -28,6 +29,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "quarantine" => transition(&args[1..], "quarantine", FleetEngine::quarantine_node),
         "revoke" => transition(&args[1..], "revoke", FleetEngine::revoke_node),
         "kill" => transition(&args[1..], "kill", FleetEngine::kill_node),
+        "quorum" => quorum(&args[1..]),
+        "dag" | "schedule-sim" => dag_schedule_sim(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown fleet command '{unknown}'"
         ))),
@@ -961,4 +964,298 @@ fn supervisor_value(supervisor: &FleetSupervisor) -> Value {
 
 fn fleet_error(error: FleetError) -> CliError {
     CliError::execution(error.to_string(), json!({}))
+}
+
+fn quorum(args: &[String]) -> Result<CommandResult, CliError> {
+    let action = args
+        .first()
+        .ok_or_else(|| CliError::usage("fleet quorum requires 'check', 'propose', or 'vote'"))?;
+
+    match action.as_str() {
+        "check" => quorum_check(&args[1..]),
+        "propose" => quorum_propose(&args[1..]),
+        "vote" => quorum_vote(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown fleet quorum action '{unknown}'; expected 'check', 'propose', or 'vote'"
+        ))),
+    }
+}
+
+fn quorum_check(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "nodes", "byzantine", "faulty"])?;
+    let nodes: usize = parsed
+        .value("nodes")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--nodes must be an integer")))
+        .transpose()?
+        .unwrap_or(4);
+    let byzantine: usize = parsed
+        .value("byzantine")
+        .or_else(|| parsed.value("faulty"))
+        .map(|v| v.parse().map_err(|_| CliError::usage("--byzantine must be an integer")))
+        .transpose()?
+        .unwrap_or(1);
+
+    let consensus_res = BftConsensus::new(nodes, byzantine);
+    let valid = consensus_res.is_ok();
+    let min_required = 3 * byzantine + 1;
+    let quorum_threshold = 2 * byzantine + 1;
+
+    let summary = if valid {
+        format!(
+            "BFT Quorum Valid (N >= 3f + 1): total_nodes={nodes}, f={byzantine}, quorum_threshold Q={quorum_threshold}"
+        )
+    } else {
+        format!(
+            "BFT Quorum Invalid: total_nodes={nodes} is less than required 3f + 1 = {min_required} for f={byzantine}"
+        )
+    };
+
+    Ok(success(
+        "fleet quorum check",
+        json!({
+            "total_nodes": nodes,
+            "byzantine_tolerance": byzantine,
+            "min_required_nodes": min_required,
+            "quorum_threshold": quorum_threshold,
+            "valid": valid,
+        }),
+        summary,
+    ))
+}
+
+fn quorum_propose(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "nodes", "byzantine", "proposer", "proposal-id", "payload"],
+    )?;
+    let nodes: usize = parsed
+        .value("nodes")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--nodes must be an integer")))
+        .transpose()?
+        .unwrap_or(4);
+    let byzantine: usize = parsed
+        .value("byzantine")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--byzantine must be an integer")))
+        .transpose()?
+        .unwrap_or(1);
+    let proposer = parsed.value("proposer").unwrap_or("leader-0");
+    let proposal_id = parsed.value("proposal-id").unwrap_or("prop-1");
+    let payload = parsed.value("payload").unwrap_or("upgrade-v304");
+
+    let mut consensus = BftConsensus::new(nodes, byzantine)
+        .map_err(|e| CliError::usage(format!("invalid BFT parameters: {e}")))?;
+
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(payload.as_bytes());
+    let hash: [u8; 32] = hasher.finalize().into();
+
+    let now = timestamp().as_unix_seconds();
+    consensus
+        .propose(proposer, proposal_id, hash, now)
+        .map_err(|e| CliError::execution(format!("BFT propose failed: {e}"), json!({})))?;
+
+    let summary = format!(
+        "BFT Proposal '{proposal_id}' registered by '{proposer}' (threshold: {}/{nodes})",
+        consensus.quorum_threshold
+    );
+
+    Ok(success(
+        "fleet quorum propose",
+        json!({
+            "proposal_id": proposal_id,
+            "proposer_id": proposer,
+            "total_nodes": nodes,
+            "byzantine_tolerance": byzantine,
+            "quorum_threshold": consensus.quorum_threshold,
+            "decision": "Pending",
+        }),
+        summary,
+    ))
+}
+
+fn quorum_vote(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config", "data-dir", "nodes", "byzantine", "proposer", "proposal-id",
+            "voter", "approve", "votes", "payload",
+        ],
+    )?;
+    let nodes: usize = parsed
+        .value("nodes")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--nodes must be an integer")))
+        .transpose()?
+        .unwrap_or(4);
+    let byzantine: usize = parsed
+        .value("byzantine")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--byzantine must be an integer")))
+        .transpose()?
+        .unwrap_or(1);
+    let proposer = parsed.value("proposer").unwrap_or("leader-0");
+    let proposal_id = parsed.value("proposal-id").unwrap_or("prop-1");
+    let payload = parsed.value("payload").unwrap_or("upgrade-v304");
+
+    let mut consensus = BftConsensus::new(nodes, byzantine)
+        .map_err(|e| CliError::usage(format!("invalid BFT parameters: {e}")))?;
+
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(payload.as_bytes());
+    let hash: [u8; 32] = hasher.finalize().into();
+
+    let now = timestamp().as_unix_seconds();
+    consensus
+        .propose(proposer, proposal_id, hash, now)
+        .map_err(|e| CliError::execution(format!("BFT propose failed: {e}"), json!({})))?;
+
+    let mut decision = ConsensusDecision::Pending;
+
+    if let Some(votes_raw) = parsed.value("votes") {
+        for entry in votes_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let mut parts = entry.splitn(2, ':');
+            let v_id = parts.next().unwrap_or("voter");
+            let v_approve = parts.next().map(|b| b == "true" || b == "1").unwrap_or(true);
+            decision = consensus
+                .cast_vote(v_id, proposal_id, v_approve, vec![])
+                .map_err(|e| CliError::execution(format!("BFT vote failed: {e}"), json!({})))?;
+        }
+    } else {
+        let voter = parsed.value("voter").unwrap_or("voter-1");
+        let approve: bool = parsed
+            .value("approve")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(true);
+        decision = consensus
+            .cast_vote(voter, proposal_id, approve, vec![])
+            .map_err(|e| CliError::execution(format!("BFT vote failed: {e}"), json!({})))?;
+    }
+
+    let decision_str = match decision {
+        ConsensusDecision::Pending => "Pending",
+        ConsensusDecision::Approved => "Approved",
+        ConsensusDecision::Rejected => "Rejected",
+    };
+
+    let votes_cast = consensus.votes.get(proposal_id).map(|v| v.len()).unwrap_or(0);
+    let summary = format!(
+        "BFT Consensus Tally for '{proposal_id}': {decision_str} ({votes_cast} vote(s) cast, quorum threshold Q={})",
+        consensus.quorum_threshold
+    );
+
+    Ok(success(
+        "fleet quorum vote",
+        json!({
+            "proposal_id": proposal_id,
+            "decision": decision_str,
+            "votes_cast": votes_cast,
+            "quorum_threshold": consensus.quorum_threshold,
+            "total_nodes": nodes,
+            "byzantine_tolerance": byzantine,
+        }),
+        summary,
+    ))
+}
+
+fn dag_schedule_sim(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "workers", "tasks", "dependencies", "preset"],
+    )?;
+    let workers: usize = parsed
+        .value("workers")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--workers must be an integer")))
+        .transpose()?
+        .unwrap_or(4);
+    let preset = parsed.value("preset").unwrap_or("diamond");
+
+    let mut dag = TaskDag::new();
+
+    if let Some(tasks_raw) = parsed.value("tasks") {
+        for entry in tasks_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let mut parts = entry.splitn(2, ':');
+            let id = parts.next().unwrap();
+            let weight: u64 = parts
+                .next()
+                .and_then(|w| w.parse().ok())
+                .unwrap_or(1);
+            dag.add_task(id, weight)
+                .map_err(|e| CliError::execution(format!("failed to add task: {e}"), json!({})))?;
+        }
+        if let Some(deps_raw) = parsed.value("dependencies") {
+            for entry in deps_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                let mut parts = entry.split("->");
+                let from = parts.next().unwrap().trim();
+                let to = parts.next().unwrap_or("").trim();
+                if !from.is_empty() && !to.is_empty() {
+                    dag.add_dependency(from, to).map_err(|e| {
+                        CliError::execution(format!("failed to add dependency: {e}"), json!({}))
+                    })?;
+                }
+            }
+        }
+    } else {
+        match preset {
+            "pipeline" => {
+                let _ = dag.add_task("stage-1", 10);
+                let _ = dag.add_task("stage-2", 20);
+                let _ = dag.add_task("stage-3", 15);
+                let _ = dag.add_dependency("stage-1", "stage-2");
+                let _ = dag.add_dependency("stage-2", "stage-3");
+            }
+            "tree" => {
+                let _ = dag.add_task("root", 5);
+                let _ = dag.add_task("branch-a", 15);
+                let _ = dag.add_task("branch-b", 25);
+                let _ = dag.add_task("leaf-a1", 10);
+                let _ = dag.add_task("leaf-b1", 10);
+                let _ = dag.add_dependency("root", "branch-a");
+                let _ = dag.add_dependency("root", "branch-b");
+                let _ = dag.add_dependency("branch-a", "leaf-a1");
+                let _ = dag.add_dependency("branch-b", "leaf-b1");
+            }
+            _ => {
+                // Default diamond DAG: init -> compute_a, compute_b -> finalize
+                let _ = dag.add_task("init", 10);
+                let _ = dag.add_task("compute_a", 25);
+                let _ = dag.add_task("compute_b", 35);
+                let _ = dag.add_task("finalize", 15);
+                let _ = dag.add_dependency("init", "compute_a");
+                let _ = dag.add_dependency("init", "compute_b");
+                let _ = dag.add_dependency("compute_a", "finalize");
+                let _ = dag.add_dependency("compute_b", "finalize");
+            }
+        }
+    }
+
+    let topo = dag
+        .topological_sort()
+        .map_err(|e| CliError::execution(format!("DAG topological sort failed: {e}"), json!({})))?;
+    let t_1 = dag.total_work();
+    let t_inf = dag
+        .critical_path_span()
+        .map_err(|e| CliError::execution(format!("DAG critical path failed: {e}"), json!({})))?;
+    let makespan = dag
+        .simulate_work_stealing(workers)
+        .map_err(|e| CliError::execution(format!("DAG simulate work stealing failed: {e}"), json!({})))?;
+    let speedup = if makespan > 0 { (t_1 as f64) / (makespan as f64) } else { 0.0 };
+
+    let summary = format!(
+        "Task DAG Work-Stealing Scheduling Simulation: tasks={}, T_1={t_1}, T_inf={t_inf}, workers={workers}, makespan T_P={makespan}, speedup S={speedup:.2}x",
+        topo.len()
+    );
+
+    Ok(success(
+        "fleet dag",
+        json!({
+            "tasks_count": topo.len(),
+            "topological_order": topo,
+            "total_work_t1": t_1,
+            "critical_path_t_inf": t_inf,
+            "workers": workers,
+            "simulated_makespan": makespan,
+            "speedup": speedup,
+        }),
+        summary,
+    ))
 }

@@ -1,6 +1,6 @@
 use super::{load_config, parse_options, require_config_file, session_error, session_store};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::SocietyEngine;
+use pandora_runtime::{BloomFilter, GossipMessage, GossipNode, SocietyEngine, VectorClock};
 use pandora_types::AgentPersona;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("peer requires 'list', 'roster', 'register', 'inspect', 'delete', 'send', 'inbox', 'read', 'reply', 'thread', or 'a2a'"))?;
+        .ok_or_else(|| CliError::usage("peer requires 'list', 'roster', 'register', 'inspect', 'delete', 'send', 'inbox', 'read', 'reply', 'thread', 'a2a', or 'gossip'"))?;
 
     match subcommand.as_str() {
         "list" | "roster" => roster(&args[1..]),
@@ -21,6 +21,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "reply" => reply(&args[1..]),
         "thread" => thread(&args[1..]),
         "a2a" => a2a(&args[1..]),
+        "gossip" => gossip(&args[1..]),
         unknown => Err(CliError::usage(format!("unknown peer command '{unknown}'"))),
     }
 }
@@ -583,5 +584,216 @@ fn a2a_status(args: &[String]) -> Result<CommandResult, CliError> {
         "peer a2a status",
         val,
         format!("Task '{task_id}' status retrieved successfully"),
+    ))
+}
+
+fn gossip(args: &[String]) -> Result<CommandResult, CliError> {
+    let action = args
+        .first()
+        .ok_or_else(|| CliError::usage("peer gossip requires 'broadcast', 'receive', or 'filter'"))?;
+
+    match action.as_str() {
+        "broadcast" => gossip_broadcast(&args[1..]),
+        "receive" => gossip_receive(&args[1..]),
+        "filter" => gossip_filter(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown peer gossip action '{unknown}'; expected 'broadcast', 'receive', or 'filter'"
+        ))),
+    }
+}
+
+fn gossip_broadcast(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "node-id", "payload", "fanout", "max-hops", "peers"],
+    )?;
+    let node_id = parsed.value("node-id").unwrap_or("node-local");
+    let payload_str = parsed.value("payload").unwrap_or("ping");
+    let fanout: usize = parsed
+        .value("fanout")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--fanout must be an integer")))
+        .transpose()?
+        .unwrap_or(3);
+    let max_hops: u32 = parsed
+        .value("max-hops")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--max-hops must be an integer")))
+        .transpose()?
+        .unwrap_or(8);
+
+    let mut node = GossipNode::new(node_id, fanout);
+    if let Some(peers_raw) = parsed.value("peers") {
+        for peer in peers_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            node.add_peer(peer);
+        }
+    }
+
+    let (msg, targets) = node.publish(payload_str.as_bytes().to_vec(), max_hops);
+
+    let summary = format!(
+        "Epidemic gossip published message '{}' from node '{}' across {} target(s) (fanout={fanout}, max_hops={max_hops})",
+        msg.id, node_id, targets.len()
+    );
+
+    Ok(success(
+        "peer gossip broadcast",
+        json!({
+            "message_id": msg.id,
+            "origin_node": msg.origin_node,
+            "vector_clock": msg.vector_clock,
+            "hop_count": msg.hop_count,
+            "max_hops": msg.max_hops,
+            "payload": payload_str,
+            "targets": targets,
+            "peers_count": node.known_peers.len(),
+        }),
+        summary,
+    ))
+}
+
+fn gossip_receive(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config", "data-dir", "workspace", "node-id", "message-id", "origin", "payload",
+            "hop-count", "max-hops", "fanout", "peers",
+        ],
+    )?;
+    let node_id = parsed.value("node-id").unwrap_or("node-local");
+    let origin = parsed.value("origin").unwrap_or("node-origin");
+    let payload_str = parsed.value("payload").unwrap_or("ping");
+    let fanout: usize = parsed
+        .value("fanout")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--fanout must be an integer")))
+        .transpose()?
+        .unwrap_or(3);
+    let hop_count: u32 = parsed
+        .value("hop-count")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--hop-count must be an integer")))
+        .transpose()?
+        .unwrap_or(0);
+    let max_hops: u32 = parsed
+        .value("max-hops")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--max-hops must be an integer")))
+        .transpose()?
+        .unwrap_or(8);
+
+    let mut node = GossipNode::new(node_id, fanout);
+    if let Some(peers_raw) = parsed.value("peers") {
+        for peer in peers_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            node.add_peer(peer);
+        }
+    }
+
+    let mut vector_clock = VectorClock::new();
+    vector_clock.increment(origin);
+
+    let message_id = if let Some(id) = parsed.value("message-id") {
+        id.to_string()
+    } else {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(origin.as_bytes());
+        hasher.update(payload_str.as_bytes());
+        format!("{:x}", hasher.finalize())
+    };
+
+    let msg = GossipMessage {
+        id: message_id.clone(),
+        origin_node: origin.to_string(),
+        payload: payload_str.as_bytes().to_vec(),
+        vector_clock,
+        hop_count,
+        max_hops,
+    };
+
+    let is_duplicate = node.filter.contains(msg.id.as_bytes());
+    let forward_targets = node.receive(msg);
+    let accepted = !is_duplicate;
+    let targets = forward_targets.unwrap_or_default();
+
+    let summary = if accepted {
+        format!(
+            "Node '{node_id}' accepted gossip message '{message_id}' (forwarding to {} target(s))",
+            targets.len()
+        )
+    } else {
+        format!("Node '{node_id}' discarded duplicate gossip message '{message_id}' (Bloom filter deduplication)")
+    };
+
+    Ok(success(
+        "peer gossip receive",
+        json!({
+            "node_id": node.node_id,
+            "message_id": message_id,
+            "accepted": accepted,
+            "forward_targets": targets,
+            "vector_clock": node.clock,
+        }),
+        summary,
+    ))
+}
+
+fn gossip_filter(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "action", "item", "num-bits", "hash-functions", "items-count"],
+    )?;
+    let action = parsed.value("action").unwrap_or("query");
+    let item = parsed.value("item").unwrap_or("msg-key-1");
+    let num_bits: usize = parsed
+        .value("num-bits")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--num-bits must be an integer")))
+        .transpose()?
+        .unwrap_or(2048);
+    let hash_functions: usize = parsed
+        .value("hash-functions")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--hash-functions must be an integer")))
+        .transpose()?
+        .unwrap_or(7);
+    let items_count: usize = parsed
+        .value("items-count")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--items-count must be an integer")))
+        .transpose()?
+        .unwrap_or(50);
+
+    let mut filter = BloomFilter::new(num_bits, hash_functions);
+
+    let (inserted, contains) = match action {
+        "insert" => {
+            filter.insert(item.as_bytes());
+            (true, filter.contains(item.as_bytes()))
+        }
+        "contains" | "query" => {
+            (false, filter.contains(item.as_bytes()))
+        }
+        "rate" => {
+            (false, false)
+        }
+        other => {
+            return Err(CliError::usage(format!(
+                "unknown gossip filter action '{other}'; expected 'insert', 'contains', or 'rate'"
+            )));
+        }
+    };
+
+    let fp_rate = filter.theoretical_false_positive_rate(items_count);
+
+    let summary = format!(
+        "Kirsch-Mitzenmacher Bloom Filter (bits={num_bits}, k={hash_functions}): item='{item}', contains={contains}, theoretical_fp({items_count})={fp_rate:.6}"
+    );
+
+    Ok(success(
+        "peer gossip filter",
+        json!({
+            "action": action,
+            "item": item,
+            "num_bits": num_bits,
+            "hash_functions": hash_functions,
+            "inserted": inserted,
+            "contains": contains,
+            "items_count": items_count,
+            "theoretical_fp_rate": fp_rate,
+        }),
+        summary,
     ))
 }

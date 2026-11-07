@@ -1,8 +1,8 @@
 use super::{LOCAL_TENANT, LOCAL_WORKSPACE, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
-    GraphInput, GraphIntelligenceEngine, GraphKind, GraphScope, GraphStore, GraphStoreError,
-    MAX_GRAPH_INPUT_BYTES,
+    AsciiGridRenderer, ForceDirectedLayout, GraphInput, GraphIntelligenceEngine, GraphKind,
+    GraphScope, GraphStore, GraphStoreError, Point2D, ViewportCamera, MAX_GRAPH_INPUT_BYTES,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -26,10 +26,13 @@ struct GraphInputRecord {
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let first = args.first().ok_or_else(|| {
-        CliError::usage("graph requires 'code', 'knowledge', 'review', 'architecture', or 'map'")
+        CliError::usage("graph requires 'code', 'knowledge', 'review', 'architecture', 'map', or 'visual'")
     })?;
     if first == "map" {
         return map_command(&args[1..]);
+    }
+    if first == "visual" {
+        return visual_command(&args[1..]);
     }
     let kind = parse_kind(first)?;
     let rest = &args[1..];
@@ -38,6 +41,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     match rest.first().map(String::as_str) {
         Some("show") => show(kind, &rest[1..]),
         Some("remove") => remove(kind, &rest[1..]),
+        Some("visual") => visual(kind, &rest[1..]),
         _ => build(kind, rest),
     }
 }
@@ -254,6 +258,179 @@ fn show(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
             snapshot.edges().len(),
             snapshot.digest()
         ),
+    ))
+}
+
+fn visual_command(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "store", "tenant", "workspace", "width", "height", "iterations", "kind",
+            "zoom", "pan-x", "pan-y",
+        ],
+    )?;
+    let kind = if let Some(k) = parsed.value("kind") {
+        parse_kind(k)?
+    } else {
+        GraphKind::Knowledge
+    };
+    visual(kind, args)
+}
+
+fn visual(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "store", "tenant", "workspace", "width", "height", "iterations", "kind",
+            "zoom", "pan-x", "pan-y",
+        ],
+    )?;
+    let width: usize = parsed
+        .value("width")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--width must be an integer")))
+        .transpose()?
+        .unwrap_or(60);
+    let height: usize = parsed
+        .value("height")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--height must be an integer")))
+        .transpose()?
+        .unwrap_or(20);
+    let iterations: usize = parsed
+        .value("iterations")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--iterations must be an integer")))
+        .transpose()?
+        .unwrap_or(100);
+    let zoom: f64 = parsed
+        .value("zoom")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--zoom must be a number")))
+        .transpose()?
+        .unwrap_or(1.0);
+    let pan_x: f64 = parsed
+        .value("pan-x")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--pan-x must be a number")))
+        .transpose()?
+        .unwrap_or(0.0);
+    let pan_y: f64 = parsed
+        .value("pan-y")
+        .map(|v| v.parse().map_err(|_| CliError::usage("--pan-y must be a number")))
+        .transpose()?
+        .unwrap_or(0.0);
+
+    let mut layout = ForceDirectedLayout::new(width as f64, height as f64);
+
+    let mut loaded_from_store = false;
+    if let Some(store_path) = parsed.value("store") {
+        let scope = GraphScope::new(
+            parsed.value("tenant").unwrap_or(LOCAL_TENANT),
+            parsed.value("workspace").unwrap_or(LOCAL_WORKSPACE),
+        )
+        .map_err(|error| CliError::usage(format!("invalid graph scope: {error}")))?;
+        if let Ok(Some(snapshot)) = GraphStore::open(store_path).and_then(|store| store.load(kind, &scope)) {
+            loaded_from_store = true;
+            let center_x = (width as f64) / 2.0;
+            let center_y = (height as f64) / 2.0;
+            let total_nodes = snapshot.nodes().len().max(1);
+            for (i, node) in snapshot.nodes().iter().enumerate() {
+                let angle = (i as f64) * 2.0 * std::f64::consts::PI / (total_nodes as f64);
+                let radius = (width.min(height) as f64) * 0.35;
+                let init_x = (center_x + radius * angle.cos()).clamp(2.0, (width.saturating_sub(2)) as f64);
+                let init_y = (center_y + radius * angle.sin()).clamp(2.0, (height.saturating_sub(2)) as f64);
+                let label = node.label();
+                let short_label = if label.len() > 10 {
+                    &label[..10]
+                } else {
+                    label
+                };
+                layout.add_node(node.id(), short_label, init_x, init_y);
+            }
+            for edge in snapshot.edges() {
+                layout.add_edge(edge.from(), edge.to());
+            }
+        }
+    }
+
+    if !loaded_from_store {
+        match kind {
+            GraphKind::Code => {
+                layout.add_node("cli", "cli", width as f64 * 0.2, height as f64 * 0.2);
+                layout.add_node("svc", "service", width as f64 * 0.5, height as f64 * 0.2);
+                layout.add_node("rt", "runtime", width as f64 * 0.5, height as f64 * 0.5);
+                layout.add_node("types", "types", width as f64 * 0.8, height as f64 * 0.8);
+                layout.add_node("prov", "provider", width as f64 * 0.2, height as f64 * 0.8);
+                layout.add_edge("cli", "rt");
+                layout.add_edge("cli", "svc");
+                layout.add_edge("svc", "rt");
+                layout.add_edge("rt", "types");
+                layout.add_edge("rt", "prov");
+            }
+            GraphKind::Architecture => {
+                layout.add_node("gw", "Gateway", width as f64 * 0.5, height as f64 * 0.2);
+                layout.add_node("core", "CoreEngine", width as f64 * 0.5, height as f64 * 0.5);
+                layout.add_node("mesh", "SwarmMesh", width as f64 * 0.2, height as f64 * 0.5);
+                layout.add_node("vfs", "ContextVfs", width as f64 * 0.8, height as f64 * 0.5);
+                layout.add_node("hw", "HWDispatch", width as f64 * 0.5, height as f64 * 0.8);
+                layout.add_edge("gw", "core");
+                layout.add_edge("core", "mesh");
+                layout.add_edge("core", "vfs");
+                layout.add_edge("core", "hw");
+            }
+            GraphKind::Review => {
+                layout.add_node("target", "TargetDiff", width as f64 * 0.5, height as f64 * 0.2);
+                layout.add_node("argus", "ArgusReview", width as f64 * 0.3, height as f64 * 0.6);
+                layout.add_node("linter", "AstChecker", width as f64 * 0.7, height as f64 * 0.6);
+                layout.add_node("verdict", "Verdict", width as f64 * 0.5, height as f64 * 0.8);
+                layout.add_edge("target", "argus");
+                layout.add_edge("target", "linter");
+                layout.add_edge("argus", "verdict");
+                layout.add_edge("linter", "verdict");
+            }
+            _ => {
+                layout.add_node("k0", "VFS", width as f64 * 0.3, height as f64 * 0.3);
+                layout.add_node("k1", "HNSW", width as f64 * 0.7, height as f64 * 0.3);
+                layout.add_node("k2", "BFT", width as f64 * 0.3, height as f64 * 0.7);
+                layout.add_node("k3", "SIMD", width as f64 * 0.7, height as f64 * 0.7);
+                layout.add_node("root", "Kernel", width as f64 * 0.5, height as f64 * 0.5);
+                layout.add_edge("root", "k0");
+                layout.add_edge("root", "k1");
+                layout.add_edge("root", "k2");
+                layout.add_edge("root", "k3");
+                layout.add_edge("k0", "k1");
+            }
+        }
+    }
+
+    let iters_converged = layout.simulate_until_equilibrium(iterations, 0.01);
+    let mut camera = ViewportCamera::new();
+    camera.focus_on(Point2D::new((width as f64) / 2.0, (height as f64) / 2.0));
+    camera.pan(pan_x, pan_y);
+    camera.zoom = zoom;
+
+    let rendered_lines = AsciiGridRenderer::render(&layout, &camera, width, height);
+    let rendered_ascii = rendered_lines.join("\n");
+    let summary = format!(
+        "Rendered {} topological visual graph ({}x{}, {} nodes, {} edges, converged in {} iter(s), potential energy: {:.2})",
+        kind.as_str(),
+        width,
+        height,
+        layout.nodes.len(),
+        layout.edges.len(),
+        iters_converged,
+        layout.potential_energy()
+    );
+
+    Ok(success(
+        "graph visual",
+        json!({
+            "kind": kind.as_str(),
+            "width": width,
+            "height": height,
+            "nodes_count": layout.nodes.len(),
+            "edges_count": layout.edges.len(),
+            "iterations_converged": iters_converged,
+            "potential_energy": layout.potential_energy(),
+            "rendered": rendered_ascii,
+        }),
+        format!("{summary}\n\n{rendered_ascii}"),
     ))
 }
 

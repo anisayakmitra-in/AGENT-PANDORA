@@ -323,6 +323,7 @@ fn write_readiness(
 ) -> Result<(), CliError> {
     let readiness = json!({
         "endpoint": format!("http://{address}/v1/rpc"),
+        "ws_endpoint": format!("ws://{address}/v1/ws"),
         "token_path": token_path,
         "device_key_path": device_key_path,
         "device_id": device_id,

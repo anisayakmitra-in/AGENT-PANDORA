@@ -17,8 +17,11 @@ flowchart LR
     P3["Phase 3<br/><b>Swarm Orchestrator</b><br/><i>P2P Mesh & Task Gossip</i>"]
     P4["Phase 4<br/><b>TUI Visual Graph</b><br/><i>Memory & DAG Inspector</i>"]
     P5["Phase 5<br/><b>Compute Acceleration</b><br/><i>Batch Vector Dispatch</i>"]
+    P6["Phase 6<br/><b>Bandit Router</b><br/><i>Minimax Regret O(sqrt(KT ln T))</i>"]
+    P7["Phase 7<br/><b>Merkle-DAG Audit</b><br/><i>O(log N) State Proofs</i>"]
+    P8["Phase 8<br/><b>Speculative Decoding</b><br/><i>Exact Distribution & Radix KV</i>"]
 
-    P1 --> P2 --> P3 --> P4 --> P5
+    P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8
 ```
 
 Every phase is grounded in publication-grade mathematical proofs:
@@ -27,6 +30,9 @@ Every phase is grounded in publication-grade mathematical proofs:
 3. **Phase 3**: Epidemic gossip convergence $O(\log N)$ and Byzantine Fault Tolerant consensus quorum $N \ge 3f + 1$.
 4. **Phase 4**: Force-directed layout Hamiltonian energy minimization and Kahn's DAG topological order $O(|V| + |E|)$.
 5. **Phase 5**: Roofline arithmetic intensity $I$ and SIMD vectorization Amdahl speedup $S = \frac{1}{(1-f) + f/p}$.
+6. **Phase 6**: Minimax cumulative regret bound $O(\sqrt{K T \ln T})$ under UCB1 and Beta posterior concentration $O(1/N_a)$.
+7. **Phase 7**: Merkle inclusion proof size $32 \lceil \log_2 N \rceil\text{ bytes} = O(\log N)$ and collision resistance $\le 2^{-128}$.
+8. **Phase 8**: Exact distribution preservation $P_{\text{spec}} \equiv P$, speculative speedup $S = \frac{\mathbb{E}[\beta]}{\gamma r + 1}$, and Radix Trie compression $C_R \to \frac{1}{1 - \eta}$.
 
 ---
 
@@ -149,3 +155,103 @@ A $4\times$ reduction in memory bandwidth saturates memory buses more efficientl
 Let $f$ denote the fraction of search time spent computing vector inner products ($f \approx 0.88$). With 8-wide AVX2 / NEON vectorization ($p = 8$ lanes):
 $$S = \frac{1}{(1 - f) + \frac{f}{p}} = \frac{1}{(1 - 0.88) + \frac{0.88}{8}} = \frac{1}{0.12 + 0.11} = \frac{1}{0.23} \approx 4.35\times$$
 This aligns directly with our empirical benchmarks showing search latencies dropping from $\sim 650\,\mu\text{s}$ to $< 150\,\mu\text{s}$.
+- **Reference**: Detailed proofs documented in `docs/math/phase5_hardware_batch_dispatch.md`.
+
+---
+
+## 6. Phase 6: Contextual Thompson Sampling / UCB1 Multi-Armed Bandit Model Router
+
+### 6.1 Minimax Regret Bound Formulation
+
+**Theorem 9 (Minimax Regret Bound):**  
+*Under the UCB1 policy over $K$ candidate model endpoints with sub-optimality gaps $\Delta_a = \mu^* - \mu_a > 0$, the expected cumulative regret over $T$ steps satisfies:*
+$$\mathbb{E}[R(T)] \le 2 \sqrt{8 K T \ln T} + K \left(1 + \frac{\pi^2}{3}\right) = O(\sqrt{K T \ln T})$$
+
+**Proof:**  
+By Hoeffding's concentration inequality, the probability that the empirical sample mean $\hat{\mu}_a(s)$ deviates from $\mu_a$ by $\sqrt{\frac{2 \ln t}{s}}$ is bounded by $2 t^{-4}$. Expected sub-optimal arm pulls satisfy:
+$$\mathbb{E}[N_a(T)] \le \frac{8 \ln T}{\Delta_a^2} + 1 + \frac{\pi^2}{3}$$
+Partitioning the arm set into large gaps ($\Delta_a \ge \epsilon$) and small gaps ($\Delta_a < \epsilon$) yields:
+$$\mathbb{E}[R(T)] \le \epsilon T + \frac{8 K \ln T}{\epsilon} + O(K)$$
+Balancing exploration and exploitation by optimizing $\epsilon^* = \sqrt{\frac{8 K \ln T}{T}}$ produces:
+$$\mathbb{E}[R(T)] \le 2 \sqrt{8 K T \ln T} + O(K) = O(\sqrt{K T \ln T})$$
+$\blacksquare$
+
+### 6.2 Beta Posterior Variance Concentration
+
+**Theorem 10 (Bayesian Posterior Concentration):**  
+*In Bayesian Thompson Sampling with conjugate prior $\text{Beta}(\alpha_0, \beta_0)$ and $N_a$ observed rewards, the posterior variance is strictly bounded by:*
+$$\operatorname{Var}(\theta_a \mid N_a) \le \frac{1}{4(N_a + 2)} = O\left(\frac{1}{N_a}\right)$$
+- **Reference**: Detailed proofs documented in `docs/math/phase6_bandit_model_router.md`.
+
+---
+
+## 7. Phase 7: Merkle-DAG Cryptographic Audit Log & Verifiable State Proofs
+
+### 7.1 Logarithmic Inclusion Proof Complexity
+
+**Theorem 11 (Logarithmic Proof Complexity):**  
+*For an audit log containing $N \ge 1$ sequential execution records, the inclusion proof $\pi(i)$ verifying event $e_i$ exists in Merkle root $R_N$ satisfies:*
+$$|\pi(i)| = \lceil \log_2 N \rceil \text{ hashes} = 32 \lceil \log_2 N \rceil \text{ bytes} = O(\log N)$$
+$$W_{\text{verify}}(\pi(i)) = \lceil \log_2 N \rceil \text{ SHA-256 evaluations} = O(\log N)$$
+
+**Proof:**  
+A complete binary tree over $N$ leaves has depth $h = \lceil \log_2 N \rceil$. The authentication co-path contains exactly one sibling hash per level from leaf to root. Verification ascends the tree in $h$ steps. For $N = 1,000,000$, verification requires only 20 hashes ($640$ bytes), delivering a $50,000\times$ bandwidth saving over linear log scans.  
+$\blacksquare$
+
+### 7.2 Cryptographic Collision Resistance & Inherent Acyclicity
+
+**Theorem 12 (Collision Resistance):**  
+Under domain separation tags $\tau_{\text{leaf}} = 0x00$, $\tau_{\text{node}} = 0x01$, and $\tau_{\text{dag}} = 0x02$, forging an inclusion proof for an unrecorded event requires finding a SHA-256 collision, bounded by:
+$$\operatorname{Adv}_{\text{CR}}(\mathcal{A}) \le \frac{q^2}{2^{257}} \le 2^{-128} \quad (\text{for } q \le 2^{64})$$
+
+**Theorem 13 (Causal DAG Acyclicity):**  
+Because each DAG node binds its payload and parent hashes into canonical hash $H(u) = H(0x02 \mathbin{\Vert} \text{Payload} \mathbin{\Vert} \operatorname{Sort}(\{H(p)\}))$, forming a cycle requires finding a 256-bit hash preimage, succeeding with negligible probability $\le 2^{-256}$.  
+- **Reference**: Detailed proofs documented in `docs/math/phase7_merkle_dag_audit.md`.
+
+---
+
+## 8. Phase 8: Speculative Token Decoding & Prefix-Tree KV Cache Compression
+
+### 8.1 Exact Distribution Preservation of Rejection Sampling
+
+**Theorem 14 (Distribution Invariance):**  
+*Let $P(x)$ be the target model distribution and $Q(x)$ be the draft proposal. Under speculative rejection sampling with acceptance $\alpha(x) = \min(1, P(x)/Q(x))$ and bonus residual sampling $P'(x) = \frac{\max(0, P(x) - Q(x))}{1 - \sum \min(P, Q)}$, the marginal emitted distribution is identically equal to the target model:*
+$$P_{\text{spec}}(x) \equiv P(x) \quad \forall x \in \mathcal{V}$$
+
+**Proof:**  
+$$P_{\text{spec}}(x) = \min(Q(x), P(x)) + \max(0, P(x) - Q(x)) \equiv P(x)$$
+guaranteeing zero degradation in reasoning quality.  
+$\blacksquare$
+
+### 8.2 Expected Accepted Tokens and Latency Speedup
+
+**Theorem 15 (Speculative Speedup Ratio):**  
+*For draft window $\gamma \ge 1$, mean acceptance rate $\alpha \in [0, 1]$, and draft-to-target latency ratio $r = t_d / t_t \in (0, 1)$:*
+$$\mathbb{E}[\beta] = \sum_{i=0}^\gamma \alpha^i = \frac{1 - \alpha^{\gamma + 1}}{1 - \alpha}$$
+$$S(\alpha, \gamma, r) = \frac{\mathbb{E}[\beta]}{\gamma r + 1} = \frac{\frac{1 - \alpha^{\gamma + 1}}{1 - \alpha}}{\gamma r + 1}$$
+For empirical parameters $\alpha = 0.80$, $\gamma = 5$, and $r = 0.10$, theoretical speedup is $S = \frac{3.69}{1.50} \approx 2.46\times$.  
+$\blacksquare$
+
+### 8.3 Radix Trie KV Cache Compression Ratio
+
+**Theorem 16 (Prefix-Tree Memory Compression):**  
+*For $M$ concurrent sessions sharing prompt prefixes of fraction $\eta = L_{\text{prefix}} / L_{\text{total}}$, the Radix Trie KV cache achieves:*
+$$C_R(M, \eta) = \frac{1}{(1 - \eta) + \frac{\eta}{M}}, \quad \lim_{M \to \infty} C_R(M, \eta) = \frac{1}{1 - \eta}$$
+For agent workflows with $\eta = 0.80$ (system instructions and tool declarations), asymptotic compression is $5.0\times$ (80% memory footprint savings).  
+- **Reference**: Detailed proofs documented in `docs/math/phase8_speculative_kv_cache.md`.
+
+---
+
+## 9. Comprehensive Roadmap Summary Matrix (Phases 1–8)
+
+| Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
+|:---:|:---|:---|:---:|:---|:---|
+| **1** | ContextVfs HNSW Index | Skip-graph layered search | $\mathbb{E}[C] = O(\log N)$ search, $O(N)$ space | `context_vfs.rs`, `hnsw.rs` | `tests/hnsw_tests.rs` |
+| **2** | Streaming WebSocket Gateway | Shannon uniform entropy masking | $H = 8\text{ bits}$, $W_{\max} \le K/\mu$ queue delay | `websocket.rs`, `service.rs` | `tests/websocket_tests.rs` |
+| **3** | Swarm Mesh & Task Gossip | Epidemic logistic spread, BFT quorum | $\mathbb{E}[T] = O(\log N)$, $N \ge 3f + 1$ | `swarm_mesh.rs` | `tests/swarm_mesh_tests.rs` |
+| **4** | TUI Visual Graph Inspector | Lyapunov-damped Hamiltonian energy | Equilibrium $\gamma = 0.85$, $O(\|V\| + \|E\|)$ DAG | `visual_graph.rs` | `tests/visual_graph_tests.rs` |
+| **5** | Hardware Batch Compute | Roofline arithmetic intensity, Amdahl | $I(B, N) \to \frac{2B}{b}$, $S \approx 4.35\times$ SIMD | `hardware_batch_dispatch.rs` | `tests/hardware_batch_dispatch_tests.rs` |
+| **6** | Bandit Model Router | UCB1 Hoeffding inequality, Beta prior | Regret $\mathbb{E}[R(T)] \le O(\sqrt{K T \ln T})$ | `bandit_router.rs` | `tests/bandit_router_tests.rs` |
+| **7** | Merkle-DAG Cryptographic Audit | Binary tree co-path, collision bounds | Proof size $32 \lceil \log_2 N \rceil\text{ B}$, $\operatorname{Adv} \le 2^{-128}$ | `merkle_dag.rs` | `tests/merkle_dag_tests.rs` |
+| **8** | Speculative Decoding & KV Cache | Rejection sampling, Radix Trie sharing | $P_{\text{spec}} \equiv P$, $S = \frac{\mathbb{E}[\beta]}{\gamma r + 1}$, $C_R \to \frac{1}{1-\eta}$ | `speculative_decoding.rs` | `tests/speculative_decoding_tests.rs` |
+

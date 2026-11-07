@@ -425,7 +425,7 @@ impl SubprocessLspSession {
             },
             "clientInfo": {
                 "name": "pandora-lsp",
-                "version": "3.0.3"
+                "version": "3.0.4"
             }
         });
 
@@ -730,7 +730,7 @@ impl LspSessionBackend for MockLspSession {
                 },
                 "serverInfo": {
                     "name": format!("pandora-mock-{}", self.kind.as_str()),
-                    "version": "3.0.3"
+                    "version": "3.0.4"
                 }
             })),
             "textDocument/definition" | "textDocument/typeDefinition" => {

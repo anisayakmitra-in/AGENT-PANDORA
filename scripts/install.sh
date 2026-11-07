@@ -6,7 +6,7 @@ fail() {
   exit 1
 }
 
-version="${PANDORA_VERSION:-v3.0.3}"
+version="${PANDORA_VERSION:-v3.0.4}"
 printf '%s\n' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   || fail "PANDORA_VERSION must be a SemVer tag such as v3.0.0"
 case "$version" in

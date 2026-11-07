@@ -6,6 +6,7 @@ pub mod agent_loop;
 pub mod approvals;
 pub mod arch_simd;
 pub mod artifact_catalog;
+pub mod bandit_router;
 pub mod blaze_adapter;
 pub mod coding_feedback;
 pub mod composition_ledger;
@@ -49,6 +50,7 @@ pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
 pub mod memory_schedule;
+pub mod merkle_dag;
 pub mod mesh_sync;
 pub mod mock_cdp;
 pub mod mutation;
@@ -82,6 +84,7 @@ pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
 pub mod society_engine;
+pub mod speculative_decoding;
 pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
@@ -115,6 +118,9 @@ pub use arch_simd::{
     simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128, student_t_critical_value_95,
 };
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
+pub use bandit_router::{
+    BanditArm, BanditModelRouter, BanditStrategy, RoutingContext, RoutingReward, SafePrng,
+};
 pub use blaze_adapter::{
     BlazeBuildResult, BlazeCompilerAdapter, BlazeConfig, BlazeDiagnostics, DiagnosticLevel,
 };
@@ -254,6 +260,10 @@ pub use memory_schedule::{
     MemorySynthesisSchedule, MemorySynthesisScheduleError, MemorySynthesisScheduleRun,
     MemorySynthesisScheduleRunStatus, MemorySynthesisScheduleStore,
 };
+pub use merkle_dag::{
+    DagError, DagNode, InclusionProof, MerkleDagAuditLog, MerkleProofStep, NodeDirection,
+    TAG_DAG, TAG_LEAF, TAG_NODE,
+};
 pub use mesh_sync::{
     CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,
     MeshSyncResult, PeerIdentity, SignedCapsulePackage,
@@ -327,6 +337,9 @@ pub use skill_engine::{
     SkillState,
 };
 pub use society_engine::SocietyEngine;
+pub use speculative_decoding::{
+    DraftVerificationResult, RadixKvCache, RadixKvNode, SpeculativeEngine, TokenProbability,
+};
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_LIST, MAX_STORAGE_LIFECYCLE_RECEIPTS, StorageLifecycleReceipt,
     StorageLifecycleRecordResult, StorageLifecycleStore, StorageLifecycleStoreError,

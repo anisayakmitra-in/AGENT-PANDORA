@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, and `v3.0.3`. The active release identity
-is `v3.0.3`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, and `v3.0.4`. The active release identity
+is `v3.0.4`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.4
+
+This release introduces direct CLI command and daemon endpoint wiring across Phases 2 through 5 (WebSocket RFC 6455 GET `/v1/ws` streaming daemon endpoint, epidemic gossip rounds and Bloom filter routing under `pandora peer gossip`, BFT quorum checks and DAG scheduling under `pandora fleet quorum`, Lyapunov-damped force-directed memory graph inspection under `pandora graph visual` and TUI Memory tab, and Roofline batch similarity and hardware benchmark telemetry under `pandora hardware`), alongside next-generation mathematical roadmap implementations (Phase 6 Contextual Thompson Sampling and UCB1 Multi-Armed Bandit model router with proven $O(\sqrt{K T \ln T})$ regret bounds, Phase 7 Merkle-DAG cryptographic audit log and verifiable state proofs with proven $O(\log N)$ inclusion proofs, and Phase 8 speculative token decoding and Radix Trie KV cache prefix compression).
 
 ## v3.0.3
 

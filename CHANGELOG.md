@@ -1,5 +1,48 @@
 # Changelog
 
+## v3.0.4
+
+### Phase 2-5 CLI and Daemon Endpoint Wiring (R1)
+- **RFC 6455 Streaming WebSocket Daemon Endpoint (`crates/pandora-service/src/websocket.rs`, `crates/pandora-service/src/lib.rs`, `crates/pandora-cli/src/commands/service.rs`)**:
+  - GET `/v1/ws` streaming upgrade endpoint operational alongside loopback JSON-RPC `/v1/rpc`.
+  - Cryptographic handshake implementation computing SHA-1 base64 Sec-WebSocket-Accept token with magic GUID RFC 6455 framing.
+  - Readiness metadata export with `ws_endpoint: ws://{address}/v1/ws` in `.pandora/service.ready.json`.
+- **Epidemic Gossip Mesh & Bloom Filter Routing (`crates/pandora-cli/src/commands/peer.rs`, `crates/pandora-runtime/src/swarm_mesh.rs`)**:
+  - CLI subcommands `peer gossip broadcast`, `peer gossip receive`, and `peer gossip filter`.
+  - Configurable fanout parameter $K$, vector clocks, and 8192-bit Bloom filter message deduplication routing with zero false negatives.
+- **BFT Quorum Consensus & Dynamic DAG Scheduling (`crates/pandora-cli/src/commands/fleet.rs`, `crates/pandora-runtime/src/swarm_mesh.rs`)**:
+  - CLI subcommands `fleet quorum check`, `fleet quorum propose`, and `fleet quorum vote`.
+  - Classical Byzantine fault tolerance verification establishing quorum size $Q \ge 2f + 1$ under $N \ge 3f + 1$ node boundaries.
+  - Topological task DAG scheduling simulation with dependency resolution and stage scheduling.
+- **Lyapunov-Damped Force-Directed Memory Graph & TUI (`crates/pandora-cli/src/commands/graph.rs`, `crates/pandora-cli/src/commands/tui.rs`, `crates/pandora-runtime/src/visual_graph.rs`)**:
+  - CLI subcommand `graph visual` rendering ascii topological layouts of memory and semantic graph structures.
+  - Interactive TUI Memory tab live topological graph rendering via `AsciiGridRenderer`.
+  - Lyapunov stability guarantees preventing numerical oscillations during force relaxation.
+- **Roofline Batch Vector Compute & Hardware Telemetry (`crates/pandora-cli/src/commands/hardware.rs`, `crates/pandora-runtime/src/hardware_batch_dispatch.rs`)**:
+  - CLI subcommands `hardware roofline` and `hardware benchmark`.
+  - Arithmetic intensity modeling against machine peak throughput $\pi$ and memory bandwidth $\beta$.
+  - Empirical microbenchmarking across vector dimensions (128, 256, 512, 1536) for scalar, AVX2, and NEON architectures.
+
+### Next-Generation Mathematical Roadmap (Phases 6-8) (R3)
+- **Phase 6 Contextual Multi-Armed Bandit Model Router (`crates/pandora-runtime/src/bandit_router.rs`, `docs/math/phase6_bandit_model_router.md`)**:
+  - Upper Confidence Bound (UCB1) and Linear Contextual Thompson Sampling router balancing exploration and exploitation across LLM provider arms.
+  - Rigorous mathematical proofs establishing sublinear cumulative regret bound $\mathbb{E}[R(T)] \le 2\sqrt{8KT\ln T} + O(K) = O(\sqrt{KT\ln T})$.
+- **Phase 7 Merkle-DAG Cryptographic Audit Log & Verifiable State Proofs (`crates/pandora-runtime/src/merkle_dag.rs`, `docs/math/phase7_merkle_dag_audit.md`)**:
+  - Authenticated Merkle tree with SHA-256 node hashing and causal DAG tracking of agent execution mutations.
+  - Exact logarithmic inclusion proof generation and verification verifying proof size $|\pi(i)| = \lceil \log_2 N \rceil = O(\log N)$.
+  - Collision resistance theorem bounding preimage collision probability by $\le \frac{q^2}{2^{256}} \le 2^{-128}$.
+- **Phase 8 Speculative Decoding & Prefix-Tree KV Cache Compression (`crates/pandora-runtime/src/speculative_decoding.rs`, `docs/math/phase8_speculative_kv_cache.md`)**:
+  - Speculative rejection sampling engine verifying draft token proposals against target distribution while preserving exact target token distribution.
+  - Theoretical speedup formulation $S = \frac{1 + \alpha\gamma}{1 + \gamma \cdot \frac{T_{\text{draft}}}{T_{\text{target}}}}$.
+  - Radix Trie KV cache prefix tree compressing shared conversational prefix contexts with formal asymptotic compression ratio $C_R \to \frac{1}{1-\eta}$.
+- **Phased Roadmap Formal Mathematics Extension (`docs/math/phased_roadmap_mathematics.md`)**:
+  - Comprehensive formal integration spanning all Phases 1 through 8.
+
+### Version 3.0.4 Release & Publication (R2)
+- Manifests and package versions synchronized to `3.0.4` across workspace root `Cargo.toml`, 7 workspace crates, `Cargo.lock`, `npm/pandora-cli`, C/C++ headers (`pandora.h`, `pandora.hpp`), Go SDK (`types.go`), gateway bridge (`pandora_bridge.py`), LSP engine, installers, and test fixtures.
+- Strict `#![forbid(unsafe_code)]` compliance maintained across all Rust crates with zero clippy warnings.
+- Clean execution across all platform CI suites and release identity verification scripts.
+
 ## v3.0.3
 
 ### Hardware Acceleration Parity (ARM64 / Apple Silicon NEON) (R1)

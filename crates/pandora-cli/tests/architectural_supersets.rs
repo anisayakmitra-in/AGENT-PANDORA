@@ -2898,3 +2898,152 @@ fn contract_policy_hooks_runtime_enforcement() {
             .contains("lifecycle hook reason must not be empty")
     );
 }
+
+#[test]
+fn contract_peer_gossip_and_bloom_filter_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. peer gossip broadcast
+    let resp = fixture.run(&[
+        "peer", "gossip", "broadcast",
+        "--node-id", "test-node-a",
+        "--payload", "swarm-sync-signal",
+        "--fanout", "2",
+        "--peers", "node-b,node-c",
+    ]);
+    let val = resp.success("peer gossip broadcast");
+    assert_eq!(val["origin_node"], "test-node-a");
+    assert_eq!(val["payload"], "swarm-sync-signal");
+    assert_eq!(val["targets"].as_array().unwrap().len(), 2);
+
+    // 2. peer gossip receive (accepted)
+    let msg_id = val["message_id"].as_str().unwrap();
+    let resp_recv = fixture.run(&[
+        "peer", "gossip", "receive",
+        "--node-id", "test-node-b",
+        "--message-id", msg_id,
+        "--origin", "test-node-a",
+        "--payload", "swarm-sync-signal",
+    ]);
+    let val_recv = resp_recv.success("peer gossip receive");
+    assert_eq!(val_recv["accepted"], true);
+
+    // 3. peer gossip filter
+    let resp_filter = fixture.run(&[
+        "peer", "gossip", "filter",
+        "--action", "insert",
+        "--item", "dedup-key-alpha",
+        "--num-bits", "1024",
+        "--hash-functions", "5",
+    ]);
+    let val_filter = resp_filter.success("peer gossip filter");
+    assert_eq!(val_filter["inserted"], true);
+    assert_eq!(val_filter["contains"], true);
+    assert!(val_filter["theoretical_fp_rate"].as_f64().unwrap() < 0.05);
+}
+
+#[test]
+fn contract_fleet_bft_quorum_and_dag_scheduling_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. fleet quorum check valid
+    let resp_check = fixture.run(&["fleet", "quorum", "check", "--nodes", "4", "--byzantine", "1"]);
+    let val_check = resp_check.success("fleet quorum check");
+    assert_eq!(val_check["valid"], true);
+    assert_eq!(val_check["quorum_threshold"], 3);
+
+    // 2. fleet quorum check invalid
+    let resp_invalid = fixture.run(&["fleet", "quorum", "check", "--nodes", "3", "--byzantine", "1"]);
+    let val_invalid = resp_invalid.success("fleet quorum check");
+    assert_eq!(val_invalid["valid"], false);
+
+    // 3. fleet quorum propose
+    let resp_prop = fixture.run(&[
+        "fleet", "quorum", "propose",
+        "--proposal-id", "prop-release-304",
+        "--payload", "consensus-payload-v304",
+    ]);
+    let val_prop = resp_prop.success("fleet quorum propose");
+    assert_eq!(val_prop["proposal_id"], "prop-release-304");
+    assert_eq!(val_prop["decision"], "Pending");
+
+    // 4. fleet quorum vote reaching quorum
+    let resp_vote = fixture.run(&[
+        "fleet", "quorum", "vote",
+        "--proposal-id", "prop-release-304",
+        "--payload", "consensus-payload-v304",
+        "--votes", "v1:true,v2:true,v3:true",
+    ]);
+    let val_vote = resp_vote.success("fleet quorum vote");
+    assert_eq!(val_vote["decision"], "Approved");
+    assert_eq!(val_vote["votes_cast"], 3);
+
+    // 5. fleet dag schedule-sim
+    let resp_dag = fixture.run(&["fleet", "dag", "--preset", "diamond", "--workers", "4"]);
+    let val_dag = resp_dag.success("fleet dag");
+    assert_eq!(val_dag["tasks_count"], 4);
+    assert!(val_dag["total_work_t1"].as_u64().unwrap() > 0);
+    assert!(val_dag["simulated_makespan"].as_u64().unwrap() > 0);
+    assert!(val_dag["speedup"].as_f64().unwrap() >= 1.0);
+}
+
+#[test]
+fn contract_graph_visual_ascii_rendering_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. graph visual default kind
+    let resp = fixture.run(&["graph", "visual", "--width", "40", "--height", "15"]);
+    let val = resp.success("graph visual");
+    assert_eq!(val["width"], 40);
+    assert_eq!(val["height"], 15);
+    assert!(val["nodes_count"].as_u64().unwrap() >= 4);
+    assert!(val["edges_count"].as_u64().unwrap() >= 4);
+    assert!(!val["rendered"].as_str().unwrap().is_empty());
+
+    // 2. graph code visual
+    let resp_code = fixture.run(&["graph", "code", "visual", "--width", "50", "--height", "18"]);
+    let val_code = resp_code.success("graph visual");
+    assert_eq!(val_code["kind"], "code");
+    assert!(val_code["rendered"].as_str().unwrap().contains("cli"));
+}
+
+#[test]
+fn contract_hardware_roofline_and_benchmark_cli() {
+    let fixture = Fixture::new();
+    fixture.setup();
+
+    // 1. hardware roofline
+    let resp_roof = fixture.run(&[
+        "hardware", "roofline",
+        "--batch", "64",
+        "--corpus", "512",
+        "--precision", "f32",
+        "--simd-lanes", "8",
+    ]);
+    let val_roof = resp_roof.success("hardware roofline");
+    assert_eq!(val_roof["batch_size"], 64);
+    assert_eq!(val_roof["corpus_size"], 512);
+    assert_eq!(val_roof["precision"], "F32");
+    assert!(val_roof["operational_intensity"].as_f64().unwrap() > 0.0);
+    assert!(val_roof["amdahl_speedup"].as_f64().unwrap() > 1.0);
+
+    // 2. hardware benchmark
+    let resp_bench = fixture.run(&[
+        "hardware", "benchmark",
+        "--dim", "64",
+        "--batch", "16",
+        "--corpus", "32",
+        "--iterations", "5",
+        "--top-k", "3",
+    ]);
+    let val_bench = resp_bench.success("hardware benchmark");
+    assert_eq!(val_bench["dim"], 64);
+    assert_eq!(val_bench["batch_size"], 16);
+    assert_eq!(val_bench["corpus_size"], 32);
+    assert!(val_bench["f32_duration_us"].as_u64().unwrap() > 0);
+    assert!(val_bench["int8_duration_us"].as_u64().unwrap() > 0);
+    assert_eq!(val_bench["sample_top_k"].as_array().unwrap().len(), 3);
+}

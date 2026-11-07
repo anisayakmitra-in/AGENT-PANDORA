@@ -7,7 +7,10 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use pandora_runtime::lsp_engine::LspEngine;
-use pandora_runtime::{AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl};
+use pandora_runtime::{
+    AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentRunControl, AsciiGridRenderer,
+    ForceDirectedLayout, Point2D, ViewportCamera,
+};
 use pandora_types::{LspDiagnostic, LspDiagnosticSeverity};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
@@ -7295,54 +7298,50 @@ impl App {
         );
         frame.render_widget(left_panel, cols[0]);
 
-        let right_lines = vec![
+        let w = cols[1].width.saturating_sub(4).max(12) as usize;
+        let h = cols[1].height.saturating_sub(4).max(6) as usize;
+        let mut layout = ForceDirectedLayout::new(w as f64, h as f64);
+        layout.add_node("L0", "L0:Buf", (w as f64) * 0.2, (h as f64) * 0.2);
+        layout.add_node("L1", "L1:Sess", (w as f64) * 0.5, (h as f64) * 0.2);
+        layout.add_node("L2", "L2:Epis", (w as f64) * 0.8, (h as f64) * 0.3);
+        layout.add_node("L3", "L3:Sem", (w as f64) * 0.3, (h as f64) * 0.7);
+        layout.add_node("L4", "L4:Proc", (w as f64) * 0.7, (h as f64) * 0.8);
+        layout.add_edge("L0", "L1");
+        layout.add_edge("L1", "L2");
+        layout.add_edge("L2", "L3");
+        layout.add_edge("L3", "L4");
+        layout.add_edge("L1", "L3");
+
+        let iters = layout.simulate_until_equilibrium(40, 0.05);
+
+        let mut camera = ViewportCamera::new();
+        camera.focus_on(Point2D::new((w as f64) / 2.0, (h as f64) / 2.0));
+        let rendered_lines = AsciiGridRenderer::render(&layout, &camera, w, h);
+
+        let mut right_lines = vec![
             Line::from(Span::styled(
-                " Memory Lifecycle & Graph Controls",
+                " Live Memory Graph Topology (Lyapunov Equilibrium)",
                 self.theme.title(),
             )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(" • /memory-retention ", self.theme.prompt()),
-                Span::styled("Scoped revoked-record compaction", self.theme.muted()),
-            ]),
-            Line::from(vec![
-                Span::styled(" • /memory-transfer  ", self.theme.prompt()),
-                Span::styled("Cross-project L1 consolidation", self.theme.muted()),
-            ]),
-            Line::from(vec![
-                Span::styled(" • /storage-lifecycle", self.theme.prompt()),
-                Span::styled("Digest-bound lifecycle evidence", self.theme.muted()),
-            ]),
-            Line::from(""),
             Line::from(Span::styled(
-                " Coding & Architecture Workflow Genes",
-                self.theme.title(),
+                format!(
+                    " Nodes: {} | Edges: {} | Iters: {} | Potential E: {:.2}",
+                    layout.nodes.len(),
+                    layout.edges.len(),
+                    iters,
+                    layout.potential_energy()
+                ),
+                self.theme.muted(),
             )),
-            Line::from(vec![
-                Span::styled(" • /audit        ", self.theme.accent()),
-                Span::styled("Daedalus bounded workspace inventory", self.theme.muted()),
-            ]),
-            Line::from(vec![
-                Span::styled(" • /argus-review ", self.theme.accent()),
-                Span::styled("Argus multi-perspective code review", self.theme.muted()),
-            ]),
-            Line::from(vec![
-                Span::styled(" • /debt         ", self.theme.accent()),
-                Span::styled("Ariadne technical debt marker scan", self.theme.muted()),
-            ]),
-            Line::from(vec![
-                Span::styled(" • /measure      ", self.theme.accent()),
-                Span::styled("Hephaestus verification measurement", self.theme.muted()),
-            ]),
-            Line::from(vec![
-                Span::styled(" • /guide        ", self.theme.accent()),
-                Span::styled("Athena static architectural guide", self.theme.muted()),
-            ]),
+            Line::from(""),
         ];
+        for line in rendered_lines {
+            right_lines.push(Line::from(Span::styled(line, self.theme.accent())));
+        }
 
         let right_panel = Paragraph::new(right_lines).block(
             Block::default()
-                .title(" Knowledge Graph & Workflow Genes ")
+                .title(" Knowledge Graph & Topology ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(self.theme.border()),
