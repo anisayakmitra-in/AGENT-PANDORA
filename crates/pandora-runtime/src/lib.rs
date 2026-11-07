@@ -261,8 +261,8 @@ pub use memory_schedule::{
     MemorySynthesisScheduleRunStatus, MemorySynthesisScheduleStore,
 };
 pub use merkle_dag::{
-    DagError, DagNode, InclusionProof, MerkleDagAuditLog, MerkleProofStep, NodeDirection,
-    TAG_DAG, TAG_LEAF, TAG_NODE,
+    DagError, DagNode, InclusionProof, MerkleDagAuditLog, MerkleProofStep, NodeDirection, TAG_DAG,
+    TAG_LEAF, TAG_NODE,
 };
 pub use mesh_sync::{
     CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,

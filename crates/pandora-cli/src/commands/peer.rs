@@ -588,9 +588,9 @@ fn a2a_status(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn gossip(args: &[String]) -> Result<CommandResult, CliError> {
-    let action = args
-        .first()
-        .ok_or_else(|| CliError::usage("peer gossip requires 'broadcast', 'receive', or 'filter'"))?;
+    let action = args.first().ok_or_else(|| {
+        CliError::usage("peer gossip requires 'broadcast', 'receive', or 'filter'")
+    })?;
 
     match action.as_str() {
         "broadcast" => gossip_broadcast(&args[1..]),
@@ -605,24 +605,43 @@ fn gossip(args: &[String]) -> Result<CommandResult, CliError> {
 fn gossip_broadcast(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "node-id", "payload", "fanout", "max-hops", "peers"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "node-id",
+            "payload",
+            "fanout",
+            "max-hops",
+            "peers",
+        ],
     )?;
     let node_id = parsed.value("node-id").unwrap_or("node-local");
     let payload_str = parsed.value("payload").unwrap_or("ping");
     let fanout: usize = parsed
         .value("fanout")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--fanout must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--fanout must be an integer"))
+        })
         .transpose()?
         .unwrap_or(3);
     let max_hops: u32 = parsed
         .value("max-hops")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--max-hops must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--max-hops must be an integer"))
+        })
         .transpose()?
         .unwrap_or(8);
 
     let mut node = GossipNode::new(node_id, fanout);
     if let Some(peers_raw) = parsed.value("peers") {
-        for peer in peers_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        for peer in peers_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             node.add_peer(peer);
         }
     }
@@ -631,7 +650,9 @@ fn gossip_broadcast(args: &[String]) -> Result<CommandResult, CliError> {
 
     let summary = format!(
         "Epidemic gossip published message '{}' from node '{}' across {} target(s) (fanout={fanout}, max_hops={max_hops})",
-        msg.id, node_id, targets.len()
+        msg.id,
+        node_id,
+        targets.len()
     );
 
     Ok(success(
@@ -654,8 +675,17 @@ fn gossip_receive(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
-            "config", "data-dir", "workspace", "node-id", "message-id", "origin", "payload",
-            "hop-count", "max-hops", "fanout", "peers",
+            "config",
+            "data-dir",
+            "workspace",
+            "node-id",
+            "message-id",
+            "origin",
+            "payload",
+            "hop-count",
+            "max-hops",
+            "fanout",
+            "peers",
         ],
     )?;
     let node_id = parsed.value("node-id").unwrap_or("node-local");
@@ -663,23 +693,36 @@ fn gossip_receive(args: &[String]) -> Result<CommandResult, CliError> {
     let payload_str = parsed.value("payload").unwrap_or("ping");
     let fanout: usize = parsed
         .value("fanout")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--fanout must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--fanout must be an integer"))
+        })
         .transpose()?
         .unwrap_or(3);
     let hop_count: u32 = parsed
         .value("hop-count")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--hop-count must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--hop-count must be an integer"))
+        })
         .transpose()?
         .unwrap_or(0);
     let max_hops: u32 = parsed
         .value("max-hops")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--max-hops must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--max-hops must be an integer"))
+        })
         .transpose()?
         .unwrap_or(8);
 
     let mut node = GossipNode::new(node_id, fanout);
     if let Some(peers_raw) = parsed.value("peers") {
-        for peer in peers_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        for peer in peers_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             node.add_peer(peer);
         }
     }
@@ -717,7 +760,9 @@ fn gossip_receive(args: &[String]) -> Result<CommandResult, CliError> {
             targets.len()
         )
     } else {
-        format!("Node '{node_id}' discarded duplicate gossip message '{message_id}' (Bloom filter deduplication)")
+        format!(
+            "Node '{node_id}' discarded duplicate gossip message '{message_id}' (Bloom filter deduplication)"
+        )
     };
 
     Ok(success(
@@ -736,23 +781,41 @@ fn gossip_receive(args: &[String]) -> Result<CommandResult, CliError> {
 fn gossip_filter(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "action", "item", "num-bits", "hash-functions", "items-count"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "action",
+            "item",
+            "num-bits",
+            "hash-functions",
+            "items-count",
+        ],
     )?;
     let action = parsed.value("action").unwrap_or("query");
     let item = parsed.value("item").unwrap_or("msg-key-1");
     let num_bits: usize = parsed
         .value("num-bits")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--num-bits must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--num-bits must be an integer"))
+        })
         .transpose()?
         .unwrap_or(2048);
     let hash_functions: usize = parsed
         .value("hash-functions")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--hash-functions must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--hash-functions must be an integer"))
+        })
         .transpose()?
         .unwrap_or(7);
     let items_count: usize = parsed
         .value("items-count")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--items-count must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--items-count must be an integer"))
+        })
         .transpose()?
         .unwrap_or(50);
 
@@ -763,12 +826,8 @@ fn gossip_filter(args: &[String]) -> Result<CommandResult, CliError> {
             filter.insert(item.as_bytes());
             (true, filter.contains(item.as_bytes()))
         }
-        "contains" | "query" => {
-            (false, filter.contains(item.as_bytes()))
-        }
-        "rate" => {
-            (false, false)
-        }
+        "contains" | "query" => (false, filter.contains(item.as_bytes())),
+        "rate" => (false, false),
         other => {
             return Err(CliError::usage(format!(
                 "unknown gossip filter action '{other}'; expected 'insert', 'contains', or 'rate'"

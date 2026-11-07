@@ -2,7 +2,7 @@ use super::{LOCAL_TENANT, LOCAL_WORKSPACE, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
     AsciiGridRenderer, ForceDirectedLayout, GraphInput, GraphIntelligenceEngine, GraphKind,
-    GraphScope, GraphStore, GraphStoreError, Point2D, ViewportCamera, MAX_GRAPH_INPUT_BYTES,
+    GraphScope, GraphStore, GraphStoreError, MAX_GRAPH_INPUT_BYTES, Point2D, ViewportCamera,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -26,7 +26,9 @@ struct GraphInputRecord {
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let first = args.first().ok_or_else(|| {
-        CliError::usage("graph requires 'code', 'knowledge', 'review', 'architecture', 'map', or 'visual'")
+        CliError::usage(
+            "graph requires 'code', 'knowledge', 'review', 'architecture', 'map', or 'visual'",
+        )
     })?;
     if first == "map" {
         return map_command(&args[1..]);
@@ -265,8 +267,16 @@ fn visual_command(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
-            "store", "tenant", "workspace", "width", "height", "iterations", "kind",
-            "zoom", "pan-x", "pan-y",
+            "store",
+            "tenant",
+            "workspace",
+            "width",
+            "height",
+            "iterations",
+            "kind",
+            "zoom",
+            "pan-x",
+            "pan-y",
         ],
     )?;
     let kind = if let Some(k) = parsed.value("kind") {
@@ -281,38 +291,64 @@ fn visual(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
-            "store", "tenant", "workspace", "width", "height", "iterations", "kind",
-            "zoom", "pan-x", "pan-y",
+            "store",
+            "tenant",
+            "workspace",
+            "width",
+            "height",
+            "iterations",
+            "kind",
+            "zoom",
+            "pan-x",
+            "pan-y",
         ],
     )?;
     let width: usize = parsed
         .value("width")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--width must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--width must be an integer"))
+        })
         .transpose()?
         .unwrap_or(60);
     let height: usize = parsed
         .value("height")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--height must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--height must be an integer"))
+        })
         .transpose()?
         .unwrap_or(20);
     let iterations: usize = parsed
         .value("iterations")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--iterations must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--iterations must be an integer"))
+        })
         .transpose()?
         .unwrap_or(100);
     let zoom: f64 = parsed
         .value("zoom")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--zoom must be a number")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--zoom must be a number"))
+        })
         .transpose()?
         .unwrap_or(1.0);
     let pan_x: f64 = parsed
         .value("pan-x")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--pan-x must be a number")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--pan-x must be a number"))
+        })
         .transpose()?
         .unwrap_or(0.0);
     let pan_y: f64 = parsed
         .value("pan-y")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--pan-y must be a number")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--pan-y must be a number"))
+        })
         .transpose()?
         .unwrap_or(0.0);
 
@@ -325,7 +361,9 @@ fn visual(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
             parsed.value("workspace").unwrap_or(LOCAL_WORKSPACE),
         )
         .map_err(|error| CliError::usage(format!("invalid graph scope: {error}")))?;
-        if let Ok(Some(snapshot)) = GraphStore::open(store_path).and_then(|store| store.load(kind, &scope)) {
+        if let Ok(Some(snapshot)) =
+            GraphStore::open(store_path).and_then(|store| store.load(kind, &scope))
+        {
             loaded_from_store = true;
             let center_x = (width as f64) / 2.0;
             let center_y = (height as f64) / 2.0;
@@ -333,8 +371,10 @@ fn visual(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
             for (i, node) in snapshot.nodes().iter().enumerate() {
                 let angle = (i as f64) * 2.0 * std::f64::consts::PI / (total_nodes as f64);
                 let radius = (width.min(height) as f64) * 0.35;
-                let init_x = (center_x + radius * angle.cos()).clamp(2.0, (width.saturating_sub(2)) as f64);
-                let init_y = (center_y + radius * angle.sin()).clamp(2.0, (height.saturating_sub(2)) as f64);
+                let init_x =
+                    (center_x + radius * angle.cos()).clamp(2.0, (width.saturating_sub(2)) as f64);
+                let init_y =
+                    (center_y + radius * angle.sin()).clamp(2.0, (height.saturating_sub(2)) as f64);
                 let label = node.label();
                 let short_label = if label.len() > 10 {
                     &label[..10]
@@ -365,7 +405,12 @@ fn visual(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
             }
             GraphKind::Architecture => {
                 layout.add_node("gw", "Gateway", width as f64 * 0.5, height as f64 * 0.2);
-                layout.add_node("core", "CoreEngine", width as f64 * 0.5, height as f64 * 0.5);
+                layout.add_node(
+                    "core",
+                    "CoreEngine",
+                    width as f64 * 0.5,
+                    height as f64 * 0.5,
+                );
                 layout.add_node("mesh", "SwarmMesh", width as f64 * 0.2, height as f64 * 0.5);
                 layout.add_node("vfs", "ContextVfs", width as f64 * 0.8, height as f64 * 0.5);
                 layout.add_node("hw", "HWDispatch", width as f64 * 0.5, height as f64 * 0.8);
@@ -375,10 +420,30 @@ fn visual(kind: GraphKind, args: &[String]) -> Result<CommandResult, CliError> {
                 layout.add_edge("core", "hw");
             }
             GraphKind::Review => {
-                layout.add_node("target", "TargetDiff", width as f64 * 0.5, height as f64 * 0.2);
-                layout.add_node("argus", "ArgusReview", width as f64 * 0.3, height as f64 * 0.6);
-                layout.add_node("linter", "AstChecker", width as f64 * 0.7, height as f64 * 0.6);
-                layout.add_node("verdict", "Verdict", width as f64 * 0.5, height as f64 * 0.8);
+                layout.add_node(
+                    "target",
+                    "TargetDiff",
+                    width as f64 * 0.5,
+                    height as f64 * 0.2,
+                );
+                layout.add_node(
+                    "argus",
+                    "ArgusReview",
+                    width as f64 * 0.3,
+                    height as f64 * 0.6,
+                );
+                layout.add_node(
+                    "linter",
+                    "AstChecker",
+                    width as f64 * 0.7,
+                    height as f64 * 0.6,
+                );
+                layout.add_node(
+                    "verdict",
+                    "Verdict",
+                    width as f64 * 0.5,
+                    height as f64 * 0.8,
+                );
                 layout.add_edge("target", "argus");
                 layout.add_edge("target", "linter");
                 layout.add_edge("argus", "verdict");

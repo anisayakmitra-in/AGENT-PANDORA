@@ -5,9 +5,9 @@ use pandora_types::{HostHardwareProfile, ModelFootprintEstimation, Quantization}
 use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args
-        .first()
-        .ok_or_else(|| CliError::usage("hardware requires 'probe', 'fit', 'presets', 'roofline', or 'benchmark'"))?;
+    let subcommand = args.first().ok_or_else(|| {
+        CliError::usage("hardware requires 'probe', 'fit', 'presets', 'roofline', or 'benchmark'")
+    })?;
 
     match subcommand.as_str() {
         "probe" => probe(&args[1..]),
@@ -158,20 +158,31 @@ fn roofline(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
-            "batch", "batch-size", "corpus", "corpus-size", "precision",
-            "parallel-fraction", "simd-lanes",
+            "batch",
+            "batch-size",
+            "corpus",
+            "corpus-size",
+            "precision",
+            "parallel-fraction",
+            "simd-lanes",
         ],
     )?;
     let batch_size: usize = parsed
         .value("batch")
         .or_else(|| parsed.value("batch-size"))
-        .map(|v| v.parse().map_err(|_| CliError::usage("--batch must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--batch must be an integer"))
+        })
         .transpose()?
         .unwrap_or(64);
     let corpus_size: usize = parsed
         .value("corpus")
         .or_else(|| parsed.value("corpus-size"))
-        .map(|v| v.parse().map_err(|_| CliError::usage("--corpus must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--corpus must be an integer"))
+        })
         .transpose()?
         .unwrap_or(1024);
     let precision_str = parsed.value("precision").unwrap_or("f32");
@@ -181,12 +192,18 @@ fn roofline(args: &[String]) -> Result<CommandResult, CliError> {
     };
     let parallel_fraction: f64 = parsed
         .value("parallel-fraction")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--parallel-fraction must be a number")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--parallel-fraction must be a number"))
+        })
         .transpose()?
         .unwrap_or(0.95);
     let simd_lanes: usize = parsed
         .value("simd-lanes")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--simd-lanes must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--simd-lanes must be an integer"))
+        })
         .transpose()?
         .unwrap_or(8);
 
@@ -222,33 +239,56 @@ fn roofline(args: &[String]) -> Result<CommandResult, CliError> {
 fn benchmark(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["dim", "batch", "batch-size", "corpus", "corpus-size", "iterations", "top-k"],
+        &[
+            "dim",
+            "batch",
+            "batch-size",
+            "corpus",
+            "corpus-size",
+            "iterations",
+            "top-k",
+        ],
     )?;
     let dim: usize = parsed
         .value("dim")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--dim must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--dim must be an integer"))
+        })
         .transpose()?
         .unwrap_or(256);
     let batch_size: usize = parsed
         .value("batch")
         .or_else(|| parsed.value("batch-size"))
-        .map(|v| v.parse().map_err(|_| CliError::usage("--batch must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--batch must be an integer"))
+        })
         .transpose()?
         .unwrap_or(32);
     let corpus_size: usize = parsed
         .value("corpus")
         .or_else(|| parsed.value("corpus-size"))
-        .map(|v| v.parse().map_err(|_| CliError::usage("--corpus must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--corpus must be an integer"))
+        })
         .transpose()?
         .unwrap_or(64);
     let iterations: usize = parsed
         .value("iterations")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--iterations must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--iterations must be an integer"))
+        })
         .transpose()?
         .unwrap_or(10);
     let k: usize = parsed
         .value("top-k")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--top-k must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--top-k must be an integer"))
+        })
         .transpose()?
         .unwrap_or(5);
 
@@ -285,7 +325,8 @@ fn benchmark(args: &[String]) -> Result<CommandResult, CliError> {
     let start_f32 = std::time::Instant::now();
     let mut f32_matrix = Vec::new();
     for _ in 0..iterations {
-        f32_matrix = BatchVectorDispatcher::batch_cosine_similarity_matrix(&queries_f32, &corpus_f32);
+        f32_matrix =
+            BatchVectorDispatcher::batch_cosine_similarity_matrix(&queries_f32, &corpus_f32);
     }
     let f32_duration = start_f32.elapsed();
     let f32_duration_us = f32_duration.as_micros().max(1);
@@ -294,7 +335,8 @@ fn benchmark(args: &[String]) -> Result<CommandResult, CliError> {
     let start_int8 = std::time::Instant::now();
     let mut int8_matrix = Vec::new();
     for _ in 0..iterations {
-        int8_matrix = BatchVectorDispatcher::batch_dot_product_matrix_int8(&queries_int8, &corpus_int8);
+        int8_matrix =
+            BatchVectorDispatcher::batch_dot_product_matrix_int8(&queries_int8, &corpus_int8);
     }
     let int8_duration = start_int8.elapsed();
     let int8_duration_us = int8_duration.as_micros().max(1);

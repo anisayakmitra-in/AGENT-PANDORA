@@ -6,8 +6,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
 use crate::bandit_router::SafePrng;
+use std::collections::BTreeMap;
 
 /// A discrete token ID paired with its categorical probability $P(x_i)$.
 #[derive(Clone, Debug, PartialEq)]
@@ -110,7 +110,6 @@ impl SpeculativeEngine {
         let mut bonus_token = None;
 
         for (i, &tok) in draft_tokens.iter().enumerate() {
-
             let q = draft_dists
                 .get(i)
                 .and_then(|d| d.iter().find(|tp| tp.token_id == tok).map(|tp| tp.prob))
@@ -121,11 +120,7 @@ impl SpeculativeEngine {
                 .and_then(|d| d.iter().find(|tp| tp.token_id == tok).map(|tp| tp.prob))
                 .unwrap_or(0.0);
 
-            let alpha = if q <= 1e-15 {
-                1.0
-            } else {
-                (p / q).min(1.0)
-            };
+            let alpha = if q <= 1e-15 { 1.0 } else { (p / q).min(1.0) };
 
             let u = self.prng.sample_uniform_f64();
             if u <= alpha {
@@ -239,17 +234,31 @@ impl RadixKvNode {
 
     /// Counts the total number of unique nodes in this subtree.
     pub fn count_nodes(&self) -> usize {
-        1 + self.children.values().map(|c| c.count_nodes()).sum::<usize>()
+        1 + self
+            .children
+            .values()
+            .map(|c| c.count_nodes())
+            .sum::<usize>()
     }
 
     /// Counts the total number of tokens stored across all edges in this subtree.
     pub fn count_tokens(&self) -> usize {
-        self.prefix.len() + self.children.values().map(|c| c.count_tokens()).sum::<usize>()
+        self.prefix.len()
+            + self
+                .children
+                .values()
+                .map(|c| c.count_tokens())
+                .sum::<usize>()
     }
 
     /// Sums total allocated KV cache bytes across this subtree.
     pub fn total_kv_bytes(&self) -> usize {
-        self.kv_bytes + self.children.values().map(|c| c.total_kv_bytes()).sum::<usize>()
+        self.kv_bytes
+            + self
+                .children
+                .values()
+                .map(|c| c.total_kv_bytes())
+                .sum::<usize>()
     }
 }
 
@@ -342,7 +351,8 @@ impl RadixKvCache {
 
         self.total_tokens_requested += tokens.len();
         self.total_tokens_shared += shared_len;
-        self.session_tokens.insert(session_id.to_string(), tokens.to_vec());
+        self.session_tokens
+            .insert(session_id.to_string(), tokens.to_vec());
 
         Self::insert_into_node(&mut self.root, tokens, self.bytes_per_token);
 
@@ -393,7 +403,8 @@ impl RadixKvCache {
                 let new_suffix = tokens[common_len..].to_vec();
                 if !new_suffix.is_empty() {
                     let new_first = new_suffix[0];
-                    let new_node = RadixKvNode::new(new_suffix.clone(), new_suffix.len() * bytes_per_token);
+                    let new_node =
+                        RadixKvNode::new(new_suffix.clone(), new_suffix.len() * bytes_per_token);
                     child.children.insert(new_first, new_node);
                 }
             }

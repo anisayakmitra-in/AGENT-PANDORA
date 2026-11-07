@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use pandora_runtime::speculative_decoding::{
-    RadixKvCache, SpeculativeEngine, TokenProbability,
-};
+use pandora_runtime::speculative_decoding::{RadixKvCache, SpeculativeEngine, TokenProbability};
 
 #[test]
 fn test_perfect_draft_acceptance_and_bonus() {
@@ -13,9 +11,18 @@ fn test_perfect_draft_acceptance_and_bonus() {
 
     // Draft and target share identical distribution
     let draft_dists = vec![
-        vec![TokenProbability::new(10, 0.9), TokenProbability::new(99, 0.1)],
-        vec![TokenProbability::new(20, 0.95), TokenProbability::new(88, 0.05)],
-        vec![TokenProbability::new(30, 0.8), TokenProbability::new(77, 0.2)],
+        vec![
+            TokenProbability::new(10, 0.9),
+            TokenProbability::new(99, 0.1),
+        ],
+        vec![
+            TokenProbability::new(20, 0.95),
+            TokenProbability::new(88, 0.05),
+        ],
+        vec![
+            TokenProbability::new(30, 0.8),
+            TokenProbability::new(77, 0.2),
+        ],
     ];
     let mut target_dists = draft_dists.clone();
     // Bonus token distribution at position gamma
@@ -41,7 +48,10 @@ fn test_rejection_sampling_distribution_shift() {
     ]];
     // Target model strongly prefers token 200 (rejection of token 100 is almost certain)
     let target_dists = vec![
-        vec![TokenProbability::new(100, 0.001), TokenProbability::new(200, 0.999)],
+        vec![
+            TokenProbability::new(100, 0.001),
+            TokenProbability::new(200, 0.999),
+        ],
         vec![TokenProbability::new(300, 1.0)],
     ];
 

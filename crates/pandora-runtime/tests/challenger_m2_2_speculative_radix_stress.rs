@@ -79,16 +79,18 @@ fn challenge_speculative_extreme_probability_vectors() {
         assert!(res_disjoint.accepted_tokens.is_empty());
         assert!(res_disjoint.bonus_token.is_some());
         let bonus = res_disjoint.bonus_token.unwrap();
-        assert!([40, 50, 60].contains(&bonus), "Bonus must strictly come from target support");
-        assert!(![10, 20, 30].contains(&bonus), "Bonus must never come from disjoint draft support");
+        assert!(
+            [40, 50, 60].contains(&bonus),
+            "Bonus must strictly come from target support"
+        );
+        assert!(
+            ![10, 20, 30].contains(&bonus),
+            "Bonus must never come from disjoint draft support"
+        );
     }
 
     // --- Extreme Case D: Draft Token Length 0 ---
-    let res_len_0 = engine.verify_draft(
-        &[],
-        &[],
-        &[vec![TokenProbability::new(42, 1.0)]],
-    );
+    let res_len_0 = engine.verify_draft(&[], &[], &[vec![TokenProbability::new(42, 1.0)]]);
     assert!(res_len_0.accepted_tokens.is_empty());
     assert_eq!(res_len_0.bonus_token, Some(42));
     assert_eq!(res_len_0.total_emitted, 1);
@@ -98,7 +100,10 @@ fn challenge_speculative_extreme_probability_vectors() {
     let res_len_1 = engine.verify_draft(
         &[100],
         &[vec![TokenProbability::new(100, 1.0)]],
-        &[vec![TokenProbability::new(100, 1.0)], vec![TokenProbability::new(101, 1.0)]],
+        &[
+            vec![TokenProbability::new(100, 1.0)],
+            vec![TokenProbability::new(101, 1.0)],
+        ],
     );
     assert_eq!(res_len_1.accepted_tokens, vec![100]);
     assert_eq!(res_len_1.bonus_token, Some(101));
@@ -115,11 +120,8 @@ fn challenge_speculative_extreme_probability_vectors() {
     // F.1: Perfect match across all 50 tokens
     let mut target_dists_50_perfect = draft_dists_50.clone();
     target_dists_50_perfect.push(vec![TokenProbability::new(51, 1.0)]);
-    let res_50_perfect = engine.verify_draft(
-        &draft_tokens_50,
-        &draft_dists_50,
-        &target_dists_50_perfect,
-    );
+    let res_50_perfect =
+        engine.verify_draft(&draft_tokens_50, &draft_dists_50, &target_dists_50_perfect);
     assert_eq!(res_50_perfect.accepted_tokens.len(), 50);
     assert_eq!(res_50_perfect.bonus_token, Some(51));
     assert_eq!(res_50_perfect.total_emitted, 51);
@@ -128,13 +130,13 @@ fn challenge_speculative_extreme_probability_vectors() {
     // F.2: Divergence at token 25 (first 25 match, 26th diverges)
     let mut target_dists_50_diverge = draft_dists_50.clone();
     target_dists_50_diverge[25] = vec![TokenProbability::new(9999, 1.0)]; // Divergence at index 25 (token 26)
-    let res_50_diverge = engine.verify_draft(
-        &draft_tokens_50,
-        &draft_dists_50,
-        &target_dists_50_diverge,
-    );
+    let res_50_diverge =
+        engine.verify_draft(&draft_tokens_50, &draft_dists_50, &target_dists_50_diverge);
     assert_eq!(res_50_diverge.accepted_tokens.len(), 25);
-    assert_eq!(res_50_diverge.accepted_tokens, draft_tokens_50[..25].to_vec());
+    assert_eq!(
+        res_50_diverge.accepted_tokens,
+        draft_tokens_50[..25].to_vec()
+    );
     assert_eq!(res_50_diverge.bonus_token, Some(9999));
     assert_eq!(res_50_diverge.total_emitted, 26);
     assert!((res_50_diverge.acceptance_rate - 0.50).abs() < 1e-9);
@@ -149,7 +151,10 @@ fn challenge_mathematical_speedup_boundary_conditions() {
     // E[beta] = (1 - 0^(gamma+1)) / (1 - 0) = 1.0 regardless of gamma.
     for g in [0, 1, 5, 10, 50, 100] {
         let e_beta = SpeculativeEngine::theoretical_expected_tokens(0.0, g);
-        assert!((e_beta - 1.0).abs() < 1e-9, "E[beta] must be 1.0 when alpha = 0");
+        assert!(
+            (e_beta - 1.0).abs() < 1e-9,
+            "E[beta] must be 1.0 when alpha = 0"
+        );
 
         // Speedup must be 1 / (gamma * r + 1) < 1.0 for r > 0, gamma > 0
         let speedup = SpeculativeEngine::theoretical_speedup(0.0, g, 0.1);
@@ -161,7 +166,10 @@ fn challenge_mathematical_speedup_boundary_conditions() {
     // E[beta] = gamma + 1. S(1, gamma, r) = (gamma + 1) / (gamma * r + 1).
     for g in [0, 1, 5, 10, 50, 100] {
         let e_beta = SpeculativeEngine::theoretical_expected_tokens(1.0, g);
-        assert!((e_beta - (g + 1) as f64).abs() < 1e-9, "E[beta] must be gamma + 1 when alpha = 1.0");
+        assert!(
+            (e_beta - (g + 1) as f64).abs() < 1e-9,
+            "E[beta] must be gamma + 1 when alpha = 1.0"
+        );
 
         let speedup = SpeculativeEngine::theoretical_speedup(1.0, g, 0.05);
         let expected_s = (g + 1) as f64 / (g as f64 * 0.05 + 1.0);
@@ -175,7 +183,10 @@ fn challenge_mathematical_speedup_boundary_conditions() {
         for g in [1, 5, 10, 50] {
             let e_beta = SpeculativeEngine::theoretical_expected_tokens(a, g);
             let speedup = SpeculativeEngine::theoretical_speedup(a, g, r_near_zero);
-            assert!((speedup - e_beta).abs() < 1e-8, "When r -> 0, S must equal E[beta]");
+            assert!(
+                (speedup - e_beta).abs() < 1e-8,
+                "When r -> 0, S must equal E[beta]"
+            );
         }
     }
 
@@ -184,7 +195,10 @@ fn challenge_mathematical_speedup_boundary_conditions() {
     for a in [0.0, 0.2, 0.5, 0.8] {
         for g in [1, 5, 10, 50] {
             let speedup = SpeculativeEngine::theoretical_speedup(a, g, 1.0);
-            assert!(speedup < 1.0, "When r = 1 and alpha < 1, speedup must be strictly < 1.0 (penalty)");
+            assert!(
+                speedup < 1.0,
+                "When r = 1 and alpha < 1, speedup must be strictly < 1.0 (penalty)"
+            );
         }
     }
     // When alpha = 1.0 and r = 1.0: S = (gamma + 1) / (gamma + 1) = 1.0 exactly.
@@ -198,7 +212,10 @@ fn challenge_mathematical_speedup_boundary_conditions() {
     for a in [0.0, 0.5, 1.0] {
         for r in [0.0, 0.1, 0.5, 1.0] {
             let speedup = SpeculativeEngine::theoretical_speedup(a, 0, r);
-            assert!((speedup - 1.0).abs() < 1e-9, "When gamma = 0, speedup must be exactly 1.0");
+            assert!(
+                (speedup - 1.0).abs() < 1e-9,
+                "When gamma = 0, speedup must be exactly 1.0"
+            );
         }
     }
 
@@ -223,7 +240,10 @@ fn challenge_mathematical_speedup_boundary_conditions() {
     assert!(opt_s > 1.4);
 
     let (opt_g2, opt_s2) = SpeculativeEngine::optimal_draft_length(0.95, 0.02, 50);
-    assert!(opt_g2 > 10, "High alpha and low r should yield optimal gamma > 10");
+    assert!(
+        opt_g2 > 10,
+        "High alpha and low r should yield optimal gamma > 10"
+    );
     assert!(opt_s2 > 8.0);
 }
 
@@ -267,7 +287,8 @@ fn challenge_rejection_sampling_distribution_preservation_monte_carlo() {
         let emitted = if !res.accepted_tokens.is_empty() {
             res.accepted_tokens[0]
         } else {
-            res.bonus_token.expect("Must have bonus token upon rejection")
+            res.bonus_token
+                .expect("Must have bonus token upon rejection")
         };
 
         counts[emitted as usize] += 1;
@@ -278,9 +299,18 @@ fn challenge_rejection_sampling_distribution_preservation_monte_carlo() {
     let p3_emp = counts[3] as f64 / num_trials as f64;
 
     // Check convergence to Target distribution P = [0.20, 0.50, 0.30] within 1.5% Monte Carlo tolerance
-    assert!((p1_emp - 0.20).abs() < 0.015, "P(1) empirical {p1_emp} must match target 0.20");
-    assert!((p2_emp - 0.50).abs() < 0.015, "P(2) empirical {p2_emp} must match target 0.50");
-    assert!((p3_emp - 0.30).abs() < 0.015, "P(3) empirical {p3_emp} must match target 0.30");
+    assert!(
+        (p1_emp - 0.20).abs() < 0.015,
+        "P(1) empirical {p1_emp} must match target 0.20"
+    );
+    assert!(
+        (p2_emp - 0.50).abs() < 0.015,
+        "P(2) empirical {p2_emp} must match target 0.50"
+    );
+    assert!(
+        (p3_emp - 0.30).abs() < 0.015,
+        "P(3) empirical {p3_emp} must match target 0.30"
+    );
 }
 
 /// 4. Empirically verify RadixKvCache:
@@ -338,7 +368,10 @@ fn challenge_radix_kv_cache_100_concurrent_sessions() {
     // Verify lookup_shared_prefix for all 100 sessions
     for (s, tokens) in session_tokens_map.iter().enumerate() {
         let matched = cache.lookup_shared_prefix(tokens);
-        assert_eq!(matched, 100, "Full prompt of session_{s} must match resident Radix tree");
+        assert_eq!(
+            matched, 100,
+            "Full prompt of session_{s} must match resident Radix tree"
+        );
     }
 
     // Lookup a probe session with diverging user prompt
@@ -346,7 +379,10 @@ fn challenge_radix_kv_cache_100_concurrent_sessions() {
     probe_tokens.extend_from_slice(&group_instructions[0]);
     probe_tokens.extend_from_slice(&[9999, 9998, 9997]); // unseen user tokens
     let probe_matched = cache.lookup_shared_prefix(&probe_tokens);
-    assert_eq!(probe_matched, 80, "Probe must match 80 tokens (system + group 0)");
+    assert_eq!(
+        probe_matched, 80,
+        "Probe must match 80 tokens (system + group 0)"
+    );
 
     // Total dense tokens = 100 * 100 = 10,000
     // Total compressed tokens:
@@ -494,7 +530,10 @@ fn challenge_radix_kv_cache_eviction_zero_leak_and_ref_counts() {
 
     let fresh_tokens = vec![9999, 8888, 7777];
     let (fresh_shared, fresh_alloc) = cache.insert("fresh_session", &fresh_tokens);
-    assert_eq!(fresh_shared, 0, "No residual tokens should be shared after complete release");
+    assert_eq!(
+        fresh_shared, 0,
+        "No residual tokens should be shared after complete release"
+    );
     assert_eq!(fresh_alloc, 3);
     assert_eq!(cache.compression_ratio(), 1.0);
 

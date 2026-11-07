@@ -2,8 +2,8 @@ use super::{load_config, parse_options, session_scope, timestamp};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::{
     BftConsensus, ConsensusDecision, FleetBudget, FleetEngine, FleetError, FleetLease,
-    FleetLeaseState, FleetNode, FleetSupervisor, FleetSupervisorState, JobStore, OrchestrationStore,
-    TaskDag,
+    FleetLeaseState, FleetNode, FleetSupervisor, FleetSupervisorState, JobStore,
+    OrchestrationStore, TaskDag,
 };
 use pandora_types::{JobStatus, OrchestrationBudgetAmount};
 use serde_json::{Value, json};
@@ -982,16 +982,25 @@ fn quorum(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 fn quorum_check(args: &[String]) -> Result<CommandResult, CliError> {
-    let parsed = parse_options(args, &["config", "data-dir", "nodes", "byzantine", "faulty"])?;
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "nodes", "byzantine", "faulty"],
+    )?;
     let nodes: usize = parsed
         .value("nodes")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--nodes must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--nodes must be an integer"))
+        })
         .transpose()?
         .unwrap_or(4);
     let byzantine: usize = parsed
         .value("byzantine")
         .or_else(|| parsed.value("faulty"))
-        .map(|v| v.parse().map_err(|_| CliError::usage("--byzantine must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--byzantine must be an integer"))
+        })
         .transpose()?
         .unwrap_or(1);
 
@@ -1026,16 +1035,30 @@ fn quorum_check(args: &[String]) -> Result<CommandResult, CliError> {
 fn quorum_propose(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "nodes", "byzantine", "proposer", "proposal-id", "payload"],
+        &[
+            "config",
+            "data-dir",
+            "nodes",
+            "byzantine",
+            "proposer",
+            "proposal-id",
+            "payload",
+        ],
     )?;
     let nodes: usize = parsed
         .value("nodes")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--nodes must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--nodes must be an integer"))
+        })
         .transpose()?
         .unwrap_or(4);
     let byzantine: usize = parsed
         .value("byzantine")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--byzantine must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--byzantine must be an integer"))
+        })
         .transpose()?
         .unwrap_or(1);
     let proposer = parsed.value("proposer").unwrap_or("leader-0");
@@ -1078,18 +1101,32 @@ fn quorum_vote(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
         &[
-            "config", "data-dir", "nodes", "byzantine", "proposer", "proposal-id",
-            "voter", "approve", "votes", "payload",
+            "config",
+            "data-dir",
+            "nodes",
+            "byzantine",
+            "proposer",
+            "proposal-id",
+            "voter",
+            "approve",
+            "votes",
+            "payload",
         ],
     )?;
     let nodes: usize = parsed
         .value("nodes")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--nodes must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--nodes must be an integer"))
+        })
         .transpose()?
         .unwrap_or(4);
     let byzantine: usize = parsed
         .value("byzantine")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--byzantine must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--byzantine must be an integer"))
+        })
         .transpose()?
         .unwrap_or(1);
     let proposer = parsed.value("proposer").unwrap_or("leader-0");
@@ -1112,10 +1149,17 @@ fn quorum_vote(args: &[String]) -> Result<CommandResult, CliError> {
     let mut decision = ConsensusDecision::Pending;
 
     if let Some(votes_raw) = parsed.value("votes") {
-        for entry in votes_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        for entry in votes_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             let mut parts = entry.splitn(2, ':');
             let v_id = parts.next().unwrap_or("voter");
-            let v_approve = parts.next().map(|b| b == "true" || b == "1").unwrap_or(true);
+            let v_approve = parts
+                .next()
+                .map(|b| b == "true" || b == "1")
+                .unwrap_or(true);
             decision = consensus
                 .cast_vote(v_id, proposal_id, v_approve, vec![])
                 .map_err(|e| CliError::execution(format!("BFT vote failed: {e}"), json!({})))?;
@@ -1137,7 +1181,11 @@ fn quorum_vote(args: &[String]) -> Result<CommandResult, CliError> {
         ConsensusDecision::Rejected => "Rejected",
     };
 
-    let votes_cast = consensus.votes.get(proposal_id).map(|v| v.len()).unwrap_or(0);
+    let votes_cast = consensus
+        .votes
+        .get(proposal_id)
+        .map(|v| v.len())
+        .unwrap_or(0);
     let summary = format!(
         "BFT Consensus Tally for '{proposal_id}': {decision_str} ({votes_cast} vote(s) cast, quorum threshold Q={})",
         consensus.quorum_threshold
@@ -1160,11 +1208,22 @@ fn quorum_vote(args: &[String]) -> Result<CommandResult, CliError> {
 fn dag_schedule_sim(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(
         args,
-        &["config", "data-dir", "workspace", "workers", "tasks", "dependencies", "preset"],
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "workers",
+            "tasks",
+            "dependencies",
+            "preset",
+        ],
     )?;
     let workers: usize = parsed
         .value("workers")
-        .map(|v| v.parse().map_err(|_| CliError::usage("--workers must be an integer")))
+        .map(|v| {
+            v.parse()
+                .map_err(|_| CliError::usage("--workers must be an integer"))
+        })
         .transpose()?
         .unwrap_or(4);
     let preset = parsed.value("preset").unwrap_or("diamond");
@@ -1172,13 +1231,14 @@ fn dag_schedule_sim(args: &[String]) -> Result<CommandResult, CliError> {
     let mut dag = TaskDag::new();
 
     if let Some(tasks_raw) = parsed.value("tasks") {
-        for entry in tasks_raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        for entry in tasks_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             let mut parts = entry.splitn(2, ':');
             let id = parts.next().unwrap();
-            let weight: u64 = parts
-                .next()
-                .and_then(|w| w.parse().ok())
-                .unwrap_or(1);
+            let weight: u64 = parts.next().and_then(|w| w.parse().ok()).unwrap_or(1);
             dag.add_task(id, weight)
                 .map_err(|e| CliError::execution(format!("failed to add task: {e}"), json!({})))?;
         }
@@ -1235,10 +1295,14 @@ fn dag_schedule_sim(args: &[String]) -> Result<CommandResult, CliError> {
     let t_inf = dag
         .critical_path_span()
         .map_err(|e| CliError::execution(format!("DAG critical path failed: {e}"), json!({})))?;
-    let makespan = dag
-        .simulate_work_stealing(workers)
-        .map_err(|e| CliError::execution(format!("DAG simulate work stealing failed: {e}"), json!({})))?;
-    let speedup = if makespan > 0 { (t_1 as f64) / (makespan as f64) } else { 0.0 };
+    let makespan = dag.simulate_work_stealing(workers).map_err(|e| {
+        CliError::execution(format!("DAG simulate work stealing failed: {e}"), json!({}))
+    })?;
+    let speedup = if makespan > 0 {
+        (t_1 as f64) / (makespan as f64)
+    } else {
+        0.0
+    };
 
     let summary = format!(
         "Task DAG Work-Stealing Scheduling Simulation: tasks={}, T_1={t_1}, T_inf={t_inf}, workers={workers}, makespan T_P={makespan}, speedup S={speedup:.2}x",

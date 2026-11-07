@@ -329,7 +329,10 @@ fn test_adversarial_hardware_roofline_intensity_oracle() {
     assert!(!resp_neg_b.status.success(), "negative batch must fail");
     assert_eq!(resp_neg_b.value["code"], "usage_error");
     assert!(
-        resp_neg_b.value["message"].as_str().unwrap().contains("--batch must be an integer"),
+        resp_neg_b.value["message"]
+            .as_str()
+            .unwrap()
+            .contains("--batch must be an integer"),
         "error message must mention batch integer requirement: {}",
         resp_neg_b.raw_stdout
     );
@@ -338,7 +341,10 @@ fn test_adversarial_hardware_roofline_intensity_oracle() {
     assert!(!resp_neg_c.status.success(), "negative corpus must fail");
     assert_eq!(resp_neg_c.value["code"], "usage_error");
     assert!(
-        resp_neg_c.value["message"].as_str().unwrap().contains("--corpus must be an integer"),
+        resp_neg_c.value["message"]
+            .as_str()
+            .unwrap()
+            .contains("--corpus must be an integer"),
         "error message must mention corpus integer requirement: {}",
         resp_neg_c.raw_stdout
     );
@@ -618,7 +624,10 @@ fn test_adversarial_ws_handshake_streaming_daemon() {
          \r\n"
     );
     let (code_f, _raw_f, _) = send_raw_http(addr, &req_f);
-    assert_eq!(code_f, 101, "Sec-WebSocket-Protocol bearer must authenticate");
+    assert_eq!(
+        code_f, 101,
+        "Sec-WebSocket-Protocol bearer must authenticate"
+    );
 
     // ------------------------------------------------------------------------
     // Adversarial G: Missing Upgrade Header -> 400 Bad Request
@@ -805,7 +814,10 @@ fn test_adversarial_ws_handshake_streaming_daemon() {
          \r\n"
     );
     let (code_r, _, _) = send_raw_http(addr, &req_r);
-    assert_eq!(code_r, 405, "POST /v1/ws must return 405 Method Not Allowed");
+    assert_eq!(
+        code_r, 405,
+        "POST /v1/ws must return 405 Method Not Allowed"
+    );
 
     // Clean teardown: kill child daemon
     let _ = child.kill();

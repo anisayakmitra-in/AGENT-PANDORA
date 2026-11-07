@@ -20,7 +20,10 @@ fn test_safe_prng_distributions() {
         normal_sum += rng.sample_standard_normal();
     }
     let normal_mean = normal_sum / 500.0;
-    assert!(normal_mean.abs() < 0.2, "standard normal mean drifted: {normal_mean}");
+    assert!(
+        normal_mean.abs() < 0.2,
+        "standard normal mean drifted: {normal_mean}"
+    );
 
     // Beta(1.0, 1.0) is standard uniform [0, 1]
     let mut beta_sum = 0.0;
@@ -30,7 +33,10 @@ fn test_safe_prng_distributions() {
         beta_sum += b;
     }
     let beta_mean = beta_sum / 500.0;
-    assert!((beta_mean - 0.5).abs() < 0.1, "Beta(1,1) mean drifted: {beta_mean}");
+    assert!(
+        (beta_mean - 0.5).abs() < 0.1,
+        "Beta(1,1) mean drifted: {beta_mean}"
+    );
 
     // Beta(9.0, 1.0) expected mean is 9 / 10 = 0.90
     let mut biased_sum = 0.0;
@@ -38,7 +44,10 @@ fn test_safe_prng_distributions() {
         biased_sum += rng.sample_beta(9.0, 1.0);
     }
     let biased_mean = biased_sum / 500.0;
-    assert!((biased_mean - 0.90).abs() < 0.08, "Beta(9,1) mean drifted: {biased_mean}");
+    assert!(
+        (biased_mean - 0.90).abs() < 0.08,
+        "Beta(9,1) mean drifted: {biased_mean}"
+    );
 }
 
 #[test]
@@ -54,7 +63,10 @@ fn test_ucb1_initial_exploration() {
     let mut pulled = Vec::new();
     for _ in 0..3 {
         let arm_id = router.select_arm(&ctx).expect("arm selected");
-        assert!(!pulled.contains(&arm_id), "unpulled arm should be selected first");
+        assert!(
+            !pulled.contains(&arm_id),
+            "unpulled arm should be selected first"
+        );
         pulled.push(arm_id.clone());
         router.record_reward(&arm_id, 0.5);
     }
@@ -141,7 +153,8 @@ fn test_thompson_sampling_convergence() {
 #[test]
 fn test_epsilon_greedy_behavior() {
     // Pure exploitation: epsilon = 0.0
-    let mut router = BanditModelRouter::with_seed(BanditStrategy::EpsilonGreedy { epsilon: 0.0 }, 777);
+    let mut router =
+        BanditModelRouter::with_seed(BanditStrategy::EpsilonGreedy { epsilon: 0.0 }, 777);
     router.register_arm(BanditArm::new("arm_a", "m1", "p1"));
     router.register_arm(BanditArm::new("arm_b", "m2", "p2"));
 

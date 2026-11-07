@@ -3,9 +3,7 @@
 use pandora_runtime::bandit_router::{
     BanditArm, BanditModelRouter, BanditStrategy, RoutingContext,
 };
-use pandora_runtime::merkle_dag::{
-    DagError, MerkleDagAuditLog, NodeDirection,
-};
+use pandora_runtime::merkle_dag::{DagError, MerkleDagAuditLog, NodeDirection};
 use std::collections::HashSet;
 
 // ============================================================================
@@ -268,15 +266,11 @@ fn test_stress_bandit_empirical_cumulative_regret_bounds() {
     let ctx = RoutingContext::new(256, 0.5, 0.5, 1500.0);
 
     // Test cumulative regret across multiple (K, T) combinations
-    let test_configs = [
-        (2, 100),
-        (3, 300),
-        (5, 500),
-        (10, 1000),
-    ];
+    let test_configs = [(2, 100), (3, 300), (5, 500), (10, 1000)];
 
     for &(k, t) in &test_configs {
-        let mut router = BanditModelRouter::with_seed(BanditStrategy::Ucb1 { c: 1.414 }, 8888 + k as u64);
+        let mut router =
+            BanditModelRouter::with_seed(BanditStrategy::Ucb1 { c: 1.414 }, 8888 + k as u64);
 
         for i in 0..k {
             router.register_arm(BanditArm::new(format!("k_arm_{i}"), "model", "prov"));
@@ -363,9 +357,9 @@ fn test_stress_merkle_degenerate_and_scale_sizes() {
         };
 
         for &i in &indices_to_check {
-            let proof = log.generate_proof(i).unwrap_or_else(|| {
-                panic!("failed to generate proof for n={n}, leaf={i}")
-            });
+            let proof = log
+                .generate_proof(i)
+                .unwrap_or_else(|| panic!("failed to generate proof for n={n}, leaf={i}"));
             assert_eq!(
                 proof.proof_length(),
                 expected_height,
@@ -407,7 +401,10 @@ fn test_stress_merkle_proof_tampering_and_out_of_range() {
     for byte_idx in [0, 15, 31] {
         let mut tampered = valid_proof.clone();
         tampered.leaf_hash[byte_idx] ^= 0x01;
-        assert!(!tampered.verify(), "tampered leaf byte {byte_idx} must fail");
+        assert!(
+            !tampered.verify(),
+            "tampered leaf byte {byte_idx} must fail"
+        );
     }
 
     // 2. Bit flip in every sibling step
@@ -456,13 +453,21 @@ fn test_stress_merkle_dag_disconnected_components() {
 
     // Disconnected Component 1 (Sub-agent Alpha)
     let c1_root = log.add_dag_node(b"c1_genesis", &[], 100).unwrap();
-    let c1_step1 = log.add_dag_node(b"c1_step1", std::slice::from_ref(&c1_root.id), 110).unwrap();
-    let c1_step2 = log.add_dag_node(b"c1_step2", std::slice::from_ref(&c1_step1.id), 120).unwrap();
+    let c1_step1 = log
+        .add_dag_node(b"c1_step1", std::slice::from_ref(&c1_root.id), 110)
+        .unwrap();
+    let c1_step2 = log
+        .add_dag_node(b"c1_step2", std::slice::from_ref(&c1_step1.id), 120)
+        .unwrap();
 
     // Disconnected Component 2 (Sub-agent Beta)
     let c2_root = log.add_dag_node(b"c2_genesis", &[], 200).unwrap();
-    let c2_step1 = log.add_dag_node(b"c2_step1", std::slice::from_ref(&c2_root.id), 210).unwrap();
-    let c2_step2 = log.add_dag_node(b"c2_step2", std::slice::from_ref(&c2_step1.id), 220).unwrap();
+    let c2_step1 = log
+        .add_dag_node(b"c2_step1", std::slice::from_ref(&c2_root.id), 210)
+        .unwrap();
+    let c2_step2 = log
+        .add_dag_node(b"c2_step2", std::slice::from_ref(&c2_step1.id), 220)
+        .unwrap();
 
     assert_eq!(log.dag_node_count(), 6);
 
@@ -495,11 +500,13 @@ fn test_stress_merkle_dag_deep_chains() {
     let mut current_id = log.add_dag_node(b"deep_genesis", &[], 1000).unwrap().id;
 
     for i in 1..depth {
-        let next_node = log.add_dag_node(
-            format!("deep_chain_link_{i}").as_bytes(),
-            std::slice::from_ref(&current_id),
-            1000 + i as u64,
-        ).unwrap();
+        let next_node = log
+            .add_dag_node(
+                format!("deep_chain_link_{i}").as_bytes(),
+                std::slice::from_ref(&current_id),
+                1000 + i as u64,
+            )
+            .unwrap();
         current_id = next_node.id;
     }
 
@@ -524,23 +531,45 @@ fn test_stress_merkle_dag_diamond_and_lattice_topologies() {
 
     // Diamond 1: Root -> A, B -> M1
     let root = log.add_dag_node(b"root", &[], 100).unwrap();
-    let a = log.add_dag_node(b"branch_a", std::slice::from_ref(&root.id), 110).unwrap();
-    let b = log.add_dag_node(b"branch_b", std::slice::from_ref(&root.id), 120).unwrap();
+    let a = log
+        .add_dag_node(b"branch_a", std::slice::from_ref(&root.id), 110)
+        .unwrap();
+    let b = log
+        .add_dag_node(b"branch_b", std::slice::from_ref(&root.id), 120)
+        .unwrap();
 
     // Test parent deduplication in add_dag_node
-    let m1 = log.add_dag_node(
-        b"merge_m1",
-        &[a.id.clone(), b.id.clone(), a.id.clone(), b.id.clone()],
-        130,
-    ).unwrap();
-    assert_eq!(m1.parent_ids.len(), 2, "duplicate parents should be deduplicated");
+    let m1 = log
+        .add_dag_node(
+            b"merge_m1",
+            &[a.id.clone(), b.id.clone(), a.id.clone(), b.id.clone()],
+            130,
+        )
+        .unwrap();
+    assert_eq!(
+        m1.parent_ids.len(),
+        2,
+        "duplicate parents should be deduplicated"
+    );
 
     // Diamond 2 off M1: M1 -> C, D, E -> M2 (3-way merge)
-    let c = log.add_dag_node(b"branch_c", std::slice::from_ref(&m1.id), 140).unwrap();
-    let d = log.add_dag_node(b"branch_d", std::slice::from_ref(&m1.id), 150).unwrap();
-    let e = log.add_dag_node(b"branch_e", std::slice::from_ref(&m1.id), 160).unwrap();
+    let c = log
+        .add_dag_node(b"branch_c", std::slice::from_ref(&m1.id), 140)
+        .unwrap();
+    let d = log
+        .add_dag_node(b"branch_d", std::slice::from_ref(&m1.id), 150)
+        .unwrap();
+    let e = log
+        .add_dag_node(b"branch_e", std::slice::from_ref(&m1.id), 160)
+        .unwrap();
 
-    let m2 = log.add_dag_node(b"merge_m2", &[c.id.clone(), d.id.clone(), e.id.clone()], 170).unwrap();
+    let m2 = log
+        .add_dag_node(
+            b"merge_m2",
+            &[c.id.clone(), d.id.clone(), e.id.clone()],
+            170,
+        )
+        .unwrap();
     assert_eq!(m2.parent_ids.len(), 3);
 
     // Verify lineage back to original root
@@ -570,7 +599,8 @@ fn test_stress_merkle_dag_cycle_and_invalid_parent_rejection() {
     let mut log = MerkleDagAuditLog::new();
 
     // 1. Non-existent parent rejection
-    let fake_parent = "deadbeefcafe0123456789abcdef0123456789abcdef0123456789abcdef0123".to_string();
+    let fake_parent =
+        "deadbeefcafe0123456789abcdef0123456789abcdef0123456789abcdef0123".to_string();
     let err = log.add_dag_node(b"child", std::slice::from_ref(&fake_parent), 100);
     assert!(
         matches!(err, Err(DagError::ParentNotFound(ref p)) if p == &fake_parent),

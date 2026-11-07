@@ -5,8 +5,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
 use crate::executors::ProviderCallMetrics;
+use std::collections::BTreeMap;
 
 /// Safe, zero-dependency deterministic pseudo-random number generator based on Xorshift64*.
 #[derive(Clone, Debug)]
@@ -18,7 +18,11 @@ impl SafePrng {
     /// Creates a new PRNG with a non-zero 64-bit seed.
     pub fn new(seed: u64) -> Self {
         Self {
-            state: if seed == 0 { 0xdead_beef_cafe_babe } else { seed },
+            state: if seed == 0 {
+                0xdead_beef_cafe_babe
+            } else {
+                seed
+            },
         }
     }
 
@@ -119,7 +123,9 @@ pub enum BanditStrategy {
 
 impl Default for BanditStrategy {
     fn default() -> Self {
-        Self::Ucb1 { c: std::f64::consts::SQRT_2 }
+        Self::Ucb1 {
+            c: std::f64::consts::SQRT_2,
+        }
     }
 }
 
@@ -138,7 +144,11 @@ pub struct BanditArm {
 
 impl BanditArm {
     /// Creates a new bandit arm with uninformative Beta(1.0, 1.0) uniform prior.
-    pub fn new(id: impl Into<String>, model_id: impl Into<String>, provider_id: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        model_id: impl Into<String>,
+        provider_id: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             model_id: model_id.into(),
@@ -321,7 +331,9 @@ impl RoutingReward {
             0.5
         };
 
-        (self.weight_success * succ_score + self.weight_latency * lat_ratio + self.weight_cost * cost_ratio)
+        (self.weight_success * succ_score
+            + self.weight_latency * lat_ratio
+            + self.weight_cost * cost_ratio)
             .clamp(0.0, 1.0)
     }
 
@@ -520,7 +532,12 @@ impl BanditModelRouter {
     }
 
     /// Records an observed contextual reward with associated context feature vectors.
-    pub fn record_contextual_reward(&mut self, arm_id: &str, reward: f64, context: &RoutingContext) {
+    pub fn record_contextual_reward(
+        &mut self,
+        arm_id: &str,
+        reward: f64,
+        context: &RoutingContext,
+    ) {
         if let Some(arm) = self.arms.get_mut(arm_id) {
             arm.update(reward, Some(context.to_features()));
             self.total_pulls += 1;
@@ -535,7 +552,9 @@ impl BanditModelRouter {
         max_latency_ms: f64,
         max_tokens: f64,
     ) -> f64 {
-        let reward = self.reward_calculator.from_metrics(metrics, max_latency_ms, max_tokens);
+        let reward = self
+            .reward_calculator
+            .from_metrics(metrics, max_latency_ms, max_tokens);
         self.record_reward(arm_id, reward);
         reward
     }

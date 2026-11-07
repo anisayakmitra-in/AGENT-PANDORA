@@ -5,10 +5,10 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fmt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 
 /// Domain separation tag for leaf node hashes to prevent second-preimage attacks.
 pub const TAG_LEAF: u8 = 0x00;
@@ -109,7 +109,10 @@ impl fmt::Display for DagError {
             Self::ParentNotFound(id) => write!(f, "parent node not found in DAG: {id}"),
             Self::CycleDetected(id) => write!(f, "cycle detected when linking node: {id}"),
             Self::IndexOutOfBounds { index, count } => {
-                write!(f, "leaf index {index} out of bounds for log of size {count}")
+                write!(
+                    f,
+                    "leaf index {index} out of bounds for log of size {count}"
+                )
             }
             Self::LineageCorrupted(id) => write!(f, "causal lineage corrupted for node: {id}"),
             Self::EmptyLog => write!(f, "merkle audit log is empty"),
@@ -156,7 +159,10 @@ impl MerkleDagAuditLog {
 
     /// Computes the canonical Merkle-DAG node hash using domain separation tag `0x02`:
     /// $$H(u) = \text{SHA256}(0x02 \mathbin{\Vert} \text{payload\_hash} \mathbin{\Vert} \operatorname{Sort}(\text{parent\_hashes}))$$
-    pub fn compute_dag_hash(payload_hash: &[u8; 32], sorted_parent_hashes: &[[u8; 32]]) -> [u8; 32] {
+    pub fn compute_dag_hash(
+        payload_hash: &[u8; 32],
+        sorted_parent_hashes: &[[u8; 32]],
+    ) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update([TAG_DAG]);
         hasher.update(payload_hash);

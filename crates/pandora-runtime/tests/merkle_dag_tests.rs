@@ -40,7 +40,10 @@ fn test_power_of_two_merkle_trees() {
                 expected_height,
                 "proof length for n={n} leaf={i} must be {expected_height}"
             );
-            assert!(proof.verify(), "proof verification failed for n={n} leaf={i}");
+            assert!(
+                proof.verify(),
+                "proof verification failed for n={n} leaf={i}"
+            );
         }
     }
 }
@@ -85,7 +88,10 @@ fn test_tamper_detection_rejection() {
     // 2. Tamper with sibling hash
     let mut bad_sibling_proof = proof.clone();
     bad_sibling_proof.steps[0].sibling_hash[0] ^= 0xaa;
-    assert!(!bad_sibling_proof.verify(), "tampered sibling hash must fail");
+    assert!(
+        !bad_sibling_proof.verify(),
+        "tampered sibling hash must fail"
+    );
 
     // 3. Tamper with direction
     let mut bad_dir_proof = proof.clone();
@@ -108,7 +114,10 @@ fn test_domain_separation_integrity() {
     let leaf_h = MerkleDagAuditLog::compute_leaf_hash(raw_payload);
     let node_h = MerkleDagAuditLog::compute_parent_hash(&leaf_h, &leaf_h);
 
-    assert_ne!(leaf_h, node_h, "leaf and node hashes must differ via domain separation");
+    assert_ne!(
+        leaf_h, node_h,
+        "leaf and node hashes must differ via domain separation"
+    );
     assert_eq!(TAG_LEAF, 0x00);
     assert_eq!(TAG_NODE, 0x01);
     assert_eq!(TAG_DAG, 0x02);
@@ -119,18 +128,26 @@ fn test_merkle_dag_causal_lineage() {
     let mut log = MerkleDagAuditLog::new();
 
     // Genesis state
-    let n1 = log.add_dag_node(b"genesis_commit", &[], 1000).expect("genesis added");
+    let n1 = log
+        .add_dag_node(b"genesis_commit", &[], 1000)
+        .expect("genesis added");
     assert!(n1.parent_ids.is_empty());
 
     // Second sequential commit
-    let n2 = log.add_dag_node(b"edit_patch_1", std::slice::from_ref(&n1.id), 1010).expect("n2 added");
+    let n2 = log
+        .add_dag_node(b"edit_patch_1", std::slice::from_ref(&n1.id), 1010)
+        .expect("n2 added");
     assert_eq!(n2.parent_ids, vec![n1.id.clone()]);
 
     // Branch commit off genesis
-    let n3 = log.add_dag_node(b"feature_branch_patch", std::slice::from_ref(&n1.id), 1020).expect("n3 added");
+    let n3 = log
+        .add_dag_node(b"feature_branch_patch", std::slice::from_ref(&n1.id), 1020)
+        .expect("n3 added");
 
     // Merge commit merging n2 and n3
-    let n4 = log.add_dag_node(b"merge_commit", &[n2.id.clone(), n3.id.clone()], 1030).expect("n4 added");
+    let n4 = log
+        .add_dag_node(b"merge_commit", &[n2.id.clone(), n3.id.clone()], 1030)
+        .expect("n4 added");
     assert_eq!(n4.parent_ids.len(), 2);
 
     // Verify causal lineage

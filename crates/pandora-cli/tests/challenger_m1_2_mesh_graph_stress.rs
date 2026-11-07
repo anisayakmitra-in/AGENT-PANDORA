@@ -111,7 +111,11 @@ impl JsonResponse {
     }
 
     fn failure(self) -> (ExitStatus, String) {
-        assert!(!self.status.success(), "command unexpectedly succeeded: {}", self.text);
+        assert!(
+            !self.status.success(),
+            "command unexpectedly succeeded: {}",
+            self.text
+        );
         (self.status, self.text)
     }
 }
@@ -160,7 +164,9 @@ fn challenge_bft_boundary_conditions_and_equivocation() {
     // Duplicate propose must be rejected
     assert_eq!(
         bft_7_2.propose("proposer-0", "proposal-7-2", payload_hash, 1001),
-        Err(SwarmError::ProposalAlreadyExists("proposal-7-2".to_string()))
+        Err(SwarmError::ProposalAlreadyExists(
+            "proposal-7-2".to_string()
+        ))
     );
 
     // Cast 4 approval votes -> Still Pending (4 < 5)
@@ -201,15 +207,25 @@ fn challenge_bft_boundary_conditions_and_equivocation() {
         .unwrap();
 
     // 2 approvals, 2 rejections -> Pending (remaining 3 uncast votes could still reach 5 approvals)
-    bft_reject.cast_vote("v1", "proposal-reject", true, vec![]).unwrap();
-    bft_reject.cast_vote("v2", "proposal-reject", true, vec![]).unwrap();
-    bft_reject.cast_vote("v3", "proposal-reject", false, vec![]).unwrap();
-    let dec_p = bft_reject.cast_vote("v4", "proposal-reject", false, vec![]).unwrap();
+    bft_reject
+        .cast_vote("v1", "proposal-reject", true, vec![])
+        .unwrap();
+    bft_reject
+        .cast_vote("v2", "proposal-reject", true, vec![])
+        .unwrap();
+    bft_reject
+        .cast_vote("v3", "proposal-reject", false, vec![])
+        .unwrap();
+    let dec_p = bft_reject
+        .cast_vote("v4", "proposal-reject", false, vec![])
+        .unwrap();
     assert_eq!(dec_p, ConsensusDecision::Pending);
 
     // 3rd rejection -> Rejections = 3 > 7 - 5 = 2. Max possible approvals is now 7 - 3 = 4 < 5.
     // Must immediately transition to Rejected!
-    let dec_rej = bft_reject.cast_vote("v5", "proposal-reject", false, vec![]).unwrap();
+    let dec_rej = bft_reject
+        .cast_vote("v5", "proposal-reject", false, vec![])
+        .unwrap();
     assert_eq!(dec_rej, ConsensusDecision::Rejected);
 }
 
@@ -219,41 +235,78 @@ fn challenge_bft_cli_quorum_check_propose_and_vote() {
     fixture.setup();
 
     // 1. CLI Quorum check: N=4, f=1 (valid)
-    let resp = fixture.run(&["fleet", "quorum", "check", "--nodes", "4", "--byzantine", "1"]);
+    let resp = fixture.run(&[
+        "fleet",
+        "quorum",
+        "check",
+        "--nodes",
+        "4",
+        "--byzantine",
+        "1",
+    ]);
     let val = resp.success("fleet quorum check");
     assert_eq!(val["valid"], true);
     assert_eq!(val["quorum_threshold"], 3);
     assert_eq!(val["min_required_nodes"], 4);
 
     // 2. CLI Quorum check: N=3, f=1 (invalid)
-    let resp_inv = fixture.run(&["fleet", "quorum", "check", "--nodes", "3", "--byzantine", "1"]);
+    let resp_inv = fixture.run(&[
+        "fleet",
+        "quorum",
+        "check",
+        "--nodes",
+        "3",
+        "--byzantine",
+        "1",
+    ]);
     let val_inv = resp_inv.success("fleet quorum check");
     assert_eq!(val_inv["valid"], false);
     assert_eq!(val_inv["min_required_nodes"], 4);
 
     // 3. CLI Quorum check: N=7, f=2 (valid)
-    let resp_7_2 = fixture.run(&["fleet", "quorum", "check", "--nodes", "7", "--byzantine", "2"]);
+    let resp_7_2 = fixture.run(&[
+        "fleet",
+        "quorum",
+        "check",
+        "--nodes",
+        "7",
+        "--byzantine",
+        "2",
+    ]);
     let val_7_2 = resp_7_2.success("fleet quorum check");
     assert_eq!(val_7_2["valid"], true);
     assert_eq!(val_7_2["quorum_threshold"], 5);
 
     // 4. CLI Propose rejection when invalid BFT parameters given
     let resp_fail_prop = fixture.run(&[
-        "fleet", "quorum", "propose",
-        "--nodes", "3",
-        "--byzantine", "1",
-        "--proposal-id", "prop-invalid",
+        "fleet",
+        "quorum",
+        "propose",
+        "--nodes",
+        "3",
+        "--byzantine",
+        "1",
+        "--proposal-id",
+        "prop-invalid",
     ]);
     let (_, stderr) = resp_fail_prop.failure();
-    assert!(stderr.contains("invalid BFT parameters") || stderr.contains("must satisfy N >= 3f + 1"));
+    assert!(
+        stderr.contains("invalid BFT parameters") || stderr.contains("must satisfy N >= 3f + 1")
+    );
 
     // 5. CLI Propose valid proposal
     let resp_prop = fixture.run(&[
-        "fleet", "quorum", "propose",
-        "--nodes", "7",
-        "--byzantine", "2",
-        "--proposal-id", "prop-fleet-72",
-        "--payload", "upgrade-payload-123",
+        "fleet",
+        "quorum",
+        "propose",
+        "--nodes",
+        "7",
+        "--byzantine",
+        "2",
+        "--proposal-id",
+        "prop-fleet-72",
+        "--payload",
+        "upgrade-payload-123",
     ]);
     let val_prop = resp_prop.success("fleet quorum propose");
     assert_eq!(val_prop["proposal_id"], "prop-fleet-72");
@@ -262,12 +315,19 @@ fn challenge_bft_cli_quorum_check_propose_and_vote() {
 
     // 6. CLI Vote reaching quorum threshold
     let resp_vote = fixture.run(&[
-        "fleet", "quorum", "vote",
-        "--nodes", "7",
-        "--byzantine", "2",
-        "--proposal-id", "prop-fleet-72",
-        "--payload", "upgrade-payload-123",
-        "--votes", "v1:true,v2:true,v3:true,v4:true,v5:true",
+        "fleet",
+        "quorum",
+        "vote",
+        "--nodes",
+        "7",
+        "--byzantine",
+        "2",
+        "--proposal-id",
+        "prop-fleet-72",
+        "--payload",
+        "upgrade-payload-123",
+        "--votes",
+        "v1:true,v2:true,v3:true,v4:true,v5:true",
     ]);
     let val_vote = resp_vote.success("fleet quorum vote");
     assert_eq!(val_vote["decision"], "Approved");
@@ -355,12 +415,14 @@ fn challenge_peer_gossip_duplicate_drops_and_vector_clock() {
 
     // 2. Node A attempting to receive its own published message is immediately dropped (Bloom filter deduplication)
     let re_recv_a = node_a.receive(msg1.clone());
-    assert!(re_recv_a.is_none(), "Node A must discard its own message as duplicate");
+    assert!(
+        re_recv_a.is_none(),
+        "Node A must discard its own message as duplicate"
+    );
 
     // 3. Node B receives the message for the first time -> accepted and forward targets selected (excluding origin node-alpha)
     let targets_b = node_b.receive(msg1.clone());
     assert_eq!(targets_b, Some(vec!["node-delta".to_string()]));
-
 
     // 4. Node B receives the EXACT SAME message a second and third time -> MUST be dropped
     for _ in 0..5 {
@@ -399,11 +461,17 @@ fn challenge_peer_gossip_cli_broadcast_receive_filter() {
 
     // 1. Broadcast command
     let resp_bcast = fixture.run(&[
-        "peer", "gossip", "broadcast",
-        "--node-id", "stress-node-1",
-        "--payload", "critical-state-sync",
-        "--fanout", "4",
-        "--peers", "peer-a,peer-b,peer-c",
+        "peer",
+        "gossip",
+        "broadcast",
+        "--node-id",
+        "stress-node-1",
+        "--payload",
+        "critical-state-sync",
+        "--fanout",
+        "4",
+        "--peers",
+        "peer-a,peer-b,peer-c",
     ]);
     let val_bcast = resp_bcast.success("peer gossip broadcast");
     let msg_id = val_bcast["message_id"].as_str().unwrap().to_string();
@@ -412,22 +480,34 @@ fn challenge_peer_gossip_cli_broadcast_receive_filter() {
 
     // 2. Receive command (first receipt: accepted)
     let resp_recv1 = fixture.run(&[
-        "peer", "gossip", "receive",
-        "--node-id", "stress-node-2",
-        "--message-id", &msg_id,
-        "--origin", "stress-node-1",
-        "--payload", "critical-state-sync",
+        "peer",
+        "gossip",
+        "receive",
+        "--node-id",
+        "stress-node-2",
+        "--message-id",
+        &msg_id,
+        "--origin",
+        "stress-node-1",
+        "--payload",
+        "critical-state-sync",
     ]);
     let val_recv1 = resp_recv1.success("peer gossip receive");
     assert_eq!(val_recv1["accepted"], true);
 
     // 3. Filter query command
     let resp_filt = fixture.run(&[
-        "peer", "gossip", "filter",
-        "--action", "contains",
-        "--item", "nonexistent-item-key",
-        "--num-bits", "2048",
-        "--hash-functions", "7",
+        "peer",
+        "gossip",
+        "filter",
+        "--action",
+        "contains",
+        "--item",
+        "nonexistent-item-key",
+        "--num-bits",
+        "2048",
+        "--hash-functions",
+        "7",
     ]);
     let val_filt = resp_filt.success("peer gossip filter");
     assert_eq!(val_filt["contains"], false);
@@ -585,10 +665,14 @@ fn challenge_dag_cli_simulation_presets_and_custom() {
 
     // 2. Custom DAG via CLI: tasks and dependencies
     let resp_custom = fixture.run(&[
-        "fleet", "dag",
-        "--tasks", "build:30,test_unit:15,test_int:25,package:10",
-        "--dependencies", "build->test_unit,build->test_int,test_unit->package,test_int->package",
-        "--workers", "2",
+        "fleet",
+        "dag",
+        "--tasks",
+        "build:30,test_unit:15,test_int:25,package:10",
+        "--dependencies",
+        "build->test_unit,build->test_int,test_unit->package,test_int->package",
+        "--workers",
+        "2",
     ]);
     let val_custom = resp_custom.success("fleet dag");
     assert_eq!(val_custom["tasks_count"], 4);
@@ -597,9 +681,12 @@ fn challenge_dag_cli_simulation_presets_and_custom() {
 
     // 3. Custom DAG with cyclic dependency must fail with error
     let resp_cyclic = fixture.run(&[
-        "fleet", "dag",
-        "--tasks", "task1:10,task2:20",
-        "--dependencies", "task1->task2,task2->task1",
+        "fleet",
+        "dag",
+        "--tasks",
+        "task1:10,task2:20",
+        "--dependencies",
+        "task1->task2,task2->task1",
     ]);
     let (_, stderr) = resp_cyclic.failure();
     assert!(stderr.contains("Cycle detected") || stderr.contains("failed to add dependency"));
@@ -678,7 +765,6 @@ fn challenge_graph_visual_large_node_count_and_lyapunov_convergence() {
         }
     }
 
-
     // Due to velocity damping gamma = 0.85, kinetic energy dissipates towards equilibrium
     assert!(
         layout.step(dt) < 5.0,
@@ -733,20 +819,43 @@ fn challenge_graph_visual_cli_rendering_subcommands() {
     fixture.setup();
 
     // 1. Knowledge graph visual
-    let resp_k = fixture.run(&["graph", "visual", "--kind", "knowledge", "--width", "50", "--height", "15"]);
+    let resp_k = fixture.run(&[
+        "graph",
+        "visual",
+        "--kind",
+        "knowledge",
+        "--width",
+        "50",
+        "--height",
+        "15",
+    ]);
     let val_k = resp_k.success("graph visual");
     assert_eq!(val_k["kind"], "knowledge");
     assert!(val_k["nodes_count"].as_u64().unwrap() >= 4);
-    assert!(val_k["rendered"].as_str().unwrap().contains("[Kernel]") || val_k["rendered"].as_str().unwrap().contains("[VFS]"));
+    assert!(
+        val_k["rendered"].as_str().unwrap().contains("[Kernel]")
+            || val_k["rendered"].as_str().unwrap().contains("[VFS]")
+    );
 
     // 2. Architecture graph visual
-    let resp_arch = fixture.run(&["graph", "visual", "--kind", "architecture", "--width", "50", "--height", "15"]);
+    let resp_arch = fixture.run(&[
+        "graph",
+        "visual",
+        "--kind",
+        "architecture",
+        "--width",
+        "50",
+        "--height",
+        "15",
+    ]);
     let val_arch = resp_arch.success("graph visual");
     assert_eq!(val_arch["kind"], "architecture");
     assert!(val_arch["nodes_count"].as_u64().unwrap() >= 4);
 
     // 3. Review graph visual
-    let resp_rev = fixture.run(&["graph", "visual", "--kind", "review", "--width", "50", "--height", "15"]);
+    let resp_rev = fixture.run(&[
+        "graph", "visual", "--kind", "review", "--width", "50", "--height", "15",
+    ]);
     let val_rev = resp_rev.success("graph visual");
     assert_eq!(val_rev["kind"], "review");
 
