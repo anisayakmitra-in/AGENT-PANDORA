@@ -128,7 +128,7 @@ jobs:
             target: x86_64-apple-darwin
             binary: pandora
             artifact: pandora-x86_64-apple-darwin
-          - os: macos-14
+          - os: macos-26
             target: aarch64-apple-darwin
             binary: pandora
             artifact: pandora-aarch64-apple-darwin
@@ -439,7 +439,7 @@ jobs:
           - os: macos-15-intel
             binary: pandora
             artifact: pandora-x86_64-apple-darwin
-          - os: macos-14
+          - os: macos-26
             binary: pandora
             artifact: pandora-aarch64-apple-darwin
           - os: windows-latest

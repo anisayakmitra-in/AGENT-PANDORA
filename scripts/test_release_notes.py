@@ -418,7 +418,7 @@ Older notes.
         for operating_system in (
             "ubuntu-latest",
             "macos-15-intel",
-            "macos-14",
+            "macos-26",
             "windows-latest",
         ):
             self.assertIn(f"- os: {operating_system}", workflow)
