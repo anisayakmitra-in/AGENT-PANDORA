@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, and `v3.0.4`. The active release identity
-is `v3.0.4`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, and `v3.0.5`. The active release identity
+is `v3.0.5`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.5
+
+This release completes CLI subcommand wiring across Phases 6 through 14 (`pandora models route`, `pandora audit`, `pandora privacy`, `pandora zk`, `pandora runtime speculative|kv-cache|scheduler|byzantine|drift|canary-gate`, and `pandora hardware scheduler`) and implements the next-generation mathematical runtime engines for Phases 9 through 14 (Rényi Differential Privacy accountant, Goldilocks-field Zero-Knowledge succinct state attestation, Blumofe-Leiserson adaptive work-stealing scheduler, Byzantine-resilient Multi-Krum & trimmed-mean consensus aggregator, log-domain Sinkhorn-Knopp entropic optimal transport semantic drift detector, and Ville martingale anytime-valid canary gate) backed by 28 formal theorems in `docs/math/`.
 
 ## v3.0.4
 

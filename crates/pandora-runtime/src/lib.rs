@@ -8,6 +8,7 @@ pub mod arch_simd;
 pub mod artifact_catalog;
 pub mod bandit_router;
 pub mod blaze_adapter;
+pub mod byzantine_aggregator;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
@@ -46,6 +47,7 @@ pub mod job_store;
 pub mod kanban_engine;
 pub mod lats_engine;
 pub mod lsp_engine;
+pub mod martingale_gate;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod memory_engine;
@@ -97,6 +99,7 @@ pub mod tripartite_governance;
 pub mod visual_graph;
 pub mod voyager_curriculum;
 pub mod wasm;
+pub mod wasserstein_drift;
 pub mod work_stealing;
 pub mod worktree_isolation;
 pub mod zk_attestation;
@@ -126,6 +129,10 @@ pub use bandit_router::{
 };
 pub use blaze_adapter::{
     BlazeBuildResult, BlazeCompilerAdapter, BlazeConfig, BlazeDiagnostics, DiagnosticLevel,
+};
+pub use byzantine_aggregator::{
+    AgentVectorUpdate, AggregationRule, ByzantineAggregator, ByzantineConsensusResult,
+    ByzantineError,
 };
 pub use coding_feedback::{
     CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
@@ -247,6 +254,9 @@ pub use lats_engine::{
     cosine_similarity, should_escalate,
 };
 pub use lsp_engine::{LspClientConfig, LspEngine, LspError, LspSession};
+pub use martingale_gate::{
+    CanaryGateVerdict, MartingaleCanaryGate, MartingaleError, MartingaleGateSnapshot,
+};
 pub use mcp::{
     MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpError, McpFailure, McpInvocation,
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
@@ -382,6 +392,9 @@ pub use voyager_curriculum::{CurriculumDifficulty, CurriculumSummary, VoyagerCur
 pub use wasm::{
     DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
     WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,
+};
+pub use wasserstein_drift::{
+    EmpiricalDistribution, SinkhornDriftDetector, SinkhornDriftReport, WassersteinError,
 };
 pub use work_stealing::{
     AdaptiveBackoff, BASE_STEAL_BACKOFF_US, BL_CRITICAL_PATH_COEFFICIENT, BoundedTaskDeque,

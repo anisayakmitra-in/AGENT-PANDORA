@@ -8,9 +8,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NEXT_VERSION = "3.0.4"
+NEXT_VERSION = "3.0.5"
 NEXT_TAG = f"v{NEXT_VERSION}"
-CONSUMED_TAG = "v3.0.3"
+CONSUMED_TAG = "v3.0.4"
 
 
 class NextBetaIdentityTests(unittest.TestCase):

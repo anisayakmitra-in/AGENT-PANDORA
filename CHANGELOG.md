@@ -1,5 +1,27 @@
 # Changelog
 
+## v3.0.5
+
+### Phase 6-14 CLI Subcommand Wiring & Next-Generation Mathematical Roadmap (Phases 9-14)
+- **Phase 6-8 CLI Subcommand Wiring (`crates/pandora-cli/src/commands/models.rs`, `audit.rs`, `runtime.rs`, `hardware.rs`)**:
+  - `pandora models route`: UCB1 and Gaussian-Gamma Thompson Sampling router simulation with sublinear $O(\sqrt{KT\ln T})$ regret telemetry.
+  - `pandora audit`: RFC 6962 domain-separated ($0\text{x}00$ leaf, $0\text{x}01$ internal node) $O(\log_2 N)$ Merkle inclusion proofs and causal DAG lineage verification (`record`, `proof`, `verify`, `tree`, `simulate`).
+  - `pandora runtime speculative benchmark` & `kv-cache`: Leviathan et al. exact target-distribution acceptance telemetry and Radix Trie KV cache prefix compression ratios.
+- **Phase 9 Distributed Differential Privacy Budget Tracker (`crates/pandora-runtime/src/privacy_budget.rs`, `crates/pandora-cli/src/commands/privacy.rs`, `docs/math/phase9_privacy_budget_tracker.md`)**:
+  - Rényi Differential Privacy (RDP) sequential composition (Theorem 17) and optimal $(\alpha, \varepsilon_{\text{RDP}}) \to (\varepsilon, \delta)$-DP tail bound conversion (Theorem 18) with `pandora privacy status|reserve|commit|release|record|simulate`.
+- **Phase 10 Zero-Knowledge Succinct State Attestation (`crates/pandora-runtime/src/zk_attestation.rs`, `crates/pandora-cli/src/commands/zk.rs`, `docs/math/phase10_zk_attestation.md`)**:
+  - Univariate polynomial commitments over the Goldilocks prime field $\mathbb{F}_p$ ($p = 2^{64} - 2^{32} + 1$) with Fiat-Shamir non-interactive challenge generation, $O(1)$ succinct verification, and Schwartz-Zippel soundness bound $\le k/p$ (Theorems 19 & 20) via `pandora zk prove|verify|benchmark`.
+- **Phase 11 Dynamic Adaptive Work-Stealing Task Scheduler (`crates/pandora-runtime/src/work_stealing.rs`, `docs/math/phase11_work_stealing_scheduler.md`)**:
+  - Blumofe-Leiserson double-ended work-stealing deques with proven makespan bound $\mathbb{E}[T_P] \le T_1/P + O(T_\infty)$ (Theorem 21) and bounded busy-leaves space $S_P \le P \cdot S_1$ (Theorem 22) via `pandora runtime scheduler` and `pandora hardware scheduler`.
+- **Phase 12 Byzantine-Resilient Multi-Agent Consensus Aggregator (`crates/pandora-runtime/src/byzantine_aggregator.rs`, `docs/math/phase12_byzantine_consensus.md`)**:
+  - Coordinate-wise $\beta$-Trimmed Mean, Coordinate Median, and $(n, f)$-Multi-Krum geometric consensus with proven breakdown points and bounded cone deviation (Theorems 23 & 24) via `pandora runtime byzantine`.
+- **Phase 13 Entropic Optimal Transport Semantic Drift Detector (`crates/pandora-runtime/src/wasserstein_drift.rs`, `docs/math/phase13_wasserstein_drift.md`)**:
+  - Log-domain stabilized Sinkhorn-Knopp dual iterations with Birkhoff-Hopf projective contraction $\kappa < 1$ and debiased Sinkhorn divergence $S_\varepsilon(\mu, \nu) \ge 0$ (Theorems 25 & 26) via `pandora runtime drift`.
+- **Phase 14 Martingale Anytime-Valid Canary Gate (`crates/pandora-runtime/src/martingale_gate.rs`, `docs/math/phase14_martingale_canary_gate.md`)**:
+  - Non-negative test supermartingale $e$-processes ($E_t = \prod_{i=1}^t (1 + \lambda_i X_i)$) with Ville's maximal inequality $\Pr_{H_0}(\exists t : E_t \ge 1/\alpha) \le \alpha$ and Howard et al. sub-Gaussian mixture confidence sequences (Theorems 27 & 28) via `pandora runtime canary-gate`.
+- **Version 3.0.5 Release & Publication**:
+  - Synchronized all workspace manifests, C/C++ headers, Go SDK, TypeScript launcher, Python gateway bridge, and installers to `3.0.5`.
+
 ## v3.0.4
 
 ### Phase 2-5 CLI and Daemon Endpoint Wiring (R1)

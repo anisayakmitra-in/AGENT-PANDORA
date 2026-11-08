@@ -7,7 +7,7 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "hardware requires 'probe', 'fit', 'presets', 'roofline', 'benchmark', 'speculative', or 'kv-cache'",
+            "hardware requires 'probe', 'fit', 'presets', 'roofline', 'benchmark', 'speculative', 'kv-cache', or 'scheduler'",
         )
     })?;
 
@@ -19,6 +19,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "benchmark" => benchmark(&args[1..]),
         "speculative" => super::runtime::speculative_with_cmd(&args[1..], "hardware speculative"),
         "kv-cache" => super::runtime::kv_cache_with_cmd(&args[1..], "hardware kv-cache"),
+        "scheduler" | "work-stealing" => {
+            super::runtime::scheduler_with_cmd(&args[1..], "hardware scheduler")
+        }
         unknown => Err(CliError::usage(format!(
             "unknown hardware command '{unknown}'"
         ))),

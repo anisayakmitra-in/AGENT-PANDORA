@@ -51,6 +51,7 @@ mod package;
 pub(crate) mod peer;
 pub(crate) mod policy;
 pub(crate) mod pr;
+pub(crate) mod privacy;
 pub(crate) mod prompt;
 mod provider;
 pub(crate) mod prp;
@@ -75,6 +76,7 @@ pub(crate) mod tui_backdrop;
 mod uninstall;
 mod update;
 pub(crate) mod welcome;
+pub(crate) mod zk;
 
 pub(crate) const LOCAL_PRINCIPAL: &str = "local-user";
 pub(crate) const LOCAL_TENANT: &str = "local-tenant";
@@ -265,6 +267,9 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "prp" => prp::execute(&args[1..]),
         "branch" => branch::execute(&args[1..]),
         "pr" => pr::execute(&args[1..]),
+        "privacy" => privacy::execute(&args[1..]),
+        "zk" => zk::execute(&args[1..]),
+        "scheduler" | "work-stealing" => runtime::scheduler(&args[1..]),
         "lsp" => lsp::execute(&args[1..]),
         "release" => release::execute(&args[1..]),
         "--help" | "help" => {

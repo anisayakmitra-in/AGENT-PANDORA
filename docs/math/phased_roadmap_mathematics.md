@@ -347,7 +347,60 @@ $\blacksquare$
 
 ---
 
-## 12. Comprehensive Roadmap Summary Matrix (Phases 1–11)
+## 12. Phase 12: Byzantine-Resilient Multi-Agent Consensus & Gradient Aggregator
+
+### 12.1 Coordinate-Wise $\beta$-Trimmed Mean Breakdown Point & Statistical Error
+
+**Theorem 23 (Coordinate-Wise Trimmed Mean Breakdown & Error Bound):**  
+*For $n$ agents in $\mathbb{R}^d$ with up to $f$ Byzantine adversaries ($2f < n$) and trim parameter $\beta \in [f/n, 1/2)$, discarding the smallest $k = \max(f, \lfloor \beta n \rfloor)$ and largest $k$ order statistics in each coordinate achieves optimal breakdown point $\alpha^* = f/n < 1/2$ and bounded mean-squared error:*
+$$\mathbb{E}\left\|\hat{\mu}_{\text{TM}} - \mu\right\|_2^2 \le \frac{6 d \sigma^2}{(1 - 2\beta)^2} \left(\frac{1}{n} + \left(\frac{f}{n}\right)^2\right)$$
+
+### 12.2 $(n, f)$-Krum Geometric Resilience & Cone Deviation Bound
+
+**Theorem 24 ($(n, f)$-Krum Bounded Cone Deviation):**  
+*Under $2f + 2 < n$, selecting the vector minimizing the sum of squared Euclidean distances to its $m = n - f - 2$ nearest neighbors $S(i) = \sum_{j \in \mathcal{N}_i} \|v_i - v_j\|_2^2$ guarantees bounded estimation error independent of Byzantine attack magnitude:*
+$$\mathbb{E}\left\|\hat{\mu}_{\text{Krum}} - \mu\right\|_2 \le \alpha_{\text{Krum}}(n, f) \cdot \sigma \sqrt{d}, \quad \alpha_{\text{Krum}}(n, f) = \sqrt{2\left(n - f + \frac{f(n - f - 2) + f^2}{n - 2f - 2}\right)}$$
+- **Reference**: Detailed proofs documented in `docs/math/phase12_byzantine_consensus.md`.  
+$\blacksquare$
+
+---
+
+## 13. Phase 13: Entropic Optimal Transport (Sinkhorn-Knopp) Semantic Drift Detector
+
+### 13.1 Birkhoff-Hopf Projective Contraction & Log-Domain Sinkhorn Stability
+
+**Theorem 25 (Birkhoff-Hopf Linear Convergence in Hilbert Projective Metric):**  
+*Log-domain stabilized dual Sinkhorn updates $f_i^{(k+1)} = -\varepsilon \operatorname{LSE}_j(\ln b_j + (g_j^{(k)} - C_{ij})/\varepsilon)$ are globally overflow-free and contract linearly in the Hilbert projective metric with Birkhoff-Hopf factor:*
+$$d_H\left(u^{(k+1)}, u^\star\right) \le \kappa^2 \, d_H\left(u^{(k)}, u^\star\right), \quad \kappa = \frac{\exp(\|C\|_\infty / (2\varepsilon)) - 1}{\exp(\|C\|_\infty / (2\varepsilon)) + 1} < 1$$
+
+### 13.2 Entropic Bias Bound & Debiased Sinkhorn Divergence Positivity
+
+**Theorem 26 (Entropic Bias & Sinkhorn Divergence Metric Identity):**  
+*The entropic optimal transport cost satisfies $0 \le \operatorname{OT}_\varepsilon(\mu, \nu) - W_2^2(\mu, \nu) \le \varepsilon(H(a) + H(b))$, and the debiased Sinkhorn divergence $S_\varepsilon(\mu, \nu) = \operatorname{OT}_\varepsilon(\mu, \nu) - \frac{1}{2}\operatorname{OT}_\varepsilon(\mu, \mu) - \frac{1}{2}\operatorname{OT}_\varepsilon(\nu, \nu)$ satisfies $S_\varepsilon(\mu, \nu) \ge 0$ with $S_\varepsilon(\mu, \nu) = 0 \iff \mu = \nu$.*
+- **Reference**: Detailed proofs documented in `docs/math/phase13_wasserstein_drift.md`.  
+$\blacksquare$
+
+---
+
+## 14. Phase 14: Martingale Anytime-Valid Canary Gate with e-Processes & Confidence Sequences
+
+### 14.1 Ville's Maximal Inequality & Anytime-Valid e-Process Control
+
+**Theorem 27 (Ville's Maximal Inequality for Test Supermartingales):**  
+*For sequential bounded observations $X_t \in [-1, 1]$ and predictable $\mathcal{F}_{t-1}$-measurable betting fractions $\lambda_t \in [0, 1)$, the multiplicative wealth process $E_t = \prod_{i=1}^t (1 + \lambda_i X_i)$ is a non-negative supermartingale under $H_0: \mathbb{E}[X_t \mid \mathcal{F}_{t-1}] \le 0$ and satisfies time-uniform Type-I error control across all stopping times:*
+$$\mathbb{P}_{H_0}\left(\exists t \ge 1 : E_t \ge \frac{1}{\alpha}\right) \le \alpha$$
+
+### 14.2 Time-Uniform Gaussian-Mixture Confidence Sequence Boundary
+
+**Theorem 28 (Howard et al. Sub-Gaussian Mixture Confidence Sequence):**  
+*Integrating the exponential supermartingale $M_t(\eta) = \exp(\eta S_t - t\eta^2\sigma^2/2)$ against a Gaussian prior $\mathcal{N}(0, \rho^2/\sigma^2)$ yields a simultaneous time-uniform confidence radius shrinking at rate $O(\sqrt{\ln(t)/t})$:*
+$$\mathbb{P}\left(\forall t \ge 1 : |\hat{\mu}_t - \mu| \le \sigma \sqrt{\frac{2(t\rho^2 + 1)}{t^2\rho^2} \ln\left(\frac{\sqrt{t\rho^2 + 1}}{\alpha}\right)}\right) \ge 1 - \alpha$$
+- **Reference**: Detailed proofs documented in `docs/math/phase14_martingale_canary_gate.md`.  
+$\blacksquare$
+
+---
+
+## 15. Comprehensive Roadmap Summary Matrix (Phases 1–14)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -362,5 +415,9 @@ $\blacksquare$
 | **9** | Privacy Budget Tracker | Linear RDP composition, infimum $(\varepsilon,\delta)$ | $\varepsilon_{\text{comp}}(\alpha) = \sum \varepsilon_i(\alpha)$, discrete gap $\le 2\%$ | `privacy_budget.rs` | `tests/privacy_budget_tests.rs` |
 | **10** | ZK State Attestation | Schwartz-Zippel identity, $O(1)$ proof | Soundness error $\le d/p \approx 10^{-15}$, size $\le 176\text{ B}$ | `zk_attestation.rs` | `tests/zk_attestation_tests.rs` |
 | **11** | Work-Stealing Task Scheduler | Blumofe-Leiserson span, bounded space | $\mathbb{E}[T_P] \le \frac{T_1}{P} + O(T_\infty)$, $S_P \le P \cdot S_1$ | `work_stealing.rs` | `tests/work_stealing_tests.rs` |
+| **12** | Byzantine Consensus Aggregator | Trimmed Mean & $(n,f)$-Krum cone bound | Breakdown $f < n/2$, Krum $2f + 2 < n$ | `byzantine_aggregator.rs` | `tests/phase12_14_math_tests.rs` |
+| **13** | Optimal Transport Drift Detector | Birkhoff-Hopf Sinkhorn contraction | $\kappa < 1$, $S_\varepsilon(\mu, \mu) = 0$, $S_\varepsilon(\mu, \nu) \ge 0$ | `wasserstein_drift.rs` | `tests/phase12_14_math_tests.rs` |
+| **14** | Martingale Canary Gate | Ville's inequality & mixture CS | $\mathbb{P}_{H_0}(\exists t : E_t \ge 1/\alpha) \le \alpha$, $r_t = O(\sqrt{\ln t / t})$ | `martingale_gate.rs` | `tests/phase12_14_math_tests.rs` |
+
 
 

@@ -1,7 +1,13 @@
 use super::parse_options;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::RuntimeService;
+use pandora_runtime::byzantine_aggregator::{
+    AgentVectorUpdate, AggregationRule, ByzantineAggregator,
+};
+use pandora_runtime::martingale_gate::MartingaleCanaryGate;
 use pandora_runtime::speculative_decoding::{RadixKvCache, SpeculativeEngine, TokenProbability};
+use pandora_runtime::wasserstein_drift::{EmpiricalDistribution, SinkhornDriftDetector};
+use pandora_runtime::work_stealing::{StealableTask, StealableTaskDag, WorkStealingScheduler};
 use pandora_types::ServiceEngineSummary;
 use serde_json::json;
 
@@ -13,11 +19,508 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some("decision") => super::decision::execute(&args[1..]),
         Some("speculative") => speculative(&args[1..]),
         Some("kv-cache") => kv_cache(&args[1..]),
+        Some("scheduler") | Some("work-stealing") => scheduler(&args[1..]),
+        Some("privacy") => super::privacy::execute(&args[1..]),
+        Some("zk") => super::zk::execute(&args[1..]),
+        Some("byzantine") => byzantine(&args[1..]),
+        Some("drift") | Some("wasserstein") => drift(&args[1..]),
+        Some("canary-gate") | Some("martingale") => canary_gate(&args[1..]),
         Some(unknown) if !unknown.starts_with('-') => Err(CliError::usage(format!(
-            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', or 'kv-cache'"
+            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', or 'canary-gate'"
         ))),
         _ => engines(args),
     }
+}
+
+pub(crate) fn byzantine(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "agents",
+            "byzantine",
+            "dim",
+            "rule",
+            "beta",
+            "attack-scale",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let n: usize = parsed
+        .value("agents")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--agents must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(11);
+    let f: usize = parsed
+        .value("byzantine")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--byzantine must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(2);
+    let d: usize = parsed
+        .value("dim")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--dim must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(8);
+    let attack_scale: f64 = parsed
+        .value("attack-scale")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--attack-scale must be a number"))
+        })
+        .transpose()?
+        .unwrap_or(1000.0);
+
+    let rule_name = parsed.value("rule").unwrap_or("krum").to_ascii_lowercase();
+    let rule = match rule_name.as_str() {
+        "trimmed-mean" | "trimmed" => {
+            let beta: f64 = parsed
+                .value("beta")
+                .map(|s| {
+                    s.parse()
+                        .map_err(|_| CliError::usage("--beta must be in [0, 0.5)"))
+                })
+                .transpose()?
+                .unwrap_or(0.2);
+            AggregationRule::TrimmedMean { beta }
+        }
+        "median" => AggregationRule::CoordinateMedian,
+        "krum" | "multi-krum" => AggregationRule::MultiKrum {
+            selection_q: (n.saturating_sub(2 * f)).max(1),
+        },
+        other => {
+            return Err(CliError::usage(format!(
+                "unknown rule '{other}'; expected 'krum', 'trimmed-mean', or 'median'"
+            )));
+        }
+    };
+
+    let aggregator =
+        ByzantineAggregator::new(f, rule).map_err(|e| CliError::usage(e.to_string()))?;
+    let true_target: Vec<f64> = (0..d).map(|j| (j as f64) + 1.0).collect();
+    let mut updates = Vec::with_capacity(n);
+
+    for i in 0..n {
+        if i < n - f {
+            let honest_vec: Vec<f64> = (0..d)
+                .map(|j| true_target[j] + (((i + j) % 5) as f64 - 2.0) * 0.02)
+                .collect();
+            updates.push(AgentVectorUpdate::new(format!("honest_{i}"), honest_vec));
+        } else {
+            let byz_vec: Vec<f64> = (0..d).map(|j| -attack_scale * ((j + 1) as f64)).collect();
+            updates.push(AgentVectorUpdate::new(format!("byzantine_{i}"), byz_vec));
+        }
+    }
+
+    let result = aggregator
+        .aggregate(&updates)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+    let robust_error = ByzantineAggregator::l2_distance(&result.consensus_vector, &true_target);
+    let naive_error = ByzantineAggregator::l2_distance(&result.naive_mean_vector, &true_target);
+
+    let human = format!(
+        "Byzantine-Resilient Consensus Telemetry (Theorems 23 & 24):\n  Agents (n): {n} | Byzantine Adversaries (f): {f} | Dimension (d): {d}\n  Aggregation Rule: {rule_name} | Attack Scale: {attack_scale:.1}\n  Robust Consensus L2 Error ||mu_hat - mu*||_2: {robust_error:.6}\n  Unguarded Naive Mean L2 Error ||mu_bar - mu*||_2: {naive_error:.4}\n  Mitigation Shift ||mu_bar - mu_hat||_2: {:.4}\n  Theoretical Deviation Factor: {:.4}\n  Suspected Outliers Identified: {:?}",
+        result.mitigation_shift_l2, result.theoretical_deviation_factor, result.suspected_outliers
+    );
+
+    Ok(success(
+        "runtime byzantine",
+        json!({
+            "total_agents_n": n,
+            "max_byzantine_f": f,
+            "dimension_d": d,
+            "rule": rule_name,
+            "robust_l2_error": robust_error,
+            "naive_l2_error": naive_error,
+            "mitigation_shift_l2": result.mitigation_shift_l2,
+            "theoretical_deviation_factor": result.theoretical_deviation_factor,
+            "suspected_outliers": result.suspected_outliers,
+            "selected_agents": result.selected_agents,
+        }),
+        human,
+    ))
+}
+
+pub(crate) fn drift(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "samples",
+            "dim",
+            "epsilon",
+            "shift",
+            "threshold",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let samples: usize = parsed
+        .value("samples")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--samples must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(16);
+    let d: usize = parsed
+        .value("dim")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--dim must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(4);
+    let epsilon: f64 = parsed
+        .value("epsilon")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--epsilon must be a positive number"))
+        })
+        .transpose()?
+        .unwrap_or(0.1);
+    let shift: f64 = parsed
+        .value("shift")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--shift must be a number"))
+        })
+        .transpose()?
+        .unwrap_or(1.5);
+    let threshold: f64 = parsed
+        .value("threshold")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--threshold must be a non-negative number"))
+        })
+        .transpose()?
+        .unwrap_or(1.0);
+
+    let mut base_pts = Vec::with_capacity(samples);
+    let mut live_pts = Vec::with_capacity(samples);
+    for i in 0..samples {
+        let pt_base: Vec<f64> = (0..d).map(|j| ((i + j) as f64) * 0.1).collect();
+        let pt_live: Vec<f64> = (0..d)
+            .map(|j| ((i + j) as f64) * 0.1 + shift / (d as f64).sqrt())
+            .collect();
+        base_pts.push(pt_base);
+        live_pts.push(pt_live);
+    }
+
+    let mu =
+        EmpiricalDistribution::uniform(base_pts).map_err(|e| CliError::usage(e.to_string()))?;
+    let nu =
+        EmpiricalDistribution::uniform(live_pts).map_err(|e| CliError::usage(e.to_string()))?;
+    let detector = SinkhornDriftDetector::new(epsilon, 200, 1e-7, threshold)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+    let report = detector
+        .evaluate_drift(&mu, &nu)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let human = format!(
+        "Entropic Optimal Transport (Sinkhorn-Knopp) Semantic Drift Detector (Theorems 25 & 26):\n  Samples (n=m): {samples} | Dimension (d): {d} | Entropic Regularization (epsilon): {epsilon:.4}\n  Debiased Sinkhorn Divergence S_eps(mu, nu): {:.6}\n  Debiased 2-Wasserstein Distance W_2(mu, nu): {:.6} (Injected Shift: {shift:.4})\n  Sinkhorn Iterations: {} (Final Dual Residual: {:.2e}, Marginal Error: {:.2e})\n  Birkhoff-Hopf Projective Contraction kappa: {:.6} (< 1.0)\n  Drift Threshold: {threshold:.4} -> Drift Detected: {}",
+        report.sinkhorn_divergence,
+        report.wasserstein_2_distance,
+        report.iterations,
+        report.final_dual_residual,
+        report.marginal_conservation_error,
+        report.birkhoff_contraction_factor,
+        if report.drift_detected { "YES" } else { "NO" }
+    );
+
+    Ok(success(
+        "runtime drift",
+        serde_json::to_value(&report).unwrap_or_else(|_| json!({})),
+        human,
+    ))
+}
+
+pub(crate) fn canary_gate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "steps",
+            "alpha",
+            "effect",
+            "sigma",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let steps: usize = parsed
+        .value("steps")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--steps must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(64);
+    let alpha: f64 = parsed
+        .value("alpha")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--alpha must be in (0, 1)"))
+        })
+        .transpose()?
+        .unwrap_or(0.05);
+    let effect: f64 = parsed
+        .value("effect")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--effect must be in [-1.0, 1.0]"))
+        })
+        .transpose()?
+        .unwrap_or(0.25);
+    let sigma: f64 = parsed
+        .value("sigma")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--sigma must be > 0"))
+        })
+        .transpose()?
+        .unwrap_or(0.5);
+
+    let mut gate =
+        MartingaleCanaryGate::new(alpha, sigma, 10).map_err(|e| CliError::usage(e.to_string()))?;
+    for i in 0..steps {
+        let jitter = if i % 2 == 0 { 0.05 } else { -0.05 };
+        let x_t = (effect + jitter).clamp(-1.0, 1.0);
+        gate.observe(x_t)
+            .map_err(|e| CliError::usage(e.to_string()))?;
+    }
+    let snap = gate
+        .snapshot()
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let human = format!(
+        "Martingale Anytime-Valid Canary Gate Telemetry (Theorems 27 & 28):\n  Steps Observed (t): {} | Target Alpha: {alpha:.4} (Ville Threshold 1/alpha = {:.2})\n  Test Supermartingale Wealth (E_t): {:.4} (Peak E_s: {:.4}, Anytime p-value: {:.4e})\n  Empirical Mean Effect (mu_hat_t): {:.4}\n  Time-Uniform Confidence Sequence: [{:.4}, {:.4}] (Radius r_t: {:.4})\n  Verdict: {}",
+        snap.step_t,
+        snap.ville_rejection_threshold,
+        snap.e_value,
+        snap.peak_e_value,
+        snap.anytime_p_value,
+        snap.empirical_mean,
+        snap.lower_confidence_bound,
+        snap.upper_confidence_bound,
+        snap.confidence_radius,
+        snap.verdict.as_str()
+    );
+
+    Ok(success(
+        "runtime canary-gate",
+        serde_json::to_value(&snap).unwrap_or_else(|_| json!({})),
+        human,
+    ))
+}
+
+pub(crate) fn scheduler(args: &[String]) -> Result<CommandResult, CliError> {
+    scheduler_with_cmd(args, "runtime scheduler benchmark")
+}
+
+pub(crate) fn scheduler_with_cmd(
+    args: &[String],
+    cmd_name: &'static str,
+) -> Result<CommandResult, CliError> {
+    let first = args.first().map(String::as_str);
+    match first {
+        Some("benchmark") | Some("simulate") => scheduler_benchmark_with_cmd(&args[1..], cmd_name),
+        Some(other) if !other.starts_with('-') => Err(CliError::usage(format!(
+            "unknown scheduler subcommand '{other}'; expected 'benchmark' or 'simulate'"
+        ))),
+        _ => scheduler_benchmark_with_cmd(args, cmd_name),
+    }
+}
+
+pub(crate) fn scheduler_benchmark_with_cmd(
+    args: &[String],
+    cmd_name: &'static str,
+) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "workers",
+            "tasks",
+            "topology",
+            "capacity",
+            "weight",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    if !parsed.positionals.is_empty() {
+        return Err(CliError::usage(
+            "scheduler benchmark does not accept positional arguments",
+        ));
+    }
+
+    let workers: usize = if let Some(w) = parsed.value("workers") {
+        w.parse()
+            .map_err(|_| CliError::usage("--workers must be a positive integer"))?
+    } else {
+        4
+    };
+    if workers == 0 || workers > 256 {
+        return Err(CliError::usage("--workers must be between 1 and 256"));
+    }
+
+    let tasks_count: usize = if let Some(t) = parsed.value("tasks") {
+        t.parse()
+            .map_err(|_| CliError::usage("--tasks must be a positive integer"))?
+    } else {
+        32
+    };
+    if tasks_count == 0 || tasks_count > 4096 {
+        return Err(CliError::usage("--tasks must be between 1 and 4096"));
+    }
+
+    let capacity: usize = if let Some(c) = parsed.value("capacity") {
+        c.parse()
+            .map_err(|_| CliError::usage("--capacity must be a positive integer"))?
+    } else {
+        tasks_count.max(64)
+    };
+    if capacity < tasks_count {
+        return Err(CliError::usage(
+            "--capacity must be at least --tasks to avoid deque overflow",
+        ));
+    }
+
+    let base_weight: u64 = if let Some(w) = parsed.value("weight") {
+        w.parse()
+            .map_err(|_| CliError::usage("--weight must be a positive integer"))?
+    } else {
+        10
+    };
+    if base_weight == 0 {
+        return Err(CliError::usage("--weight must be greater than 0"));
+    }
+
+    let topology = parsed
+        .value("topology")
+        .unwrap_or("layered")
+        .to_ascii_lowercase();
+    let mut dag = StealableTaskDag::new();
+
+    match topology.as_str() {
+        "fanout" | "parallel" => {
+            dag.add_task(StealableTask::new("t_0", "root", base_weight));
+            for i in 1..tasks_count {
+                let id = format!("t_{i}");
+                let weight = base_weight + ((i % 4) as u64) * 5;
+                dag.add_task(
+                    StealableTask::new(&id, format!("worker_leaf_{i}"), weight)
+                        .with_dependencies(vec!["t_0".to_string()]),
+                );
+            }
+        }
+        "chain" | "serial" => {
+            for i in 0..tasks_count {
+                let id = format!("t_{i}");
+                let deps = if i == 0 {
+                    Vec::new()
+                } else {
+                    vec![format!("t_{}", i - 1)]
+                };
+                dag.add_task(
+                    StealableTask::new(&id, format!("seq_stage_{i}"), base_weight)
+                        .with_dependencies(deps),
+                );
+            }
+        }
+        "layered" | "diamond" => {
+            let width = workers.max(2);
+            for i in 0..tasks_count {
+                let id = format!("t_{i}");
+                let layer = i / width;
+                let deps = if layer == 0 {
+                    Vec::new()
+                } else {
+                    let prev_start = (layer - 1) * width;
+                    let p1 = prev_start + (i % width);
+                    let p2 = prev_start + ((i + 1) % width);
+                    if p1 == p2 || p2 >= i {
+                        vec![format!("t_{p1}")]
+                    } else {
+                        vec![format!("t_{p1}"), format!("t_{p2}")]
+                    }
+                };
+                let weight = base_weight + ((i % 3) as u64) * 4;
+                dag.add_task(
+                    StealableTask::new(&id, format!("layer_{layer}_node_{i}"), weight)
+                        .with_dependencies(deps),
+                );
+            }
+        }
+        other => {
+            return Err(CliError::usage(format!(
+                "unknown topology '{other}'; expected 'layered', 'diamond', 'fanout', or 'chain'"
+            )));
+        }
+    }
+
+    let scheduler = WorkStealingScheduler::new(workers, capacity)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+    let telemetry = scheduler
+        .execute_dag(&dag)
+        .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+
+    let human = format!(
+        "Blumofe-Leiserson Adaptive Work-Stealing Scheduler Telemetry (Theorems 21 & 22):\n  Workers (P): {workers} | Tasks (|V|): {tasks_count} | Topology: {topology}\n  Total Sequential Work (T_1): {} ticks\n  Critical Path Span (T_inf): {} ticks\n  Observed Parallel Makespan (T_P): {} ticks\n  Theoretical BL Upper Bound (T_1/P + c_inf * T_inf): {:.2} ticks\n  Observed Speedup (T_1 / T_P): {:.2}x (Parallel Efficiency: {:.1}%)\n  Steal Telemetry: {} succeeded / {} attempted\n  Peak Tasks In-Flight (Bounded Memory S_P): {} (Deque Capacity: {capacity})\n  Blumofe-Leiserson Bound Satisfied: {}",
+        telemetry.total_work_t1,
+        telemetry.critical_path_t_inf,
+        telemetry.actual_makespan_tp,
+        telemetry.theoretical_bl_bound,
+        telemetry.observed_speedup,
+        telemetry.parallel_efficiency * 100.0,
+        telemetry.total_steals_succeeded,
+        telemetry.total_steals_attempted,
+        telemetry.peak_tasks_in_flight,
+        if telemetry.bl_bound_satisfied {
+            "YES"
+        } else {
+            "NO"
+        }
+    );
+
+    Ok(success(
+        cmd_name,
+        json!({
+            "workers": workers,
+            "tasks_count": tasks_count,
+            "topology": topology,
+            "deque_capacity": capacity,
+            "total_work_t1": telemetry.total_work_t1,
+            "critical_path_t_inf": telemetry.critical_path_t_inf,
+            "actual_makespan_tp": telemetry.actual_makespan_tp,
+            "theoretical_bl_bound": telemetry.theoretical_bl_bound,
+            "observed_speedup": telemetry.observed_speedup,
+            "parallel_efficiency": telemetry.parallel_efficiency,
+            "total_steals_attempted": telemetry.total_steals_attempted,
+            "total_steals_succeeded": telemetry.total_steals_succeeded,
+            "peak_tasks_in_flight": telemetry.peak_tasks_in_flight,
+            "bl_bound_satisfied": telemetry.bl_bound_satisfied,
+        }),
+        human,
+    ))
 }
 
 pub(crate) fn speculative(args: &[String]) -> Result<CommandResult, CliError> {
