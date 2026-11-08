@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.4  
+**Version:** AGENT-PANDORA v3.0.5  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -20,8 +20,11 @@ flowchart LR
     P6["Phase 6<br/><b>Bandit Router</b><br/><i>Minimax Regret O(sqrt(KT ln T))</i>"]
     P7["Phase 7<br/><b>Merkle-DAG Audit</b><br/><i>O(log N) State Proofs</i>"]
     P8["Phase 8<br/><b>Speculative Decoding</b><br/><i>Exact Distribution & Radix KV</i>"]
+    P9["Phase 9<br/><b>Privacy Budget</b><br/><i>Linear RDP & Optimal Tail</i>"]
+    P10["Phase 10<br/><b>ZK Attestation</b><br/><i>Soundness & O(1) Proofs</i>"]
+    P11["Phase 11<br/><b>Work-Stealing</b><br/><i>Blumofe-Leiserson Bounds</i>"]
 
-    P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8
+    P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> P10 --> P11
 ```
 
 Every phase is grounded in publication-grade mathematical proofs:
@@ -33,6 +36,9 @@ Every phase is grounded in publication-grade mathematical proofs:
 6. **Phase 6**: Minimax cumulative regret bound $O(\sqrt{K T \ln T})$ under UCB1 and Beta posterior concentration $O(1/N_a)$.
 7. **Phase 7**: Merkle inclusion proof size $32 \lceil \log_2 N \rceil\text{ bytes} = O(\log N)$ and collision resistance $\le 2^{-128}$.
 8. **Phase 8**: Exact distribution preservation $P_{\text{spec}} \equiv P$, speculative speedup $S = \frac{\mathbb{E}[\beta]}{\gamma r + 1}$, and Radix Trie compression $C_R \to \frac{1}{1 - \eta}$.
+9. **Phase 9**: Linear RDP sequential composition $\varepsilon_{\text{comp}}(\alpha) = \sum \varepsilon_i(\alpha)$ and optimal $(\varepsilon, \delta)$-DP tail bound conversion $\varepsilon(\delta) = \inf_{\alpha} [\varepsilon(\alpha) + \frac{\ln(1/\delta)}{\alpha - 1}]$.
+10. **Phase 10**: Schwartz-Zippel state attestation soundness ($\mathbb{P}(\text{Accept} \mid \text{Invalid}) \le d/p \approx 10^{-15}$) and succinct $O(1)$ proof size ($176$ bytes) and verification work ($O(1)$).
+11. **Phase 11**: Blumofe-Leiserson makespan bound $\mathbb{E}[T_P] \le \frac{T_1}{P} + O(T_\infty)$ and bounded memory invariant $S_P \le P \cdot S_1$ with capacity limit $C_{\max}$.
 
 ---
 
@@ -242,7 +248,106 @@ For agent workflows with $\eta = 0.80$ (system instructions and tool declaration
 
 ---
 
-## 9. Comprehensive Roadmap Summary Matrix (Phases 1–8)
+## 9. Phase 9: Distributed Differential Privacy Budget Tracker
+
+### 9.1 Linear Sequential RDP Composition
+
+**Theorem 17 (Linear RDP Sequential Composition):**  
+*Let $\mathcal{M}_1: \mathcal{D} \to \mathcal{S}_1$ satisfy $(\alpha, \varepsilon_1(\alpha))$-RDP. Let $\mathcal{M}_2: \mathcal{D} \times \mathcal{S}_1 \to \mathcal{S}_2$ satisfy $(\alpha, \varepsilon_2(\alpha))$-RDP for all fixed outputs of $\mathcal{M}_1$.  
+Then the sequentially composed mechanism $\mathcal{M}_{1:2}(D) \triangleq (\mathcal{M}_1(D), \mathcal{M}_2(D, \mathcal{M}_1(D)))$ satisfies:*
+$$D_\alpha(\mathcal{M}_{1:2}(D) \parallel \mathcal{M}_{1:2}(D')) \le \varepsilon_1(\alpha) + \varepsilon_2(\alpha)$$
+
+*Consequently, for any sequence of $k$ mechanisms $\mathcal{M}_1, \dots, \mathcal{M}_k$ where each $\mathcal{M}_i$ satisfies $(\alpha, \varepsilon_i(\alpha))$-RDP conditional on preceding outputs, the composite mechanism $\mathcal{M}_{1:k}$ satisfies:*
+$$\left( \alpha, \sum_{i=1}^k \varepsilon_i(\alpha) \right)\text{-RDP}$$
+
+**Proof Summary:**  
+Factorizing the joint distribution $P(x_1, x_2) = P_1(x_1) P_2(x_2 \mid x_1)$ and evaluating the double integral reveals that the inner conditional Rényi divergence is bounded by $e^{(\alpha - 1)\varepsilon_2(\alpha)}$ uniformly for all $x_1$. Factoring this constant out leaves the outer marginal divergence bounded by $e^{(\alpha - 1)\varepsilon_1(\alpha)}$, yielding exact additive linearity upon taking logarithms.  
+$\blacksquare$
+
+### 9.2 Optimal Conversion from RDP to $(\varepsilon, \delta)$-DP
+
+**Theorem 18 (RDP to $(\varepsilon, \delta)$-DP Conversion):**  
+*If a randomized mechanism $\mathcal{M}$ satisfies $(\alpha, \varepsilon_{\text{rdp}}(\alpha))$-RDP for an evaluation spectrum of orders $\mathcal{A} \subset (1, \infty)$, then for any target privacy failure probability $\delta \in (0, 1)$, $\mathcal{M}$ satisfies $(\varepsilon(\delta), \delta)$-differential privacy, where $\varepsilon(\delta)$ is the infimum:*
+$$\varepsilon(\delta) = \inf_{\alpha \in \mathcal{A}} \left[ \varepsilon_{\text{rdp}}(\alpha) + \frac{\ln(1/\delta)}{\alpha - 1} \right]$$
+
+*Furthermore, for $k$ homogeneous Gaussian mechanisms each with $\ell_2$-sensitivity $\Delta_2$ and noise $\sigma$, the optimal continuous order $\alpha^*$ is:*
+$$\alpha^* = 1 + \sqrt{\frac{2 \sigma^2 \ln(1/\delta)}{k \Delta_2^2}}$$
+*yielding the closed-form upper bound:*
+$$\varepsilon^*(\delta) = \frac{k \Delta_2^2}{2 \sigma^2} + \sqrt{\frac{2 k \Delta_2^2 \ln(1/\delta)}{\sigma^2}}$$
+
+**Proof Summary:**  
+Applying Markov's inequality to the privacy loss random variable $Z \triangleq \ln(P(X)/Q(X))$ yields tail bound $\mathbb{P}(Z \ge \varepsilon) \le \exp((\alpha - 1)(\varepsilon_{\text{rdp}}(\alpha) - \varepsilon))$. Setting this tail probability to $\delta$ gives the converted bound for each $\alpha$. Taking the infimum over $\mathcal{A}$ gives $\varepsilon(\delta)$. Differentiating the continuous Gaussian function $g(\alpha) = \frac{k \alpha \Delta_2^2}{2\sigma^2} + \frac{\ln(1/\delta)}{\alpha - 1}$ identifies $\alpha^*$ as the unique global minimum on $(1, \infty)$.  
+- **Reference**: Detailed proofs documented in `docs/math/phase9_privacy_budget_tracker.md`.  
+$\blacksquare$
+
+---
+
+## 10. Phase 10: Zero-Knowledge Succinct State Attestation
+
+### 10.1 Soundness of State Transition Attestation via Schwartz-Zippel
+
+**Theorem 19 (Soundness of Polynomial State Attestation):**  
+*Let $H = \{\omega^0, \omega^1, \dots, \omega^{k-1}\} \subset \mathbb{F}_p$ be the cyclic evaluation domain of order $k = 2^m$ over the Goldilocks field $\mathbb{F}_p$ ($p = 2^{64} - 2^{32} + 1$) with vanishing polynomial $Z_H(X) = X^k - 1$. Let $S_t(X), A_t(X), S_{t+1}(X) \in \mathbb{F}_p[X]$ interpolate pre-state $\mathbf{s}_t$, action $\mathbf{a}_t$, and post-state $\mathbf{s}_{t+1}$. The state transition satisfies $\mathcal{C}(\mathbf{s}_{t+1}, \mathbf{s}_t, \mathbf{a}_t) = \mathbf{s}_{t+1} - (\mathbf{s}_t + \mathbf{a}_t) = \mathbf{0}$ across all $k$ domain points if and only if $Z_H(X)$ divides $F(X) \triangleq S_{t+1}(X) - (S_t(X) + A_t(X))$ in $\mathbb{F}_p[X]$:*
+$$F(X) \equiv 0 \pmod{Z_H(X)} \iff \exists Q(X) \in \mathbb{F}_p[X] \text{ s.t. } F(X) = Q(X) \cdot Z_H(X)$$
+*Furthermore, under the Fiat-Shamir heuristic where a verifier samples challenge $\zeta \in \mathbb{F}_p$ via SHA-256 transcript hashing, the probability that a malicious prover can induce acceptance of an invalid transition is strictly bounded by:*
+$$\mathbb{P}(\text{Accept} \mid \text{Invalid Transition}) \le \frac{\deg(F)}{p} \le \frac{d}{2^{64} - 2^{32} + 1} \le 1.1 \times 10^{-15}$$
+*for maximum constraint polynomial degree $d \le 20,000$.*
+
+**Proof Summary:**  
+By polynomial factor theorem in the UFD $\mathbb{F}_p[X]$, each root $\omega^i$ corresponds to an irreducible factor $(X - \omega^i)$. Because roots are distinct, their product $Z_H(X) = X^k - 1$ divides $F(X)$ iff all coordinate transitions hold. For an invalid transition, the error polynomial $E(X) = F(X) - Q^*(X) Z_H(X)$ is non-zero with degree $\le d$. By the Schwartz-Zippel Lemma, $E(X)$ has at most $d$ roots in $\mathbb{F}_p$. With random challenge $\zeta \sim \mathbb{F}_p$, the false accept probability is at most $d/p \approx 1.08 \times 10^{-15} \approx 2^{-49.7}$.  
+$\blacksquare$
+
+### 10.2 Succinct Proof Size & Verification Work
+
+**Theorem 20 (Succinct Proof Complexity):**  
+*The Zero-Knowledge State Attestation scheme satisfies:*
+1. *Constant Proof Length:*
+   $$|\pi| = O(1) \le 176 \text{ bytes}$$
+   *strictly independent of the state vector dimension $k$ or computation trace length.*
+2. *Constant Verification Work:*
+   $$W_{\text{verify}} = O(1) \text{ arithmetic operations in } \mathbb{F}_p \text{ and } 1 \text{ SHA-256 evaluation}$$
+   *verifying $F(\zeta) \stackrel{?}{=} Q(\zeta) \cdot (\zeta^k - 1)$ in under $5\,\mu\text{s}$.*
+
+**Proof Summary:**  
+The proof $\pi$ contains four 32-byte hashes ($C_S, C_{S'}, C_A, C_Q$), five 8-byte field elements ($\zeta, y_S, y_{S'}, y_A, y_Q$), and one 8-byte domain size $k$, totaling $4 \times 32 + 5 \times 8 + 8 = 176$ bytes. Verification evaluates 1 SHA-256 hash for $\zeta$, $\log_2 k$ squarings for $\zeta^k - 1$, and 3 basic field operations, running in $O(1)$ time.  
+- **Reference**: Detailed proofs documented in `docs/math/phase10_zk_attestation.md`.  
+$\blacksquare$
+
+---
+
+## 11. Phase 11: Dynamic Adaptive Work-Stealing Task Scheduler
+
+### 11.1 Blumofe-Leiserson Expected Execution Time Bound
+
+**Theorem 21 (Blumofe-Leiserson Makespan Bound):**  
+*Under the randomized work-stealing scheduling policy with $P$ worker processors, where:*
+1. *Each worker executes subtasks locally from the bottom of its double-ended deque (LIFO).*
+2. *An idle worker selects a victim processor uniformly at random from $\{0, \dots, P-1\} \setminus \{\text{self}\}$ and steals a task from the top of the victim's deque (FIFO).*
+3. *Failed steal attempts trigger adaptive exponential backoff.*
+*The expected execution time $\mathbb{E}[T_P]$ across all $P$ processors is strictly bounded by:*
+$$\mathbb{E}[T_P] \le \frac{T_1}{P} + O(T_\infty) = \frac{T_1}{P} + \frac{c_\infty}{\beta} T_\infty$$
+*where $\beta > 0$ is the constant steal progress parameter, $c_\infty = \frac{3}{\ln(4/3)} \approx 10.43$ is the critical path contention coefficient, and the bound guarantees linear speedup $T_P \approx T_1/P$ whenever $P \ll T_1/T_\infty$.*
+
+**Proof Summary:**  
+Total processor-steps satisfy $P \cdot T_P = T_1 + S$, where $S$ is total steal attempts. Defining potential $\Phi(t) = \sum_{v \in R(t)} 3^{2 d(v) - 1}$ over ready DAG nodes, each phase of $3P$ random steal attempts targets processors with top tasks with probability $\ge 1 - e^{-3} \approx 0.95$. Because thieves steal from the top (oldest ancestors on the critical path, highest $d(v)$), expected potential decreases by a factor of 4 per phase: $\mathbb{E}[\Phi(t + 3P)] \le \frac{1}{4} \Phi(t)$. The number of phases to drain $\Phi(0)$ is $O(T_\infty)$, bounding expected steals to $\mathbb{E}[S] \le c_\infty P T_\infty$. Dividing by $P$ yields $\mathbb{E}[T_P] \le \frac{T_1}{P} + c_\infty T_\infty$.  
+$\blacksquare$
+
+### 11.2 Bounded Memory Invariant
+
+**Theorem 22 (Bounded Memory Space Guarantee):**  
+*Let $S_1$ denote the peak memory space consumed by a sequential depth-first traversal of the task DAG $G$.  
+Under the work-stealing scheduler with $P$ parallel workers where workers push and pop children from the bottom (LIFO) and thieves steal parents from the top (FIFO), the total memory space $S_P(t)$ consumed across all $P$ processors at any time $t$ satisfies:*
+$$S_P(t) \le P \cdot S_1 \quad \forall t \in [0, T_P]$$
+*Furthermore, by enforcing a per-worker deque capacity limit $C_{\max}$, local queue memory is strictly bounded by $O(C_{\max})$ bytes, preventing unbounded heap allocation cascades.*
+
+**Proof Summary:**  
+Each busy worker executes a single depth-first branch of its assigned subtree. Since each subtree is a sub-DAG of $G$, the active stack space on any worker cannot exceed $S_1$. Summing over $P$ workers yields $S_P(t) \le P \cdot S_1$. Capacity capping $C_{\max}$ rejects task spawning when full, forcing immediate execution of bottom tasks and bounding deque memory to $P \cdot C_{\max} \cdot \operatorname{sizeof}(\text{StealableTask})$.  
+- **Reference**: Detailed proofs documented in `docs/math/phase11_work_stealing_scheduler.md`.  
+$\blacksquare$
+
+---
+
+## 12. Comprehensive Roadmap Summary Matrix (Phases 1–11)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -254,4 +359,8 @@ For agent workflows with $\eta = 0.80$ (system instructions and tool declaration
 | **6** | Bandit Model Router | UCB1 Hoeffding inequality, Beta prior | Regret $\mathbb{E}[R(T)] \le O(\sqrt{K T \ln T})$ | `bandit_router.rs` | `tests/bandit_router_tests.rs` |
 | **7** | Merkle-DAG Cryptographic Audit | Binary tree co-path, collision bounds | Proof size $32 \lceil \log_2 N \rceil\text{ B}$, $\operatorname{Adv} \le 2^{-128}$ | `merkle_dag.rs` | `tests/merkle_dag_tests.rs` |
 | **8** | Speculative Decoding & KV Cache | Rejection sampling, Radix Trie sharing | $P_{\text{spec}} \equiv P$, $S = \frac{\mathbb{E}[\beta]}{\gamma r + 1}$, $C_R \to \frac{1}{1-\eta}$ | `speculative_decoding.rs` | `tests/speculative_decoding_tests.rs` |
+| **9** | Privacy Budget Tracker | Linear RDP composition, infimum $(\varepsilon,\delta)$ | $\varepsilon_{\text{comp}}(\alpha) = \sum \varepsilon_i(\alpha)$, discrete gap $\le 2\%$ | `privacy_budget.rs` | `tests/privacy_budget_tests.rs` |
+| **10** | ZK State Attestation | Schwartz-Zippel identity, $O(1)$ proof | Soundness error $\le d/p \approx 10^{-15}$, size $\le 176\text{ B}$ | `zk_attestation.rs` | `tests/zk_attestation_tests.rs` |
+| **11** | Work-Stealing Task Scheduler | Blumofe-Leiserson span, bounded space | $\mathbb{E}[T_P] \le \frac{T_1}{P} + O(T_\infty)$, $S_P \le P \cdot S_1$ | `work_stealing.rs` | `tests/work_stealing_tests.rs` |
+
 

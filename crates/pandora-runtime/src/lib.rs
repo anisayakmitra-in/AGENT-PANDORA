@@ -63,6 +63,7 @@ pub mod package_distribution;
 pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
+pub mod privacy_budget;
 pub mod prompt_engine;
 pub mod prp_engine;
 mod receipt_id;
@@ -96,7 +97,9 @@ pub mod tripartite_governance;
 pub mod visual_graph;
 pub mod voyager_curriculum;
 pub mod wasm;
+pub mod work_stealing;
 pub mod worktree_isolation;
+pub mod zk_attestation;
 
 #[cfg(test)]
 mod test_support;
@@ -299,6 +302,11 @@ pub use package_store::{
 };
 pub use parliament::Parliament;
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
+pub use privacy_budget::{
+    DistributedPrivacyTracker, GaussianMechanism, LaplaceMechanism, PrivacyAccountantError,
+    PrivacyError, PrivacyExpenditure, QueryReservation, RDP_ORDER_KEY_SCALE, RdpBudget, RdpOrder,
+    STANDARD_RDP_ORDERS, key_to_order, order_to_key,
+};
 pub use prompt_engine::{
     PresetKind, PromptEngine, PromptError, PromptPreset, StorageTier, validate_preset_name,
 };
@@ -375,4 +383,14 @@ pub use wasm::{
     DEFAULT_WASM_FUEL, MAX_WASM_INPUT_BYTES, MAX_WASM_MEMORY_BYTES, MAX_WASM_OUTPUT_BYTES,
     WasmError, WasmExecutor, WasmGene, WasmGeneRequest, WasmResult,
 };
+pub use work_stealing::{
+    AdaptiveBackoff, BASE_STEAL_BACKOFF_US, BL_CRITICAL_PATH_COEFFICIENT, BoundedTaskDeque,
+    DEFAULT_DEQUE_CAPACITY, MAX_STEAL_BACKOFF_US, SchedulerError, SchedulerTelemetry,
+    StealableTask, StealableTaskDag, TaskStatus, WorkStealingScheduler,
+};
 pub use worktree_isolation::{WorktreeIsolationManager, strip_unc};
+pub use zk_attestation::{
+    FiatShamirTranscript, FieldElement, GOLDILOCKS_GENERATOR, GOLDILOCKS_PRIME,
+    GOLDILOCKS_TWO_ADICITY, Polynomial, StateAttestationProof, StateTransitionAir,
+    TRANSCRIPT_DOMAIN_LABEL, ZkAttestationError, ZkError,
+};
