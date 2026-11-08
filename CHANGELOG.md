@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.0.7
+
+### Phases 18-20 Mathematical Runtime Frontier (Theorems 35-40), 12-Engine Unified Assurance Pipeline & Live Gateway Daemon Guard
+- **Phase 18 Mean-Field Game Equilibrium & Congestion Control (`crates/pandora-runtime/src/mean_field_game.rs`, `docs/math/phase18_mean_field_game.md`)**:
+  - Discrete McKean-Vlasov / Nash-MFG fixed-point existence and Picard contraction under Lipschitz swarm interaction costs (Theorem 35) and Price-of-Anarchy ($PoA \le 4/3$) smoothness bounding for decentralized multi-agent tool/channel contention (Theorem 36) via `pandora runtime mfg`.
+- **Phase 19 PAC-Bayesian Generalization & Prompt/Policy Risk Certificates (`crates/pandora-runtime/src/pac_bayes_monitor.rs`, `docs/math/phase19_pac_bayes_monitor.md`)**:
+  - McAllester / Maurer empirical-Bernstein PAC-Bayes KL-divergence generalization bound $\mathrm{kl}(\hat{L}_n(Q) \| L(Q)) \le \frac{D_{\mathrm{KL}}(Q\|P) + \ln(2\sqrt{n}/\delta)}{n}$ (Theorem 37) and Catoni optimal Gibbs posterior temperature $\beta^*$ selection with finite-sample policy promotion gating (Theorem 38) via `pandora runtime pac-bayes`.
+- **Phase 20 Tropical / Max-Plus Algebra DAG Critical-Path & Latency Calculus (`crates/pandora-runtime/src/tropical_dag.rs`, `docs/math/phase20_tropical_dag.md`)**:
+  - Max-Plus semiring $(\mathbb{R}\cup\{-\infty\}, \oplus, \otimes)$ Kleene star $A^*$ convergence, critical-path makespan computation, and positive-cycle detection (Theorem 39) alongside Karp's maximum cycle mean $\lambda(G) = \max_i \min_{k<n} \frac{(A^n)_{ii} - (A^k)_{ii}}{n-k}$ for periodic pipeline throughput and SLA deadlock prevention (Theorem 40) via `pandora runtime tropical`.
+- **12-Engine Unified Mathematical Assurance Receipt (`crates/pandora-runtime/src/assurance_receipt.rs`)**:
+  - Expanded `UnifiedAssuranceReceipt` certifying all 12 mathematical runtime engines across Phases 9–20 (Theorems 17–40) with SHA-256 hash-chaining and append-only audit ledger commitment (`pandora runtime assurance`).
+- **Live Telemetry Gateway & Autonomous Self-Healing Daemon Guard (`crates/pandora-runtime/src/gateway.rs`, `crates/pandora-cli/src/commands/runtime.rs`)**:
+  - `GatewayController` actively ingesting provider latencies, token budgets, error rates, and DAG topologies; autonomous circuit-breaking and provider rerouting on theorem invariant violations; background daemon loop via `pandora runtime daemon-guard`; and cryptographic verification via `pandora audit verify`.
+- **Workspace Release & Safety Invariants**:
+  - Workspace manifests, C/C++ ABI headers, Go SDK, TypeScript client launcher, Python gateway bridge, and installers synchronized to `3.0.7` under strict safe Rust `#![forbid(unsafe_code)]`.
+
 ## v3.0.6
 
 ### Phases 15-17 Mathematical Runtime & Governance Frontier (Theorems 29-34) & Unified Assurance Pipeline

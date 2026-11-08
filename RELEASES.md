@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, and `v3.0.6`. The active release identity
-is `v3.0.6`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, and `v3.0.7`. The active release identity
+is `v3.0.7`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.7
+
+This release implements Phases 18 through 20 of the mathematical runtime and governance roadmap (Discrete McKean-Vlasov Mean-Field Game equilibrium and Price-of-Anarchy bounding, McAllester/Maurer Empirical-Bernstein PAC-Bayesian generalization risk certificates and Catoni Gibbs posterior policy promotion gating, and Max-Plus semiring tropical DAG Kleene star makespan and Karp maximum cycle mean SLA throughput calculus) along with the expanded 12-Engine Unified Assurance Receipt pipeline wired directly into the live `GatewayController`, autonomous self-healing daemon guard loop (`pandora runtime daemon-guard`), and append-only hash-chained audit ledger checkpoints verified by `pandora audit verify` backed by 40 formal theorems across 20 phases in `docs/math/`.
 
 ## v3.0.6
 

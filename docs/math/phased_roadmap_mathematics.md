@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.6  
+**Version:** AGENT-PANDORA v3.0.7  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -11,20 +11,44 @@
 This specification establishes the end-to-end mathematical models, complexity bounds, and convergence proofs for the phased evolutionary roadmap of AGENT-PANDORA:
 
 ```mermaid
-flowchart LR
-    P1["Phase 1<br/><b>HNSW Graph Index</b><br/><i>O(log N) Vector Retrieval</i>"]
-    P2["Phase 2<br/><b>WebSocket Gateway</b><br/><i>RFC 6455 Event Streaming</i>"]
-    P3["Phase 3<br/><b>Swarm Orchestrator</b><br/><i>P2P Mesh & Task Gossip</i>"]
-    P4["Phase 4<br/><b>TUI Visual Graph</b><br/><i>Memory & DAG Inspector</i>"]
-    P5["Phase 5<br/><b>Compute Acceleration</b><br/><i>Batch Vector Dispatch</i>"]
-    P6["Phase 6<br/><b>Bandit Router</b><br/><i>Minimax Regret O(sqrt(KT ln T))</i>"]
-    P7["Phase 7<br/><b>Merkle-DAG Audit</b><br/><i>O(log N) State Proofs</i>"]
-    P8["Phase 8<br/><b>Speculative Decoding</b><br/><i>Exact Distribution & Radix KV</i>"]
-    P9["Phase 9<br/><b>Privacy Budget</b><br/><i>Linear RDP & Optimal Tail</i>"]
-    P10["Phase 10<br/><b>ZK Attestation</b><br/><i>Soundness & O(1) Proofs</i>"]
-    P11["Phase 11<br/><b>Work-Stealing</b><br/><i>Blumofe-Leiserson Bounds</i>"]
+flowchart TD
+    subgraph Foundation["Phases 1–5: Core Runtime & Infrastructure"]
+        P1["Phase 1<br/><b>HNSW Graph Index</b><br/><i>O(log N) Vector Retrieval</i>"]
+        P2["Phase 2<br/><b>WebSocket Gateway</b><br/><i>RFC 6455 Event Streaming</i>"]
+        P3["Phase 3<br/><b>Swarm Orchestrator</b><br/><i>P2P Mesh & Task Gossip</i>"]
+        P4["Phase 4<br/><b>TUI Visual Graph</b><br/><i>Memory & DAG Inspector</i>"]
+        P5["Phase 5<br/><b>Compute Acceleration</b><br/><i>Batch Vector Dispatch</i>"]
+        P1 --> P2 --> P3 --> P4 --> P5
+    end
 
-    P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> P10 --> P11
+    subgraph Intelligence["Phases 6–11: Decision, Audit & Privacy"]
+        P6["Phase 6<br/><b>Bandit Router</b><br/><i>Minimax Regret O(sqrt(KT ln T))</i>"]
+        P7["Phase 7<br/><b>Merkle-DAG Audit</b><br/><i>O(log N) State Proofs</i>"]
+        P8["Phase 8<br/><b>Speculative Decoding</b><br/><i>Exact Distribution & Radix KV</i>"]
+        P9["Phase 9<br/><b>Privacy Budget</b><br/><i>Linear RDP & Optimal Tail</i>"]
+        P10["Phase 10<br/><b>ZK Attestation</b><br/><i>Soundness & O(1) Proofs</i>"]
+        P11["Phase 11<br/><b>Work-Stealing</b><br/><i>Blumofe-Leiserson Bounds</i>"]
+        P6 --> P7 --> P8 --> P9 --> P10 --> P11
+    end
+
+    subgraph Assurance["Phases 12–17: Robustness & Verification"]
+        P12["Phase 12<br/><b>Byzantine Consensus</b><br/><i>Trimmed Mean & Krum Cone</i>"]
+        P13["Phase 13<br/><b>Optimal Transport</b><br/><i>Birkhoff Sinkhorn Contraction</i>"]
+        P14["Phase 14<br/><b>Martingale Canary</b><br/><i>Ville's Inequality & CS</i>"]
+        P15["Phase 15<br/><b>Conformal Calibrator</b><br/><i>Finite-Sample & ACI Shift</i>"]
+        P16["Phase 16<br/><b>Spectral Topology</b><br/><i>Fiedler Value & Cheeger Bound</i>"]
+        P17["Phase 17<br/><b>Adversarial Bandit</b><br/><i>Exp3 Importance-Weighted</i>"]
+        P12 --> P13 --> P14 --> P15 --> P16 --> P17
+    end
+
+    subgraph Frontier["Phases 18–20: Mathematical Frontier"]
+        P18["Phase 18<br/><b>Mean-Field Game</b><br/><i>McKean-Vlasov & PoA <= 4/3</i>"]
+        P19["Phase 19<br/><b>PAC-Bayes Monitor</b><br/><i>Maurer Bound & Catoni Gate</i>"]
+        P20["Phase 20<br/><b>Tropical DAG</b><br/><i>Kleene Star & Karp Cycle Mean</i>"]
+        P18 --> P19 --> P20
+    end
+
+    Foundation --> Intelligence --> Assurance --> Frontier
 ```
 
 Every phase is grounded in publication-grade mathematical proofs:
@@ -39,6 +63,15 @@ Every phase is grounded in publication-grade mathematical proofs:
 9. **Phase 9**: Linear RDP sequential composition $\varepsilon_{\text{comp}}(\alpha) = \sum \varepsilon_i(\alpha)$ and optimal $(\varepsilon, \delta)$-DP tail bound conversion $\varepsilon(\delta) = \inf_{\alpha} [\varepsilon(\alpha) + \frac{\ln(1/\delta)}{\alpha - 1}]$.
 10. **Phase 10**: Schwartz-Zippel state attestation soundness ($\mathbb{P}(\text{Accept} \mid \text{Invalid}) \le d/p \approx 10^{-15}$) and succinct $O(1)$ proof size ($176$ bytes) and verification work ($O(1)$).
 11. **Phase 11**: Blumofe-Leiserson makespan bound $\mathbb{E}[T_P] \le \frac{T_1}{P} + O(T_\infty)$ and bounded memory invariant $S_P \le P \cdot S_1$ with capacity limit $C_{\max}$.
+12. **Phase 12**: Optimal coordinate-wise trimmed mean breakdown $\alpha^* < 1/2$ and $(n, f)$-Krum geometric cone deviation bound $\alpha_{\mathrm{Krum}} \sigma \sqrt{d}$.
+13. **Phase 13**: Birkhoff-Hopf projective contraction $\kappa < 1$ for log-domain Sinkhorn-Knopp and debiased Sinkhorn divergence metric non-negativity $S_\varepsilon \ge 0$.
+14. **Phase 14**: Ville's maximal inequality for anytime-valid test supermartingales $\Pr_{H_0}(\exists t : E_t \ge 1/\alpha) \le \alpha$ and Howard mixture confidence sequences.
+15. **Phase 15**: Split conformal prediction finite-sample marginal coverage $1 - \alpha \le \mathbb{P}(Y \in \hat{C}_\alpha) \le 1 - \alpha + \frac{1}{n+1}$ and Gibbs-Candès Adaptive Conformal Inference (ACI).
+16. **Phase 16**: Courant-Fischer variational Fiedler algebraic connectivity $\lambda_2(L) > 0 \iff \text{connected}$ and Cheeger conductance sweep-cut bound $\nu_2/2 \le h(G) \le \sqrt{2\nu_2}$.
+17. **Phase 17**: Importance-weighted unbiased reward estimation and Auer et al. Exp3 non-stochastic minimax regret bound $\mathbb{E}[R_T] \le 2\sqrt{(e-1)TK\ln K}$.
+18. **Phase 18**: Discrete McKean-Vlasov fixed-point existence & $\ell_1$-contraction modulus $\kappa = \frac{\beta_{\max}}{2\tau} < 1$, and universal Price of Anarchy bound $PoA \le 4/3$ for multi-agent congestion.
+19. **Phase 19**: McAllester / Maurer Empirical-Bernstein PAC-Bayes KL-divergence risk certificate $\mathrm{kl}(\hat{L}_n(Q) \,\|\, L(Q)) \le \frac{D_{\mathrm{KL}}(Q \| P) + \ln(2\sqrt{n}/\delta)}{n}$ and Catoni optimal Gibbs posterior promotion gate.
+20. **Phase 20**: Max-Plus semiring $(\mathbb{R}\cup\{-\infty\}, \oplus, \otimes)$ Kleene star $A^*$ convergence, DAG makespan, and Karp's maximum cycle mean $\lambda(G) = \max_i \min_{k<n} \frac{(A^n)_{ii} - (A^k)_{ii}}{n-k}$ for SLA deadlock prevention.
 
 ---
 
@@ -452,8 +485,65 @@ $\blacksquare$
 
 ---
 
-## 18. Comprehensive Roadmap Summary Matrix (Phases 1–17)
+## 18. Phase 18: Mean-Field Game Equilibrium & Multi-Agent Congestion Control
 
+### 18.1 Discrete McKean-Vlasov Contraction & Equilibrium Uniqueness
+
+**Theorem 35 (Discrete McKean-Vlasov Fixed-Point Existence & Contraction):**  
+*Let $\mathbf{m} \in \Delta_K$ be the population distribution over $K \ge 2$ shared computational tools with affine congestion costs $c_k(m_k) = c_{0, k} + \beta_k m_k$ ($\beta_{\max} = \max_k \beta_k$). Under Boltzmann-Gibbs best response $\Phi_k(\mathbf{m}) = \frac{\exp(-c_k(m_k)/\tau)}{\sum_j \exp(-c_j(m_j)/\tau)}$ with temperature $\tau > 0$:*
+1. *There exists at least one Mean-Field Equilibrium $\mathbf{m}^\star \in \Delta_K$ satisfying $\mathbf{m}^\star = \Phi(\mathbf{m}^\star)$ by Brouwer's Fixed-Point Theorem.*
+2. *In the $\ell_1$ total variation metric, the mapping $\Phi$ has Lipschitz contraction constant:*
+   $$\|\Phi(\mathbf{m}) - \Phi(\mathbf{m}')\|_1 \le \kappa \, \|\mathbf{m} - \mathbf{m}'\|_1, \quad \kappa = \frac{\beta_{\max}}{2\tau}.$$
+3. *Whenever $\tau > \frac{\beta_{\max}}{2}$, $\kappa < 1$, the equilibrium $\mathbf{m}^\star$ is strictly unique, and Picard iterates converge geometrically: $\|\mathbf{m}^{(t)} - \mathbf{m}^\star\|_1 \le 2 \kappa^t$.*
+
+### 18.2 Price-of-Anarchy ($PoA$) & Social-Optimum Bounding
+
+**Theorem 36 (Decentralized Tool Contention Price-of-Anarchy Bound):**  
+*Under affine latency costs $c_k(x) = a_k x + b_k$ ($a_k, b_k \ge 0$), the routing game is $(1, 1/4)$-smooth: $\sum_{k=1}^K m_k' c_k(m_k) \le C(\mathbf{m}') + \frac{1}{4} C(\mathbf{m})$. Consequently, the Price of Anarchy between the Wardrop / Nash equilibrium $\mathbf{m}^{\mathrm{NE}}$ and social optimum $\mathbf{m}^{\mathrm{OPT}}$ is strictly bounded by:*
+$$PoA \triangleq \frac{C(\mathbf{m}^{\mathrm{NE}})}{C(\mathbf{m}^{\mathrm{OPT}})} \le \frac{4}{3} \approx 1.3333.$$
+*The bound $\frac{4}{3}$ is tight, attained by Pigou's network.*
+- **Reference**: Detailed proofs documented in `docs/math/phase18_mean_field_game.md`.  
+$\blacksquare$
+
+---
+
+## 19. Phase 19: PAC-Bayesian Generalization & Prompt/Policy Risk Certificates
+
+### 19.1 McAllester / Maurer Empirical-Bernstein PAC-Bayes KL-Divergence Bound
+
+**Theorem 37 (Maurer Empirical-Bernstein PAC-Bayes KL Bound):**  
+*For any sample size $n \ge 1$, prior $P$ on policy space $\mathcal{H}$, bounded loss $\ell \in [0, 1]$, and confidence $\delta \in (0, 1)$, with probability at least $1 - \delta$ over $S \sim \mathcal{D}^n$, simultaneously for all data-dependent posterior distributions $Q$ on $\mathcal{H}$:*
+$$\mathrm{kl}\bigl(\hat{L}_n(Q) \,\|\, L(Q)\bigr) \le \frac{D_{\mathrm{KL}}(Q \,\|\, P) + \ln\left(\frac{2\sqrt{n}}{\delta}\right)}{n}.$$
+*The unique upper root $L_{\max}(Q) \in [\hat{L}_n(Q), 1)$ of $\mathrm{kl}(\hat{L}_n(Q) \,\|\, p) = \frac{D_{\mathrm{KL}}(Q \| P) + \ln(2\sqrt{n}/\delta)}{n}$ provides an exact finite-sample generalization certificate satisfying $\mathbb{P}(L(Q) \le L_{\max}(Q)) \ge 1 - \delta$, converging at fast rate $O(1/n)$ for low empirical risk.*
+
+### 19.2 Catoni Optimal Gibbs Posterior Temperature Selection & Finite-Sample Promotion Gate
+
+**Theorem 38 (Catoni Temperature Optimization & Promotion Gate):**  
+*For the Gibbs posterior family $Q_\beta(h) \propto P(h)\exp(-\beta \hat{L}_n(h))$ with analytical divergence $D_{\mathrm{KL}}(Q_\beta \,\|\, P) = -\beta \hat{L}_n(Q_\beta) - \ln Z_n(\beta)$, the certified Catoni upper risk is minimized at optimal temperature $\beta^\star = \arg\min_{\beta \in (0, 2n)} \frac{-\ln Z_n(\beta) + \ln(1/\delta)}{\beta(1 - \beta/(2n))}$. A candidate prompt/policy $Q_{\mathrm{cand}}$ is promoted if and only if $L_{\max}(Q_{\mathrm{cand}}) \le L_{\mathrm{base}} - \epsilon_{\mathrm{margin}}$, guaranteeing false promotion probability $\le \delta$.*
+- **Reference**: Detailed proofs documented in `docs/math/phase19_pac_bayes_monitor.md`.  
+$\blacksquare$
+
+---
+
+## 20. Phase 20: Tropical / Max-Plus Algebra DAG Critical-Path & Latency Calculus
+
+### 20.1 Max-Plus Semiring Kleene Star $A^*$ Convergence & Positive-Cycle Detection
+
+**Theorem 39 (Kleene Star $A^*$ Convergence & Workflow Makespan):**  
+*In the Max-Plus semiring $\mathbb{T}_{\max} = (\mathbb{R} \cup \{-\infty\}, \max, +)$, the Kleene star series $A^\star = \bigoplus_{k=0}^\infty A^k$ converges with finite entries if and only if the workflow digraph $G$ contains no directed cycle of positive weight ($w(C) \le 0$). When $G$ is acyclic (a DAG), $A^k = [-\infty]$ for all $k \ge n$, $A^\star = \bigoplus_{k=0}^{n-1} A^k$ stabilizes, and $(A^\star)_{ij}$ is the exact critical path latency from task $i$ to task $j$. A positive cycle exists if and only if $(A^k)_{ii} > 0$ for some $1 \le k \le n$.*
+
+### 20.2 Karp's Maximum Cycle Mean Theorem for Periodic Pipeline Throughput & SLA Deadlock Prevention
+
+**Theorem 40 (Karp's Maximum Cycle Mean & SLA Deadlock Condition):**  
+*For strongly connected recurrent workflow digraph $G$ with matrix $A \in \mathbb{T}_{\max}^{n \times n}$, the maximum cycle mean $\lambda(G) = \max_C \frac{w(C)}{|C|}$ is the unique tropical eigenvalue $A \otimes \mathbf{v} = \lambda(G) \otimes \mathbf{v}$ and satisfies Karp's exact minimax formula:*
+$$\lambda(G) = \max_{i \in V} \min_{0 \le k < n} \frac{(A^n)_{ii} - (A^k)_{ii}}{n - k}.$$
+*The maximum sustainable pipeline throughput is $\Theta_{\max} = \frac{1}{\lambda(G)}$, and the pipeline is certified deadlock-free with bounded buffers if and only if $\lambda(G) \le T_{\mathrm{SLA}}$.*
+- **Reference**: Detailed proofs documented in `docs/math/phase20_tropical_dag.md`.  
+$\blacksquare$
+
+---
+
+## 21. Comprehensive Roadmap Summary Matrix (Phases 1–20)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -474,3 +564,7 @@ $\blacksquare$
 | **15** | Conformal Calibrator | Exchangeable quantile & ACI update | $\mathbb{P}(Y \in \widehat{C}_\alpha) \ge 1 - \alpha$, ACI $O(1/(T\gamma))$ | `conformal_calibrator.rs` | `tests/phase15_17_math_tests.rs` |
 | **16** | Spectral Topology Analyzer | Fiedler $\lambda_2(L)$ & Cheeger bound | $\nu_2/2 \le h(G) \le \sqrt{2\nu_2}$ | `spectral_topology.rs` | `tests/phase15_17_math_tests.rs` |
 | **17** | Exp3 Adversarial Bandit | Importance-weighted log-Hedge | $\mathbb{E}[R_T] \le 2\sqrt{(e-1)TK\ln K}$ | `adversarial_bandit.rs` | `tests/phase15_17_math_tests.rs` |
+| **18** | Mean-Field Game Equilibrium | Discrete McKean-Vlasov & PoA bound | Contraction $\kappa = \frac{\beta_{\max}}{2\tau} < 1$, $PoA \le \frac{4}{3}$ | `mean_field_game.rs` | `tests/phase18_20_math_tests.rs` |
+| **19** | PAC-Bayes Generalization Monitor | Maurer empirical-Bernstein & Catoni gate | $\mathrm{kl}(\hat{L}_n(Q) \| L(Q)) \le \frac{D_{\mathrm{KL}} + \ln(2\sqrt{n}/\delta)}{n}$ | `pac_bayes_monitor.rs` | `tests/phase18_20_math_tests.rs` |
+| **20** | Tropical Max-Plus DAG Calculus | Kleene star $A^\star$ & Karp cycle mean | $A^\star = \bigoplus_{k=0}^{n-1} A^k$, $\lambda(G) = \max_i \min_{k} \frac{A^n - A^k}{n-k}$ | `tropical_dag.rs` | `tests/phase18_20_math_tests.rs` |
+

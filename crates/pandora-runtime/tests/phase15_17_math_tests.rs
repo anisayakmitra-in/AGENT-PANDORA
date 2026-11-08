@@ -121,10 +121,10 @@ fn theorem_33_34_exp3_adversarial_bandit_regret_bound() {
 
 #[test]
 fn unified_assurance_pipeline_certifies_phases_9_through_17() {
-    let receipt = UnifiedAssuranceReceipt::generate("integration-suite-v306").unwrap();
+    let receipt = UnifiedAssuranceReceipt::generate("integration-suite-v307").unwrap();
     assert!(receipt.all_invariants_verified);
-    assert_eq!(receipt.phases_certified, 9);
-    assert_eq!(receipt.certificates.len(), 9);
+    assert_eq!(receipt.phases_certified, 12);
+    assert_eq!(receipt.certificates.len(), 12);
     for (idx, cert) in receipt.certificates.iter().enumerate() {
         assert_eq!(cert.phase as usize, 9 + idx);
         assert!(cert.invariant_verified);

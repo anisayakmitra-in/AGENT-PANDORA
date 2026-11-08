@@ -1,6 +1,6 @@
 /**
  * @file pandora.h
- * @brief Stable C ABI Header for AGENT-PANDORA v3.0.6.
+ * @brief Stable C ABI Header for AGENT-PANDORA v3.0.7.
  *
  * Provides universal C FFI exports, JSON-RPC envelope structures,
  * and hardware SIMD vector operations.
@@ -17,7 +17,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PANDORA_VERSION "3.0.6"
+#define PANDORA_VERSION "3.0.7"
 #define PANDORA_DENSE_DIMENSION 128
 
 typedef struct pandora_client pandora_client_t;

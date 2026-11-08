@@ -35,6 +35,7 @@ pub mod execution_controller;
 mod execution_profile;
 pub mod executors;
 pub mod fleet;
+pub mod gateway;
 pub mod gepa;
 pub mod github_client;
 pub mod graph_intelligence;
@@ -53,6 +54,7 @@ pub mod lsp_engine;
 pub mod martingale_gate;
 pub mod mcp;
 pub mod mcp_catalog;
+pub mod mean_field_game;
 pub mod memory_engine;
 pub mod memory_schedule;
 pub mod merkle_dag;
@@ -63,6 +65,7 @@ pub mod observability;
 pub mod operations;
 pub mod orchestration_engine;
 pub mod orchestration_store;
+pub mod pac_bayes_monitor;
 pub mod package_admission;
 pub mod package_distribution;
 pub mod package_store;
@@ -100,6 +103,7 @@ pub mod swarm_mesh;
 pub mod synthetic_canvas;
 pub mod tool_engine;
 pub mod tripartite_governance;
+pub mod tropical_dag;
 pub mod visual_graph;
 pub mod voyager_curriculum;
 pub mod wasm;
@@ -227,6 +231,11 @@ pub use fleet::{
     FleetSupervisor, FleetSupervisorState, MAX_FLEET_CAPABILITIES, MAX_FLEET_FENCES,
     MAX_FLEET_LEASES, MAX_FLEET_NODES,
 };
+pub use gateway::{
+    AuditDagEntry, AuditLeafEntry, AuditStoreFile, AuditTelemetryEvent, AutonomousAction,
+    CircuitBreaker, CircuitBreakerState, DagTopologyTelemetry, ExecutionTelemetry, GatewayConfig,
+    GatewayController, GatewayError, GatewayTickReport, SelfHealingAction,
+};
 pub use gepa::{
     GepaCandidate, GepaError, GepaFeedbackTrace, GepaObjective, GepaOptimizer, GepaParetoFrontier,
     GepaReflectiveMutator,
@@ -275,6 +284,11 @@ pub use mcp::{
     McpProtocolMode, McpServer, McpStart, McpStdioConfig, McpToolResult, McpWireEra,
 };
 pub use mcp_catalog::{McpCatalogRevision, McpCatalogTool};
+pub use mean_field_game::{
+    MeanFieldCongestionStatus, MeanFieldGame, MfgAgentCostState, MfgCongestionModel, MfgEngine,
+    MfgEquilibriumResult, MfgError, MfgFixedPointResult, MfgResourceConfig, PoABoundResult,
+    PriceOfAnarchyReport, THEORETICAL_POA_UPPER_BOUND, project_onto_simplex,
+};
 pub use memory_engine::{
     MAX_SYNTHESIS_SOURCE_RECORDS, MemoryEngine, MemoryError, MemorySynthesisProposal,
     MemorySynthesisSnapshot,
@@ -309,6 +323,11 @@ pub use orchestration_store::{
     OrchestrationBudgetReservationRecord, OrchestrationBudgetReservationState,
     OrchestrationBudgetSnapshot, OrchestrationRunRecord, OrchestrationRunStatus,
     OrchestrationStore, OrchestrationStoreError,
+};
+pub use pac_bayes_monitor::{
+    GibbsPosteriorResult, PacBayesCertificate, PacBayesConfig, PacBayesEngine, PacBayesError,
+    PacBayesMonitor, PolicyPromotionGate, PolicyPromotionVerdict, PromotionGateVerdict,
+    RiskCertificate, binary_kl,
 };
 pub use package_distribution::{
     DistributionBinding, DistributionEvent, DistributionEventKind, DistributionMutation,
@@ -401,6 +420,10 @@ pub use tool_engine::{
 pub use tripartite_governance::{
     TripartiteApproval, TripartiteError, TripartiteEvaluation, TripartiteGovernance,
     TripartiteProposal, TripartiteRole, branch_name_for_proposal,
+};
+pub use tropical_dag::{
+    KarpCycleMeanResult, KleeneStarResult, MaxPlusMatrix, NEG_INFINITY, TropicalDagEngine,
+    TropicalDagScheduler, TropicalError, TropicalMatrix,
 };
 pub use visual_graph::{
     AsciiGridRenderer, ForceDirectedLayout, Point2D, ViewportCamera, VisualNode,

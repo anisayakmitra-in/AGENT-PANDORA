@@ -813,9 +813,9 @@ fn test_tier1_r6_python_embed_validation_scripts() {
         String::from_utf8_lossy(&repo_out.stderr)
     );
 
-    // 3. release_identity.py v3.0.6
+    // 3. release_identity.py v3.0.7
     let id_out = Command::new(&python)
-        .args(["scripts/release_identity.py", "v3.0.6"])
+        .args(["scripts/release_identity.py", "v3.0.7"])
         .current_dir(&root)
         .output()
         .unwrap();
@@ -832,10 +832,10 @@ fn test_tier1_r6_typescript_client_build_and_launcher() {
     let ts_dir = root.join("npm").join("pandora-cli");
     assert!(ts_dir.join("package.json").exists());
 
-    // Verify TypeScript package.json version parity 3.0.6
+    // Verify TypeScript package.json version parity 3.0.7
     let pkg_content = fs::read_to_string(ts_dir.join("package.json")).unwrap();
     let pkg_val: Value = serde_json::from_str(&pkg_content).unwrap();
-    assert_eq!(pkg_val["version"], "3.0.6");
+    assert_eq!(pkg_val["version"], "3.0.7");
 
     // Execute typescript client test script via node
     let node_out = Command::new("node")

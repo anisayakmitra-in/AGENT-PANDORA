@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! Unified Mathematical Assurance Receipt Pipeline (Phases 9–17, Theorems 17–34)
+//! Unified Mathematical Assurance Receipt Pipeline (Phases 9–20, Theorems 17–40)
 //!
-//! Synthesizes formal verification certificates across all nine mathematical
+//! Synthesizes formal verification certificates across all twelve mathematical
 //! runtime engines into a single SHA-256 tamper-evident assurance receipt for
 //! autonomous agent execution and governance auditing.
 
@@ -10,8 +10,11 @@ use crate::adversarial_bandit::Exp3AdversarialBandit;
 use crate::byzantine_aggregator::{AgentVectorUpdate, AggregationRule, ByzantineAggregator};
 use crate::conformal_calibrator::{CandidateAction, SplitConformalCalibrator};
 use crate::martingale_gate::{CanaryGateVerdict, MartingaleCanaryGate};
+use crate::mean_field_game::{MeanFieldGame, MfgResourceConfig};
+use crate::pac_bayes_monitor::{PacBayesMonitor, PolicyPromotionVerdict};
 use crate::privacy_budget::{DistributedPrivacyTracker, PrivacyExpenditure, RdpBudget};
 use crate::spectral_topology::{SpectralTopologyAnalyzer, TopologyVerdict, WeightedEdge};
+use crate::tropical_dag::{MaxPlusMatrix, TropicalDagScheduler};
 use crate::wasserstein_drift::{EmpiricalDistribution, SinkhornDriftDetector};
 use crate::work_stealing::{StealableTask, StealableTaskDag, WorkStealingScheduler};
 use crate::zk_attestation::{FieldElement, StateTransitionAir};
@@ -28,21 +31,34 @@ pub struct PhaseCertificate {
     pub metric_summary: String,
 }
 
-/// Complete tamper-evident mathematical assurance receipt across Phases 9–17.
+/// Complete tamper-evident mathematical assurance receipt across Phases 9–20.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnifiedAssuranceReceipt {
     pub run_id: String,
+    pub sequence_number: u64,
+    pub prev_receipt_sha256: Option<String>,
     pub all_invariants_verified: bool,
     pub phases_certified: usize,
     pub certificates: Vec<PhaseCertificate>,
     pub receipt_sha256: String,
+    pub signature: Option<String>,
 }
 
 impl UnifiedAssuranceReceipt {
-    /// Execute a full end-to-end self-certifying mathematical audit across Phases 9–17
-    /// for a given `run_id` and return the signed `UnifiedAssuranceReceipt`.
+    /// Execute a full end-to-end self-certifying mathematical audit across Phases 9–20
+    /// for a given `run_id` and return the unchained `UnifiedAssuranceReceipt`.
     pub fn generate(run_id: &str) -> Result<Self, String> {
-        let mut certificates = Vec::with_capacity(9);
+        Self::generate_chained(run_id, 0, None)
+    }
+
+    /// Execute an end-to-end self-certifying mathematical audit across all 12 phases
+    /// binding to a prior receipt's hash and sequence number in a cryptographic hash chain.
+    pub fn generate_chained(
+        run_id: &str,
+        sequence_number: u64,
+        prev_receipt_sha256: Option<String>,
+    ) -> Result<Self, String> {
+        let mut certificates = Vec::with_capacity(12);
 
         // Phase 9: Renyi Differential Privacy Budget (Theorems 17-18)
         let mut tracker = DistributedPrivacyTracker::new(2.0, 1e-5).map_err(|e| e.to_string())?;
@@ -289,11 +305,93 @@ impl UnifiedAssuranceReceipt {
             ),
         });
 
+        // Phase 18: Mean-Field Game Equilibrium & Multi-Agent Congestion Control (Theorems 35-36)
+        let resources = vec![
+            MfgResourceConfig::new("tool_compute_alpha", 10.0, 0.5).map_err(|e| e.to_string())?,
+            MfgResourceConfig::new("tool_compute_beta", 15.0, 0.4).map_err(|e| e.to_string())?,
+            MfgResourceConfig::new("tool_compute_gamma", 20.0, 0.2).map_err(|e| e.to_string())?,
+        ];
+        let mfg = MeanFieldGame::new(resources, 2.0).map_err(|e| e.to_string())?;
+        let eq = mfg
+            .compute_equilibrium(200, 1e-6)
+            .map_err(|e| e.to_string())?;
+        let poa = mfg.compute_price_of_anarchy().map_err(|e| e.to_string())?;
+        let phase18_ok = eq.is_strict_contraction && poa.bound_satisfied;
+        certificates.push(PhaseCertificate {
+            phase: 18,
+            engine: "mean_field_game_congestion".to_owned(),
+            theorems: "Theorems 35-36".to_owned(),
+            invariant_verified: phase18_ok,
+            metric_summary: format!(
+                "PoA={:.3} <= {:.3}, kappa={:.3} < 1.0, iters={}",
+                poa.price_of_anarchy,
+                poa.theoretical_upper_bound,
+                eq.contraction_modulus,
+                eq.iterations
+            ),
+        });
+
+        // Phase 19: PAC-Bayesian Generalization & Prompt/Policy Risk Certificates (Theorems 37-38)
+        let pac_monitor = PacBayesMonitor::new();
+        let cert = pac_monitor
+            .certify_risk(0.04, 100, 0.25, 0.05)
+            .map_err(|e| e.to_string())?;
+        let verdict = pac_monitor.evaluate_promotion_gate(&cert, 0.20);
+        let phase19_ok =
+            cert.bound_verified && verdict == PolicyPromotionVerdict::PromoteToProduction;
+        certificates.push(PhaseCertificate {
+            phase: 19,
+            engine: "pac_bayes_risk_certificate".to_owned(),
+            theorems: "Theorems 37-38".to_owned(),
+            invariant_verified: phase19_ok,
+            metric_summary: format!(
+                "L_hat={:.4}, L_max={:.4} <= L_Pinsker={:.4}, verdict={:?}",
+                cert.empirical_risk, cert.maurer_risk_bound, cert.pinsker_risk_bound, verdict
+            ),
+        });
+
+        // Phase 20: Tropical / Max-Plus Algebra DAG Critical-Path & Latency Calculus (Theorems 39-40)
+        let trop_sched = TropicalDagScheduler::new();
+        let mut adj = MaxPlusMatrix::zero(4).map_err(|e| e.to_string())?;
+        adj.set(0, 1, 15.0).map_err(|e| e.to_string())?;
+        adj.set(1, 2, 25.0).map_err(|e| e.to_string())?;
+        adj.set(0, 2, 30.0).map_err(|e| e.to_string())?;
+        adj.set(2, 3, 10.0).map_err(|e| e.to_string())?;
+        let kleene = trop_sched
+            .compute_kleene_star(&adj)
+            .map_err(|e| e.to_string())?;
+
+        let mut cycle_adj = MaxPlusMatrix::zero(2).map_err(|e| e.to_string())?;
+        cycle_adj.set(0, 1, 5.0).map_err(|e| e.to_string())?;
+        cycle_adj.set(1, 0, 7.0).map_err(|e| e.to_string())?;
+        let karp = trop_sched
+            .compute_karp_maximum_cycle_mean(&cycle_adj)
+            .map_err(|e| e.to_string())?;
+
+        let phase20_ok = !kleene.has_positive_cycle
+            && kleene.critical_path_makespan > 0.0
+            && karp.maximum_cycle_mean <= 10.0;
+        certificates.push(PhaseCertificate {
+            phase: 20,
+            engine: "tropical_dag_latency".to_owned(),
+            theorems: "Theorems 39-40".to_owned(),
+            invariant_verified: phase20_ok,
+            metric_summary: format!(
+                "makespan={:.1}ms, acyclic={}, lambda(G)={:.2} <= 10.0",
+                kleene.critical_path_makespan, !kleene.has_positive_cycle, karp.maximum_cycle_mean
+            ),
+        });
+
         let all_verified = certificates.iter().all(|c| c.invariant_verified);
         let phases_certified = certificates.iter().filter(|c| c.invariant_verified).count();
 
         let mut hasher = Sha256::new();
         hasher.update(run_id.as_bytes());
+        hasher.update(sequence_number.to_be_bytes());
+        if let Some(prev) = &prev_receipt_sha256 {
+            hasher.update(b"prev:");
+            hasher.update(prev.as_bytes());
+        }
         for cert in &certificates {
             hasher.update([cert.phase]);
             hasher.update(cert.engine.as_bytes());
@@ -306,11 +404,49 @@ impl UnifiedAssuranceReceipt {
 
         Ok(Self {
             run_id: run_id.to_owned(),
+            sequence_number,
+            prev_receipt_sha256,
             all_invariants_verified: all_verified,
             phases_certified,
             certificates,
             receipt_sha256,
+            signature: None,
         })
+    }
+
+    /// Attach an explicit cryptographic signature to the assurance receipt.
+    pub fn with_signature(mut self, signature: impl Into<String>) -> Self {
+        self.signature = Some(signature.into());
+        self
+    }
+
+    /// Sign the receipt digest with a designated secret key using SHA-256.
+    pub fn sign_with_key(&mut self, secret_key: &str) {
+        let mut sig_hasher = Sha256::new();
+        sig_hasher.update(secret_key.as_bytes());
+        sig_hasher.update(b":");
+        sig_hasher.update(self.receipt_sha256.as_bytes());
+        self.signature = Some(format!("sig:sha256:{:x}", sig_hasher.finalize()));
+    }
+
+    /// Verify cryptographic hash integrity of the receipt including sequence number and prev hash.
+    pub fn verify_hash_integrity(&self) -> bool {
+        let mut hasher = Sha256::new();
+        hasher.update(self.run_id.as_bytes());
+        hasher.update(self.sequence_number.to_be_bytes());
+        if let Some(prev) = &self.prev_receipt_sha256 {
+            hasher.update(b"prev:");
+            hasher.update(prev.as_bytes());
+        }
+        for cert in &self.certificates {
+            hasher.update([cert.phase]);
+            hasher.update(cert.engine.as_bytes());
+            hasher.update(cert.theorems.as_bytes());
+            hasher.update([u8::from(cert.invariant_verified)]);
+            hasher.update(cert.metric_summary.as_bytes());
+        }
+        let expected = format!("sha256:{:x}", hasher.finalize());
+        self.receipt_sha256 == expected
     }
 }
 
@@ -319,11 +455,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unified_assurance_receipt_certifies_all_nine_phases() {
-        let receipt = UnifiedAssuranceReceipt::generate("test-run-v306").unwrap();
+    fn unified_assurance_receipt_certifies_all_twelve_phases() {
+        let receipt = UnifiedAssuranceReceipt::generate("test-run-v307").unwrap();
         assert!(receipt.all_invariants_verified);
-        assert_eq!(receipt.phases_certified, 9);
-        assert_eq!(receipt.certificates.len(), 9);
+        assert_eq!(receipt.phases_certified, 12);
+        assert_eq!(receipt.certificates.len(), 12);
         assert!(receipt.receipt_sha256.starts_with("sha256:"));
+        assert_eq!(receipt.sequence_number, 0);
+        assert_eq!(receipt.prev_receipt_sha256, None);
+        assert!(receipt.verify_hash_integrity());
+    }
+
+    #[test]
+    fn unified_assurance_receipt_hash_chaining_and_signing() {
+        let r1 = UnifiedAssuranceReceipt::generate_chained("run-001", 1, None).unwrap();
+        assert_eq!(r1.sequence_number, 1);
+        assert!(r1.verify_hash_integrity());
+
+        let mut r2 = UnifiedAssuranceReceipt::generate_chained(
+            "run-002",
+            2,
+            Some(r1.receipt_sha256.clone()),
+        )
+        .unwrap();
+        assert_eq!(r2.sequence_number, 2);
+        assert_eq!(r2.prev_receipt_sha256, Some(r1.receipt_sha256));
+        assert!(r2.verify_hash_integrity());
+
+        r2.sign_with_key("master-governance-key");
+        assert!(r2.signature.is_some());
+        assert!(r2.signature.unwrap().starts_with("sig:sha256:"));
     }
 }

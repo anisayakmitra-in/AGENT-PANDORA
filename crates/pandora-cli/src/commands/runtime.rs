@@ -1,4 +1,4 @@
-use super::parse_options;
+use super::{load_config_storage, parse_options, path_option};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::RuntimeService;
 use pandora_runtime::adversarial_bandit::Exp3AdversarialBandit;
@@ -6,13 +6,19 @@ use pandora_runtime::assurance_receipt::UnifiedAssuranceReceipt;
 use pandora_runtime::conformal_calibrator::{
     AdaptiveConformalTracker, CandidateAction, SplitConformalCalibrator,
 };
+use pandora_runtime::gateway::{GatewayConfig, GatewayController};
 use pandora_runtime::spectral_topology::{SpectralTopologyAnalyzer, WeightedEdge};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use pandora_runtime::byzantine_aggregator::{
     AgentVectorUpdate, AggregationRule, ByzantineAggregator,
 };
 use pandora_runtime::martingale_gate::MartingaleCanaryGate;
+use pandora_runtime::mean_field_game::{MeanFieldGame, MfgResourceConfig};
+use pandora_runtime::pac_bayes_monitor::{PacBayesConfig, PacBayesMonitor};
 use pandora_runtime::speculative_decoding::{RadixKvCache, SpeculativeEngine, TokenProbability};
+use pandora_runtime::tropical_dag::{MaxPlusMatrix, TropicalDagScheduler, TropicalError};
 use pandora_runtime::wasserstein_drift::{EmpiricalDistribution, SinkhornDriftDetector};
 use pandora_runtime::work_stealing::{StealableTask, StealableTaskDag, WorkStealingScheduler};
 use pandora_types::ServiceEngineSummary;
@@ -36,8 +42,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some("topology") | Some("spectral") => topology(&args[1..]),
         Some("bandit") | Some("exp3") => bandit(&args[1..]),
         Some("assurance") | Some("assurance-receipt") => assurance(&args[1..]),
+        Some("mfg") | Some("mean-field") => mfg(&args[1..]),
+        Some("pac-bayes") | Some("pacbayes") => pac_bayes(&args[1..]),
+        Some("tropical") | Some("max-plus") => tropical(&args[1..]),
+        Some("daemon-guard") | Some("guard") => daemon_guard(&args[1..]),
         Some(unknown) if !unknown.starts_with('-') => Err(CliError::usage(format!(
-            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', 'canary-gate', 'conformal', 'topology', 'bandit', or 'assurance'"
+            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', 'canary-gate', 'conformal', 'topology', 'bandit', 'assurance', 'mfg', 'pac-bayes', 'tropical', or 'daemon-guard'"
         ))),
         _ => engines(args),
     }
@@ -595,12 +605,12 @@ pub(crate) fn bandit(args: &[String]) -> Result<CommandResult, CliError> {
 
 pub(crate) fn assurance(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["run-id", "config", "data-dir", "workspace", "json"])?;
-    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.6");
+    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.7");
     let receipt =
         UnifiedAssuranceReceipt::generate(run_id).map_err(|e| CliError::execution(e, json!({})))?;
 
     let human = format!(
-        "Unified Mathematical Assurance Receipt (Phases 9-17, Theorems 17-34):\n  Run ID: {}\n  Phases Certified: {}/9 | All Invariants Verified: {}\n  Receipt Digest: {}",
+        "Unified Mathematical Assurance Receipt (Phases 9-20, Theorems 17-40):\n  Run ID: {}\n  Phases Certified: {}/12 | All Invariants Verified: {}\n  Receipt Digest: {}",
         receipt.run_id,
         receipt.phases_certified,
         receipt.all_invariants_verified,
@@ -612,6 +622,402 @@ pub(crate) fn assurance(args: &[String]) -> Result<CommandResult, CliError> {
         serde_json::to_value(&receipt).unwrap_or_else(|_| json!({})),
         human,
     ))
+}
+
+pub(crate) fn mfg(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "resources",
+            "base-costs",
+            "congestion-slopes",
+            "temperature",
+            "damping",
+            "iterations",
+            "tolerance",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let k: usize = parsed
+        .value("resources")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--resources must be an integer >= 2"))
+        })
+        .transpose()?
+        .unwrap_or(3);
+
+    if k < 2 {
+        return Err(CliError::usage("--resources must be at least 2"));
+    }
+
+    let base_costs: Vec<f64> = if let Some(s) = parsed.value("base-costs") {
+        s.split(',')
+            .map(|val| {
+                val.trim()
+                    .parse()
+                    .map_err(|_| CliError::usage("invalid float in --base-costs"))
+            })
+            .collect::<Result<Vec<f64>, CliError>>()?
+    } else {
+        (0..k).map(|i| 1.0 + (i as f64) * 0.5).collect()
+    };
+
+    let congestion_slopes: Vec<f64> = if let Some(s) = parsed.value("congestion-slopes") {
+        s.split(',')
+            .map(|val| {
+                val.trim()
+                    .parse()
+                    .map_err(|_| CliError::usage("invalid float in --congestion-slopes"))
+            })
+            .collect::<Result<Vec<f64>, CliError>>()?
+    } else {
+        (0..k).map(|i| 2.0 - (i as f64) * 0.5).collect()
+    };
+
+    if base_costs.len() != k {
+        return Err(CliError::usage(format!(
+            "--base-costs count ({}) must match --resources ({k})",
+            base_costs.len()
+        )));
+    }
+    if congestion_slopes.len() != k {
+        return Err(CliError::usage(format!(
+            "--congestion-slopes count ({}) must match --resources ({k})",
+            congestion_slopes.len()
+        )));
+    }
+
+    let temperature: f64 = parsed
+        .value("temperature")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--temperature must be a positive float"))
+        })
+        .transpose()?
+        .unwrap_or(1.0);
+
+    let damping: f64 = parsed
+        .value("damping")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--damping must be in (0, 1]"))
+        })
+        .transpose()?
+        .unwrap_or(0.5);
+
+    let iterations: usize = parsed
+        .value("iterations")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--iterations must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(100);
+
+    let tolerance: f64 = parsed
+        .value("tolerance")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--tolerance must be a positive float"))
+        })
+        .transpose()?
+        .unwrap_or(1e-6);
+
+    let mut resource_configs = Vec::with_capacity(k);
+    for i in 0..k {
+        resource_configs.push(
+            MfgResourceConfig::new(format!("resource_{i}"), base_costs[i], congestion_slopes[i])
+                .map_err(|e| CliError::usage(e.to_string()))?,
+        );
+    }
+
+    let mfg_engine = MeanFieldGame::with_damping(resource_configs, temperature, damping)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let eq_result = mfg_engine
+        .compute_equilibrium(iterations, tolerance)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+    let poa_result = mfg_engine
+        .compute_price_of_anarchy()
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let status = mfg_engine
+        .status()
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let human = format!(
+        "Mean-Field Game Equilibrium & Congestion Control (Theorems 35 & 36):\n  Resources (K): {} | Temperature tau: {:.4} | Damping alpha: {:.4}\n  Contraction Modulus kappa: {:.4} (Strict: {})\n  Equilibrium Iterations: {} | Residual L1: {:.2e}\n  Equilibrium Distribution m*: {:?}\n  Resource Costs c(m*): {:?}\n  Nash Social Cost: {:.4} | Social Optimum Cost: {:.4}\n  Price of Anarchy (PoA): {:.4} (Theoretical Upper Bound: {:.4}, Bound Satisfied: {})",
+        status.num_resources,
+        status.temperature_tau,
+        status.damping_alpha,
+        status.contraction_modulus,
+        status.fixed_point.is_strict_contraction,
+        eq_result.iterations,
+        eq_result.residual_norm,
+        eq_result.equilibrium_distribution,
+        eq_result.resource_costs,
+        poa_result.nash_social_cost,
+        poa_result.optimal_social_cost,
+        poa_result.price_of_anarchy,
+        poa_result.theoretical_upper_bound,
+        poa_result.bound_satisfied
+    );
+
+    Ok(success(
+        "runtime mfg",
+        serde_json::to_value(&status).unwrap_or_else(|_| json!({})),
+        human,
+    ))
+}
+
+pub(crate) fn pac_bayes(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "samples",
+            "empirical-risk",
+            "kl",
+            "target-risk",
+            "delta",
+            "hypotheses",
+            "losses",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let samples: usize = parsed
+        .value("samples")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--samples must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(200);
+
+    let delta: f64 = parsed
+        .value("delta")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--delta must be a float in (0, 1)"))
+        })
+        .transpose()?
+        .unwrap_or(0.05);
+
+    let target_risk: f64 = parsed
+        .value("target-risk")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--target-risk must be a float in [0, 1]"))
+        })
+        .transpose()?
+        .unwrap_or(0.12);
+
+    let monitor = PacBayesMonitor::with_config(PacBayesConfig {
+        delta,
+        target_risk,
+        risk_margin: 0.01,
+    })
+    .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let losses: Vec<f64> = if let Some(s) = parsed.value("losses") {
+        s.split(',')
+            .map(|val| {
+                val.trim()
+                    .parse()
+                    .map_err(|_| CliError::usage("invalid float in --losses"))
+            })
+            .collect::<Result<Vec<f64>, CliError>>()?
+    } else {
+        let m = parsed
+            .value("hypotheses")
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| CliError::usage("--hypotheses must be a positive integer"))
+            })
+            .transpose()?
+            .unwrap_or(4);
+        (0..m).map(|i| 0.02 + (i as f64) * 0.04).collect()
+    };
+
+    let gate_report = monitor
+        .run_promotion_gate(&losses, samples)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let direct_cert = if let Some(emp_str) = parsed.value("empirical-risk") {
+        let emp: f64 = emp_str
+            .parse()
+            .map_err(|_| CliError::usage("--empirical-risk must be a float in [0, 1]"))?;
+        let kl: f64 = parsed
+            .value("kl")
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| CliError::usage("--kl must be a non-negative float"))
+            })
+            .transpose()?
+            .unwrap_or(0.5);
+        Some(
+            monitor
+                .certify_risk(emp, samples, kl, delta)
+                .map_err(|e| CliError::usage(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+
+    let human = format!(
+        "PAC-Bayesian Generalization Risk Monitor & Policy Promotion Gate (Theorems 37 & 38):\n  Samples (n): {} | Confidence (1 - delta): {:.2}% | Target Risk: {:.4}\n  Optimal Gibbs Temperature beta*: {:.4}\n  Certified Maurer Risk Bound L_max(Q): {:.4}\n  Risk Margin: {:.4}\n  Gibbs Posterior Q_beta*: {:?}\n  Catoni Generalization Bound: {:.4}\n  Promotion Gate Verdict: {:?}",
+        samples,
+        (1.0 - delta) * 100.0,
+        target_risk,
+        gate_report.optimal_temperature_beta,
+        gate_report.certified_risk_bound,
+        gate_report.risk_margin,
+        gate_report.gibbs_posterior,
+        gate_report.catoni_bound,
+        gate_report.verdict
+    );
+
+    let mut json_val = serde_json::to_value(&gate_report).unwrap_or_else(|_| json!({}));
+    if let (Some(cert), Some(obj)) = (direct_cert, json_val.as_object_mut()) {
+        obj.insert(
+            "direct_certificate".to_string(),
+            serde_json::to_value(cert).unwrap_or_else(|_| json!({})),
+        );
+    }
+
+    Ok(success("runtime pac-bayes", json_val, human))
+}
+
+pub(crate) fn tropical(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "nodes",
+            "topology",
+            "sla-threshold",
+            "matrix",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let nodes: usize = parsed
+        .value("nodes")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--nodes must be an integer >= 2"))
+        })
+        .transpose()?
+        .unwrap_or(4);
+
+    let topology = parsed.value("topology").unwrap_or("pipeline");
+    let sla_threshold: f64 = parsed
+        .value("sla-threshold")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--sla-threshold must be a positive float"))
+        })
+        .transpose()?
+        .unwrap_or(50.0);
+
+    let scheduler = TropicalDagScheduler::new();
+
+    let (adj, is_dag) = if let Some(mat_str) = parsed.value("matrix") {
+        let raw: Vec<Vec<f64>> = serde_json::from_str(mat_str)
+            .map_err(|e| CliError::usage(format!("invalid JSON in --matrix: {e}")))?;
+        (
+            MaxPlusMatrix::from_data(raw).map_err(|e| CliError::usage(e.to_string()))?,
+            false,
+        )
+    } else {
+        match topology {
+            "pipeline" | "dag" => {
+                let mut mat =
+                    MaxPlusMatrix::zero(nodes).map_err(|e| CliError::usage(e.to_string()))?;
+                for i in 0..(nodes.saturating_sub(1)) {
+                    mat.set(i, i + 1, (i as f64 + 1.0) * 10.0)
+                        .map_err(|e| CliError::usage(e.to_string()))?;
+                }
+                (mat, true)
+            }
+            "cycle" | "recurrent" => {
+                let mut mat =
+                    MaxPlusMatrix::zero(nodes).map_err(|e| CliError::usage(e.to_string()))?;
+                for i in 0..nodes {
+                    mat.set(i, (i + 1) % nodes, 8.0)
+                        .map_err(|e| CliError::usage(e.to_string()))?;
+                    mat.set(i, i, 4.0)
+                        .map_err(|e| CliError::usage(e.to_string()))?;
+                }
+                (mat, false)
+            }
+            other => {
+                return Err(CliError::usage(format!(
+                    "unknown topology '{other}'; expected 'pipeline', 'dag', or 'cycle'"
+                )));
+            }
+        }
+    };
+
+    let (makespan, has_positive_cycle, convergence_steps) = if is_dag {
+        match scheduler.compute_kleene_star(&adj) {
+            Ok(star) => (star.critical_path_makespan, false, star.convergence_steps),
+            Err(TropicalError::PositiveCycleDetected { .. }) => (0.0, true, nodes),
+            Err(e) => return Err(CliError::usage(e.to_string())),
+        }
+    } else {
+        (0.0, false, nodes)
+    };
+
+    let karp_opt = scheduler.check_sla_compliance(&adj, sla_threshold).ok();
+
+    let (karp_mean, throughput, sla_satisfied) = if let Some(ref k) = karp_opt {
+        (
+            k.maximum_cycle_mean,
+            k.asymptotic_throughput,
+            k.sla_satisfied,
+        )
+    } else {
+        (0.0, f64::INFINITY, true)
+    };
+
+    let human = format!(
+        "Tropical Max-Plus DAG Calculus & SLA Deadlock Guard (Theorems 39 & 40):\n  Workflow Nodes (|V|): {} | Topology: {}\n  Critical Path Makespan: {:.2} ms (Positive Cycle: {}, Steps: {})\n  Karp Maximum Cycle Mean lambda(G): {:.4} ms/cycle\n  Periodic Pipeline Throughput Theta_max: {:.4} cycles/ms\n  SLA Deadlock Threshold: {:.2} ms | SLA Compliant: {}",
+        nodes,
+        topology,
+        makespan,
+        has_positive_cycle,
+        convergence_steps,
+        karp_mean,
+        throughput,
+        sla_threshold,
+        sla_satisfied
+    );
+
+    let json_data = json!({
+        "nodes": nodes,
+        "topology": topology,
+        "critical_path_makespan": makespan,
+        "has_positive_cycle": has_positive_cycle,
+        "convergence_steps": convergence_steps,
+        "maximum_cycle_mean": karp_mean,
+        "asymptotic_throughput": throughput,
+        "sla_threshold": sla_threshold,
+        "sla_satisfied": sla_satisfied,
+        "karp_details": karp_opt,
+    });
+
+    Ok(success("runtime tropical", json_data, human))
 }
 
 pub(crate) fn scheduler(args: &[String]) -> Result<CommandResult, CliError> {
@@ -1209,6 +1615,143 @@ fn engine_value(engine: &ServiceEngineSummary) -> serde_json::Value {
     })
 }
 
+pub(crate) fn daemon_guard(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "interval-ms",
+            "iterations",
+            "store",
+            "once",
+            "circuit-threshold",
+            "cooldown-secs",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let iterations: usize = if parsed.has_flag("once") {
+        1
+    } else {
+        parsed
+            .value("iterations")
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| CliError::usage("--iterations must be an integer"))
+            })
+            .transpose()?
+            .unwrap_or(1)
+    };
+
+    let interval_ms: u64 = parsed
+        .value("interval-ms")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--interval-ms must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(100);
+
+    let circuit_threshold: u32 = parsed
+        .value("circuit-threshold")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--circuit-threshold must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(3);
+
+    let cooldown_secs: u64 = parsed
+        .value("cooldown-secs")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--cooldown-secs must be an integer"))
+        })
+        .transpose()?
+        .unwrap_or(30);
+
+    let store_path: PathBuf = if let Some(path) = path_option(&parsed, "store") {
+        path
+    } else {
+        let config = load_config_storage(&parsed)?;
+        config.data_dir().join("audit").join("merkle_audit.json")
+    };
+
+    let gateway = GatewayController::new(GatewayConfig {
+        tick_interval_ms: interval_ms,
+        circuit_breaker_threshold: circuit_threshold,
+        cooldown_secs,
+        audit_store_path: store_path.clone(),
+        fallback_provider_map: BTreeMap::new(),
+    });
+
+    let mut tick_reports = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let telemetry = gateway.collect_live_telemetry();
+        let report = gateway
+            .evaluate_telemetry_tick(telemetry)
+            .map_err(|e| CliError::execution(e.to_string(), json!({})))?;
+        tick_reports.push(report);
+        if iterations > 1 && interval_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        }
+    }
+
+    let last_report = tick_reports.last().expect("at least 1 report");
+
+    let human = format!(
+        "Autonomous Self-Healing Daemon Guard (12-Engine Unified Assurance Pipeline):\n\
+         Tick: {} | Timestamp: {}\n\
+         All Invariants Verified: {} (Phases Certified: {}/12)\n\
+         Receipt Digest: {}\n\
+         Circuit Breakers Active: {}\n\
+         Self-Healing Actions Taken: {}\n\
+         Committed to Audit Store: {}\n\
+           Leaf Index: {} | Merkle Root: {}\n\
+           Causal DAG Node ID: {}\n\
+         Verify independently via: pandora audit verify --dag-node {}",
+        last_report.sequence_number,
+        last_report.timestamp_secs,
+        last_report.all_invariants_verified,
+        last_report.receipt.phases_certified,
+        last_report.receipt.receipt_sha256,
+        last_report.active_circuit_breakers.len(),
+        if last_report.self_healing_actions.is_empty() {
+            "None (All engines nominal)".to_string()
+        } else {
+            format!("{:?}", last_report.self_healing_actions)
+        },
+        store_path.display(),
+        last_report.audit_leaf_index,
+        last_report.audit_root_hash,
+        last_report.audit_node_id,
+        last_report.audit_node_id
+    );
+
+    let mut json_data = serde_json::to_value(last_report).unwrap_or_else(|_| json!({}));
+
+    if let Some(map) = json_data.as_object_mut() {
+        map.insert(
+            "receipt_sha256".to_string(),
+            json!(last_report.receipt.receipt_sha256),
+        );
+        map.insert(
+            "phases_certified".to_string(),
+            json!(last_report.receipt.phases_certified),
+        );
+        if tick_reports.len() > 1 {
+            map.insert(
+                "tick_reports".to_string(),
+                serde_json::to_value(&tick_reports).unwrap_or_else(|_| json!([])),
+            );
+        }
+    }
+
+    Ok(success("runtime daemon-guard", json_data, human))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1389,5 +1932,127 @@ mod tests {
 
         let res_kv = execute(&["kv-cache".to_string()]).expect("runtime kv-cache should succeed");
         assert_eq!(res_kv.command, "runtime kv-cache");
+
+        let res_mfg = execute(&["mfg".to_string()]).expect("runtime mfg should succeed");
+        assert_eq!(res_mfg.command, "runtime mfg");
+
+        let res_pac =
+            execute(&["pac-bayes".to_string()]).expect("runtime pac-bayes should succeed");
+        assert_eq!(res_pac.command, "runtime pac-bayes");
+
+        let res_trop = execute(&["tropical".to_string()]).expect("runtime tropical should succeed");
+        assert_eq!(res_trop.command, "runtime tropical");
+    }
+
+    #[test]
+    fn test_runtime_mfg_cli_defaults_and_options() {
+        let res = execute(&[
+            "mfg".to_string(),
+            "--resources".to_string(),
+            "3".to_string(),
+            "--temperature".to_string(),
+            "2.0".to_string(),
+        ])
+        .expect("mfg should succeed");
+        assert_eq!(res.command, "runtime mfg");
+        assert_eq!(res.data["num_resources"], 3);
+        assert!(
+            res.data["fixed_point"]["is_strict_contraction"]
+                .as_bool()
+                .unwrap()
+        );
+        assert!(res.data["poa"]["bound_satisfied"].as_bool().unwrap());
+        let poa = res.data["poa"]["price_of_anarchy"].as_f64().unwrap();
+        assert!(poa <= 4.0 / 3.0 + 1e-4);
+    }
+
+    #[test]
+    fn test_runtime_mfg_validation_errors() {
+        let err1 = execute(&[
+            "mfg".to_string(),
+            "--resources".to_string(),
+            "1".to_string(),
+        ]);
+        assert!(err1.is_err());
+
+        let err2 = execute(&[
+            "mfg".to_string(),
+            "--resources".to_string(),
+            "3".to_string(),
+            "--base-costs".to_string(),
+            "1.0,2.0".to_string(),
+        ]);
+        assert!(err2.is_err());
+    }
+
+    #[test]
+    fn test_runtime_pac_bayes_cli_defaults_and_options() {
+        let res = execute(&[
+            "pac-bayes".to_string(),
+            "--samples".to_string(),
+            "500".to_string(),
+            "--target-risk".to_string(),
+            "0.15".to_string(),
+        ])
+        .expect("pac-bayes should succeed");
+        assert_eq!(res.command, "runtime pac-bayes");
+        assert!(res.data["certified_risk_bound"].as_f64().unwrap() <= 0.15);
+        assert_eq!(res.data["verdict"], "PromoteToProduction");
+    }
+
+    #[test]
+    fn test_runtime_tropical_cli_defaults_and_options() {
+        let res_pipe = execute(&[
+            "tropical".to_string(),
+            "--nodes".to_string(),
+            "4".to_string(),
+            "--topology".to_string(),
+            "pipeline".to_string(),
+        ])
+        .expect("tropical pipeline should succeed");
+        assert_eq!(res_pipe.command, "runtime tropical");
+        assert_eq!(res_pipe.data["nodes"], 4);
+        assert_eq!(res_pipe.data["critical_path_makespan"], 60.0); // 10 + 20 + 30 = 60
+        assert!(!res_pipe.data["has_positive_cycle"].as_bool().unwrap());
+
+        let res_cycle = execute(&[
+            "tropical".to_string(),
+            "--nodes".to_string(),
+            "3".to_string(),
+            "--topology".to_string(),
+            "cycle".to_string(),
+        ])
+        .expect("tropical cycle should succeed");
+        assert_eq!(res_cycle.command, "runtime tropical");
+        assert!(res_cycle.data["sla_satisfied"].as_bool().unwrap());
+        assert!(res_cycle.data["maximum_cycle_mean"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn test_runtime_daemon_guard_cli_once() {
+        let temp_dir = std::env::temp_dir().join(format!("daemon_cli_test_{}", std::process::id()));
+        let store_path = temp_dir.join("merkle_audit.json");
+
+        let res = execute(&[
+            "daemon-guard".to_string(),
+            "--once".to_string(),
+            "--store".to_string(),
+            store_path.display().to_string(),
+        ])
+        .expect("daemon-guard should succeed");
+
+        assert_eq!(res.command, "runtime daemon-guard");
+        assert_eq!(res.data["sequence_number"], 0);
+        assert!(res.data["all_invariants_verified"].as_bool().unwrap());
+        assert_eq!(res.data["phases_certified"], 12);
+        assert!(
+            res.data["receipt_sha256"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(store_path.exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
