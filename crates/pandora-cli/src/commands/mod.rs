@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod approval;
+pub(crate) mod audit;
 mod auth;
 mod backup;
 pub(crate) mod branch;
@@ -197,6 +198,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
     }
     match command {
         "approval" => approval::execute(&args[1..]),
+        "audit" => audit::execute(&args[1..]),
         "auth" => auth::execute(&args[1..]),
         "backup" => backup::execute(&args[1..]),
         "chat" if json_requested => Err(CliError::usage("chat does not support --json")),
@@ -403,6 +405,7 @@ fn is_flag(name: &str) -> bool {
             | "reindex"
             | "no-cache"
             | "quantized"
+            | "simulate"
     )
 }
 

@@ -6,7 +6,9 @@ use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("hardware requires 'probe', 'fit', 'presets', 'roofline', or 'benchmark'")
+        CliError::usage(
+            "hardware requires 'probe', 'fit', 'presets', 'roofline', 'benchmark', 'speculative', or 'kv-cache'",
+        )
     })?;
 
     match subcommand.as_str() {
@@ -15,6 +17,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "presets" => presets(&args[1..]),
         "roofline" => roofline(&args[1..]),
         "benchmark" => benchmark(&args[1..]),
+        "speculative" => super::runtime::speculative_with_cmd(&args[1..], "hardware speculative"),
+        "kv-cache" => super::runtime::kv_cache_with_cmd(&args[1..], "hardware kv-cache"),
         unknown => Err(CliError::usage(format!(
             "unknown hardware command '{unknown}'"
         ))),
@@ -382,4 +386,35 @@ fn benchmark(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         summary,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hardware_speculative_alias() {
+        let result = execute(&[
+            "speculative".to_string(),
+            "--gamma".to_string(),
+            "4".to_string(),
+            "--tokens".to_string(),
+            "32".to_string(),
+        ])
+        .expect("hardware speculative alias should succeed");
+        assert_eq!(result.command, "hardware speculative");
+        assert_eq!(result.data["draft_window_gamma"], 4);
+    }
+
+    #[test]
+    fn test_hardware_kv_cache_alias() {
+        let result = execute(&[
+            "kv-cache".to_string(),
+            "--sessions".to_string(),
+            "4".to_string(),
+        ])
+        .expect("hardware kv-cache alias should succeed");
+        assert_eq!(result.command, "hardware kv-cache");
+        assert_eq!(result.data["active_sessions"], 4);
+    }
 }

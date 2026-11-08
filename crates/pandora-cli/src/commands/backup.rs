@@ -24,7 +24,7 @@ const DEFAULT_PASSPHRASE_ENV: &str = "PANDORA_BACKUP_KEY";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "backup requires 'create', 'inspect', 'restore', 'lifecycle', or 'recovery'",
+            "backup requires 'create', 'inspect', 'restore', 'lifecycle', 'recovery', or 'audit'",
         )
     })?;
     match subcommand.as_str() {
@@ -33,6 +33,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "restore" => restore(&args[1..]),
         "lifecycle" => lifecycle(&args[1..]),
         "recovery" => recovery(&args[1..]),
+        "audit" => super::audit::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown backup command '{unknown}'"
         ))),
