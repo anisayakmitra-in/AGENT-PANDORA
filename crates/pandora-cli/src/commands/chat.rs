@@ -67,7 +67,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     }
 
     let mut state = InteractiveSessionState::new(&parsed);
-    let mut session_id = parsed.value("session").map(str::to_owned);
+    let mut active_run_id = parsed.value("session").map(str::to_owned);
     let mut turns = 0u32;
     let mut pending = None;
     let stdin = io::stdin();
@@ -93,7 +93,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             provider,
             model,
             workspace,
-            session_id.as_deref(),
+            active_run_id.as_deref(),
             true,
         );
         print!("{banner}");
@@ -125,7 +125,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         match input {
             "/exit" | "/quit" => break,
             "/help" => print_help(),
-            "/session" => print_session(session_id.as_deref()),
+            "/session" => print_session(active_run_id.as_deref()),
             "/model" => {
                 let model = state
                     .active_model
@@ -195,7 +195,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 handle_preset_apply(
                     &parsed,
                     &mut state,
-                    &mut session_id,
+                    &mut active_run_id,
                     &mut pending,
                     rest,
                     &mut turns,
@@ -204,7 +204,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "/approve" => resolve_pending(
                 &parsed,
                 &state,
-                &mut session_id,
+                &mut active_run_id,
                 &mut pending,
                 true,
                 &mut turns,
@@ -212,7 +212,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             "/deny" => resolve_pending(
                 &parsed,
                 &state,
-                &mut session_id,
+                &mut active_run_id,
                 &mut pending,
                 false,
                 &mut turns,
@@ -253,7 +253,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
             command if command.starts_with('/') => run_slash(
                 &parsed,
                 &state,
-                &mut session_id,
+                &mut active_run_id,
                 &mut pending,
                 command,
                 None,
@@ -263,7 +263,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
                 run_task(
                     &parsed,
                     &state,
-                    &mut session_id,
+                    &mut active_run_id,
                     &mut pending,
                     task,
                     None,
@@ -276,7 +276,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     Ok(success(
         "chat",
         json!({
-            "session_id": session_id,
+            "session_id": active_run_id,
             "status": "closed",
             "turns": turns,
         }),
@@ -768,9 +768,9 @@ fn print_help() {
     println!("Any other line is sent as a bounded agent task.");
 }
 
-fn print_session(session_id: Option<&str>) {
-    match session_id {
-        Some(session_id) => println!("session: {session_id}"),
+fn print_session(active_run_id: Option<&str>) {
+    match active_run_id {
+        Some(active_run_id) => println!("session: {active_run_id}"),
         None => println!("session: not started"),
     }
 }

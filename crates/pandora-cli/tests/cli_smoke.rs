@@ -9095,7 +9095,7 @@ fn package_download_verifies_one_exact_release_without_admission_or_enablement()
 
     let fixture = Fixture::new();
     let registry = format!("http://{address}");
-    let trusted = fixture
+    let root_added = fixture
         .command(&[
             "package",
             "trust-root",
@@ -9110,7 +9110,7 @@ fn package_download_verifies_one_exact_release_without_admission_or_enablement()
         ])
         .output()
         .expect("publisher trust setup should start");
-    assert_success_with_context(&trusted, "package trust-root add");
+    assert_success_with_context(&root_added, "package trust-root add");
     let configured = fixture
         .command(&[
             "registry",

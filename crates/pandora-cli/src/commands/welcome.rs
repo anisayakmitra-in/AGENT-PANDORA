@@ -4,7 +4,7 @@ pub fn render_welcome_banner(
     provider: Option<&str>,
     model: Option<&str>,
     workspace: &Path,
-    session_id: Option<&str>,
+    active_run_id: Option<&str>,
     is_color: bool,
 ) -> String {
     let purple = if is_color {
@@ -40,7 +40,7 @@ pub fn render_welcome_banner(
     let model_display = truncate_str(model.unwrap_or("unconfigured"), 20);
     let provider_display = truncate_str(provider.unwrap_or("none"), 18);
     let workspace_str = truncate_str(&workspace.display().to_string(), 34);
-    let session_display = truncate_str(session_id.unwrap_or("active"), 25);
+    let run_display = truncate_str(active_run_id.unwrap_or("active"), 25);
 
     let logo = format!(
         "{purple}{bold}\
@@ -73,7 +73,7 @@ pub fn render_welcome_banner(
 {violet}│{reset}                                                                                                                      {violet}│{reset}\n\
 {violet}│{reset}  {bold}{model_display}{reset} · {provider_display:<18}   {muted}reasoning:{reset} system1_reflex + system2_lats (mcts)                                    {violet}│{reset}\n\
 {violet}│{reset}  {muted}{workspace_str:<34}{reset}   {muted}crypto:{reset} argon2id + xchacha20poly1305 vault                                         {violet}│{reset}\n\
-{violet}│{reset}  {muted}Session: {session_display:<25}{reset}                                                                                 {violet}│{reset}\n\
+{violet}│{reset}  {muted}Session: {run_display:<25}{reset}                                                                                 {violet}│{reset}\n\
 {violet}│{reset}                                   {bold}23 tools · 14 presets · /help for commands · Ctrl+M for model picker{reset}               {violet}│{reset}\n\
 {violet}╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯{reset}"
     );

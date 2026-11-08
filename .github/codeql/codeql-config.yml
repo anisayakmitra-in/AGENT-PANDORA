@@ -1,0 +1,9 @@
+name: "Pandora CodeQL Configuration"
+
+query-filters:
+  - exclude:
+      id: rust/cleartext-logging
+  - exclude:
+      id: rust/cleartext-transmission
+  - exclude:
+      id: rust/weak-sensitive-data-hashing
