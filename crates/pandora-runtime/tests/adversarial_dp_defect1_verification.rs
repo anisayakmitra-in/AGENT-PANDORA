@@ -6,7 +6,7 @@
 //! - Adversary resistance against reservation lifecycle race conditions and boundary exploitation
 
 use pandora_runtime::privacy_budget::{
-    order_to_key, DistributedPrivacyTracker, PrivacyAccountantError, PrivacyExpenditure, RdpBudget,
+    DistributedPrivacyTracker, PrivacyAccountantError, PrivacyExpenditure, RdpBudget, order_to_key,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier, Mutex};
@@ -37,7 +37,10 @@ fn test_empirical_zero_budget_tail_bound_invariants() {
             .optimal_order_for_delta(delta)
             .expect("valid delta must compute optimal order");
         assert_eq!(opt_eps, 0.0, "optimal eps must be 0.0 at delta={delta}");
-        assert_eq!(opt_alpha, 2.0, "optimal alpha must default to 2.0 for empty budget");
+        assert_eq!(
+            opt_alpha, 2.0,
+            "optimal alpha must default to 2.0 for empty budget"
+        );
 
         let (approx_eps, approx_delta) = zero_budget
             .to_approx_dp(delta)
@@ -441,7 +444,10 @@ fn test_empirical_zero_budget_composition_and_agent_consistency() {
         };
 
         let eps = tracker.record_expenditure(exp).unwrap();
-        assert_eq!(eps, 0.0, "recording zero expenditure must keep global eps at 0.0");
+        assert_eq!(
+            eps, 0.0,
+            "recording zero expenditure must keep global eps at 0.0"
+        );
     }
 
     // Global budget utilization is still 0

@@ -295,10 +295,7 @@ fn test_adv_dp_zero_budget_discretization_anomaly() {
 
     // 3. can_admit_query admits zero-cost query
     let can_admit_zero = tracker.can_admit_query(&RdpBudget::zero()).unwrap();
-    assert!(
-        can_admit_zero,
-        "can_admit_query admits zero budget queries"
-    );
+    assert!(can_admit_zero, "can_admit_query admits zero budget queries");
 }
 
 /// Adversarial stress-test: multi-agent concurrent reservation and commit/rollback cycles.
