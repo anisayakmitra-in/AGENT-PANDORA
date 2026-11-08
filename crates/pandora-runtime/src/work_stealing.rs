@@ -509,14 +509,31 @@ impl WorkStealingScheduler {
                         backoffs[w].record_success();
                     } else if num_workers > 1 {
                         // Step 2: Help-first remote steal_top from random victim
-                        total_steals_attempted += 1;
-                        if let Some(stolen_task) = self.steal(w, &mut prngs[w]) {
-                            total_steals_succeeded += 1;
-                            let finish = current_time + stolen_task.weight_cost;
-                            worker_slots[w] = Some((stolen_task, finish));
-                            backoffs[w].record_success();
-                        } else {
-                            backoffs[w].record_failure();
+                        // Allow idle workers to retry stealing (up to 3 * num_workers attempts
+                        // while stealable tasks exist in the system) per scheduling round.
+                        // This guarantees the balls-into-bins probability bounds from Theorem 21 Step 3.
+                        let max_retries = (3 * num_workers).max(64);
+                        for attempt in 0..max_retries {
+                            if attempt > 0 {
+                                let has_stealable = self
+                                    .deques
+                                    .iter()
+                                    .enumerate()
+                                    .any(|(idx, d)| idx != w && !d.is_empty());
+                                if !has_stealable {
+                                    break;
+                                }
+                            }
+                            total_steals_attempted += 1;
+                            if let Some(stolen_task) = self.steal(w, &mut prngs[w]) {
+                                total_steals_succeeded += 1;
+                                let finish = current_time + stolen_task.weight_cost;
+                                worker_slots[w] = Some((stolen_task, finish));
+                                backoffs[w].record_success();
+                                break;
+                            } else {
+                                backoffs[w].record_failure();
+                            }
                         }
                     }
                 }

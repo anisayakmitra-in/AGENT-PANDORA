@@ -13,7 +13,7 @@
 
 use crate::bandit_router::SafePrng;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// Standard evaluation grid of Rényi orders $\alpha > 1$.
@@ -278,7 +278,7 @@ impl RdpBudget {
         if delta <= 0.0 || delta >= 1.0 || delta.is_nan() {
             return Err(PrivacyAccountantError::InvalidDelta(delta));
         }
-        if self.values.is_empty() {
+        if self.is_empty() {
             return Ok(0.0);
         }
 
@@ -310,6 +310,9 @@ impl RdpBudget {
     ) -> Result<(f64, f64), PrivacyAccountantError> {
         if delta <= 0.0 || delta >= 1.0 || delta.is_nan() {
             return Err(PrivacyAccountantError::InvalidDelta(delta));
+        }
+        if self.is_empty() {
+            return Ok((2.0, 0.0));
         }
         let log_inv_delta = (1.0 / delta).ln();
         let mut best_alpha = 2.0;
@@ -417,6 +420,8 @@ pub struct DistributedPrivacyTracker {
     pub agent_allocations: BTreeMap<String, RdpBudget>,
     /// Immutable audit ledger of committed privacy transactions.
     pub ledger: Vec<PrivacyExpenditure>,
+    /// Set of historical reservation IDs that have already been committed.
+    pub committed_reservations: BTreeSet<String>,
     /// Monotonic counter used for unique reservation IDs.
     reservation_counter: u64,
 }
@@ -441,6 +446,7 @@ impl DistributedPrivacyTracker {
             active_reservations: BTreeMap::new(),
             agent_allocations: BTreeMap::new(),
             ledger: Vec::new(),
+            committed_reservations: BTreeSet::new(),
             reservation_counter: 0,
         })
     }
@@ -520,6 +526,12 @@ impl DistributedPrivacyTracker {
         &mut self,
         reservation_id: &str,
     ) -> Result<f64, PrivacyAccountantError> {
+        if self.committed_reservations.contains(reservation_id) {
+            return Err(PrivacyAccountantError::ReservationAlreadyCommitted(
+                reservation_id.to_string(),
+            ));
+        }
+
         let mut res = self
             .active_reservations
             .remove(reservation_id)
@@ -527,13 +539,9 @@ impl DistributedPrivacyTracker {
                 PrivacyAccountantError::ReservationNotFound(reservation_id.to_string())
             })?;
 
-        if res.committed {
-            return Err(PrivacyAccountantError::ReservationAlreadyCommitted(
-                reservation_id.to_string(),
-            ));
-        }
-
         res.committed = true;
+        self.committed_reservations
+            .insert(reservation_id.to_string());
         self.cumulative_budget
             .compose_in_place(&res.reserved_budget);
         self.agent_allocations
