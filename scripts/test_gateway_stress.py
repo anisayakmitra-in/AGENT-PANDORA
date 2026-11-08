@@ -32,7 +32,7 @@ from pandora_bridge import GatewayHttpWebhookServer, PandoraClient
 
 class MockPandoraClient:
     def doctor(self):
-        return {"command": "doctor", "healthy": True, "version": "3.0.5"}
+        return {"command": "doctor", "healthy": True, "version": "3.0.6"}
 
     def list_tools(self):
         return {"command": "tool list", "details": {"tools": ["workspace.read"]}}

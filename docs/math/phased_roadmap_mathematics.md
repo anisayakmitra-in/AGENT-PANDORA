@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.5  
+**Version:** AGENT-PANDORA v3.0.6  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -400,7 +400,60 @@ $\blacksquare$
 
 ---
 
-## 15. Comprehensive Roadmap Summary Matrix (Phases 1–14)
+## 15. Phase 15: Conformal Prediction & Distribution-Free Uncertainty Calibration
+
+### 15.1 Finite-Sample Exchangeable Marginal Coverage Guarantee
+
+**Theorem 29 (Split Conformal Order-Statistic Coverage Bound):**  
+*For $n$ exchangeable calibration scores $S_1, \dots, S_n$ and test score $S_{n+1}$ at miscoverage rate $\alpha \in (0, 1)$, setting rank $k = \lceil (n + 1)(1 - \alpha) \rceil$ and $\widehat{q}_{1-\alpha} = S_{(k)}$ guarantees finite-sample marginal coverage:*
+$$1 - \alpha \le \mathbb{P}\left(Y_{n+1} \in \widehat{C}_\alpha(X_{n+1})\right) \le 1 - \alpha + \frac{1}{n + 1}$$
+
+### 15.2 Gibbs-Candès Adaptive Conformal Inference (ACI) under Distribution Shift
+
+**Theorem 30 (ACI Deterministic Long-Run Coverage Convergence):**  
+*Under arbitrary non-exchangeable or adversarial distribution shift, the online update $\alpha_{t+1} = \alpha_t + \gamma(\alpha - \mathrm{err}_t)$ with step size $\gamma > 0$ satisfies $\alpha_t \in [-\gamma, 1 + \gamma]$ and deterministic finite-horizon coverage convergence:*
+$$\left|\frac{1}{T}\sum_{t=1}^T \mathrm{err}_t - \alpha\right| \le \frac{\max(\alpha_1, 1 - \alpha_1) + \gamma}{T \gamma} \xrightarrow{T \to \infty} 0$$
+- **Reference**: Detailed proofs documented in `docs/math/phase15_conformal_calibration.md`.  
+$\blacksquare$
+
+---
+
+## 16. Phase 16: Spectral Graph Partitioning & Algebraic Connectivity for Multi-Agent Topology
+
+### 16.1 Courant-Fischer Variational Characterization of the Fiedler Value
+
+**Theorem 31 (Graph Laplacian Quadratic Form & Algebraic Connectivity):**  
+*For an undirected weighted graph $G = (V, E, w)$ with Laplacian $L = D - A$, the quadratic form satisfies $x^\top L x = \sum_{\{u,v\} \in E} w_{uv}(x_u - x_v)^2 \ge 0$, and the Fiedler value $\lambda_2(L) = \min_{x \perp \mathbf{1}, x \ne 0} \frac{x^\top L x}{x^\top x}$ satisfies $\lambda_2(L) > 0 \iff G \text{ is connected}$.*
+
+### 16.2 Cheeger's Inequality & Fiedler Sweep-Cut Conductance Bound
+
+**Theorem 32 (Cheeger's Inequality for Multi-Agent Bottleneck Certification):**  
+*Let $\nu_2 = \lambda_2(\mathcal{L}_{\mathrm{sym}})$ be the second-smallest eigenvalue of the normalized Laplacian $\mathcal{L}_{\mathrm{sym}} = I - D^{-1/2} A D^{-1/2}$ and $h(G) = \min_{\emptyset \subset S \subset V} \frac{\mathrm{cut}(S, \bar{S})}{\min(\mathrm{vol}(S), \mathrm{vol}(\bar{S}))}$ be the graph conductance. Then:*
+$$\frac{\nu_2}{2} \le h(G) \le \phi_{\mathrm{sweep}} \le \sqrt{2 \nu_2}$$
+- **Reference**: Detailed proofs documented in `docs/math/phase16_spectral_topology.md`.  
+$\blacksquare$
+
+---
+
+## 17. Phase 17: Exp3 / Hedge Adversarial Multi-Armed Bandit Tool & Prompt Selector
+
+### 17.1 Unbiased Importance-Weighted Reward Estimator & Second-Moment Bound
+
+**Theorem 33 (Importance-Weighted Estimator Unbiasedness & Variance Control):**  
+*Under mixed sampling $p_{i,t} = (1 - \gamma)\frac{w_{i,t}}{W_t} + \frac{\gamma}{K}$, the estimator $\hat{r}_{i,t} = \frac{r_{i,t}\mathbf{1}\{I_t = i\}}{p_{i,t}}$ satisfies $\mathbb{E}_{I_t \sim p_t}[\hat{r}_{i,t} \mid \mathcal{F}_{t-1}] = r_{i,t}$ and $\mathbb{E}_{I_t \sim p_t}[\hat{r}_{i,t}^2 \mid \mathcal{F}_{t-1}] = \frac{r_{i,t}^2}{p_{i,t}} \le \frac{r_{i,t}}{p_{i,t}} \le \frac{K}{\gamma}$.*
+
+### 17.2 Auer et al. Exp3 Non-Stochastic Minimax Regret Bound
+
+**Theorem 34 (Adversarial Multi-Armed Bandit Minimax Regret):**  
+*With log-weight update $\ln w_{i,t+1} = \ln w_{i,t} + \eta \hat{r}_{i,t}$ ($\eta = \gamma / K$) and $\gamma = \min\bigl(1, \sqrt{\frac{K \ln K}{(e - 1)T}}\bigr)$, expected regret against any oblivious adversary is bounded by:*
+$$\mathbb{E}[R_T] = \max_{j \in [K]} \sum_{t=1}^T r_{j,t} - \mathbb{E}\!\left[\sum_{t=1}^T r_{I_t, t}\right] \le 2\sqrt{(e - 1) T K \ln K}$$
+- **Reference**: Detailed proofs documented in `docs/math/phase17_adversarial_bandit.md`.  
+$\blacksquare$
+
+---
+
+## 18. Comprehensive Roadmap Summary Matrix (Phases 1–17)
+
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -418,6 +471,6 @@ $\blacksquare$
 | **12** | Byzantine Consensus Aggregator | Trimmed Mean & $(n,f)$-Krum cone bound | Breakdown $f < n/2$, Krum $2f + 2 < n$ | `byzantine_aggregator.rs` | `tests/phase12_14_math_tests.rs` |
 | **13** | Optimal Transport Drift Detector | Birkhoff-Hopf Sinkhorn contraction | $\kappa < 1$, $S_\varepsilon(\mu, \mu) = 0$, $S_\varepsilon(\mu, \nu) \ge 0$ | `wasserstein_drift.rs` | `tests/phase12_14_math_tests.rs` |
 | **14** | Martingale Canary Gate | Ville's inequality & mixture CS | $\mathbb{P}_{H_0}(\exists t : E_t \ge 1/\alpha) \le \alpha$, $r_t = O(\sqrt{\ln t / t})$ | `martingale_gate.rs` | `tests/phase12_14_math_tests.rs` |
-
-
-
+| **15** | Conformal Calibrator | Exchangeable quantile & ACI update | $\mathbb{P}(Y \in \widehat{C}_\alpha) \ge 1 - \alpha$, ACI $O(1/(T\gamma))$ | `conformal_calibrator.rs` | `tests/phase15_17_math_tests.rs` |
+| **16** | Spectral Topology Analyzer | Fiedler $\lambda_2(L)$ & Cheeger bound | $\nu_2/2 \le h(G) \le \sqrt{2\nu_2}$ | `spectral_topology.rs` | `tests/phase15_17_math_tests.rs` |
+| **17** | Exp3 Adversarial Bandit | Importance-weighted log-Hedge | $\mathbb{E}[R_T] \le 2\sqrt{(e-1)TK\ln K}$ | `adversarial_bandit.rs` | `tests/phase15_17_math_tests.rs` |

@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.0.6
+
+### Phases 15-17 Mathematical Runtime & Governance Frontier (Theorems 29-34) & Unified Assurance Pipeline
+- **Phase 15 Conformal Prediction & Distribution-Free Uncertainty Calibration (`crates/pandora-runtime/src/conformal_calibrator.rs`, `docs/math/phase15_conformal_calibration.md`)**:
+  - Split Conformal Prediction order-statistic rank calibration ($k = \lceil (n+1)(1-\alpha) \rceil$) with finite-sample marginal coverage guarantee $1 - \alpha \le \Pr(Y_{n+1} \in \widehat{C}_\alpha(X_{n+1})) \le 1 - \alpha + 1/(n+1)$ (Theorem 29) and Gibbs-Candès Adaptive Conformal Inference (ACI) online miscoverage tracking $\alpha_{t+1} = \alpha_t + \gamma(\alpha - \mathrm{err}_t)$ with deterministic $O(1/(T\gamma))$ long-run coverage convergence under arbitrary distribution shift (Theorem 30) via `pandora runtime conformal`.
+- **Phase 16 Spectral Graph Partitioning & Algebraic Connectivity (`crates/pandora-runtime/src/spectral_topology.rs`, `docs/math/phase16_spectral_topology.md`)**:
+  - Unnormalized ($L = D - A$) and symmetric normalized ($\mathcal{L}_{\mathrm{sym}} = I - D^{-1/2} A D^{-1/2}$) Graph Laplacian spectral analysis computing the Fiedler value $\lambda_2(L)$ via deflated shifted power iteration (Theorem 31) and certifying multi-agent communication bottlenecks via Cheeger's Inequality $\nu_2/2 \le h(G) \le \phi_{\mathrm{sweep}} \le \sqrt{2\nu_2}$ (Theorem 32) via `pandora runtime topology`.
+- **Phase 17 Exp3 / Hedge Adversarial Multi-Armed Bandit Router (`crates/pandora-runtime/src/adversarial_bandit.rs`, `docs/math/phase17_adversarial_bandit.md`)**:
+  - Log-domain stabilized Exp3 non-stochastic bandit router with unbiased importance-weighted reward estimation $\mathbb{E}[\hat{r}_{i,t} \mid \mathcal{F}_{t-1}] = r_{i,t}$ (Theorem 33) and minimax expected regret upper bound $\mathbb{E}[R_T] \le 2\sqrt{(e-1)TK\ln K}$ (Theorem 34) via `pandora runtime bandit`.
+- **Unified Mathematical Assurance Receipt Pipeline (`crates/pandora-runtime/src/assurance_receipt.rs`)**:
+  - End-to-end self-certifying cryptographic + statistical assurance receipt (`UnifiedAssuranceReceipt`) across all 9 advanced mathematical runtime engines (Phases 9–17, Theorems 17–34) committed via SHA-256 (`pandora runtime assurance`).
+- **Security & CI Hardening**:
+  - Updated `rustls` to `0.23.46` in `fuzz/Cargo.lock`, configured `.github/codeql/codeql-config.yml`, and eliminated APFS `fsync` timing variance in large-corpus diff-cache tests.
+
 ## v3.0.5
 
 ### Phase 6-14 CLI Subcommand Wiring & Next-Generation Mathematical Roadmap (Phases 9-14)

@@ -508,7 +508,7 @@ mod tests {
             "--output".to_string(),
             temp_dir.to_str().unwrap().to_string(),
             "--version".to_string(),
-            "3.0.5".to_string(),
+            "3.0.6".to_string(),
         ];
         let result = execute(&args).expect("manifest generation should succeed");
         assert!(

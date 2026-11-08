@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, and `v3.0.5`. The active release identity
-is `v3.0.5`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, and `v3.0.6`. The active release identity
+is `v3.0.6`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.6
+
+This release implements Phases 15 through 17 of the mathematical runtime and governance roadmap (Split and Adaptive Conformal Prediction uncertainty calibration, Spectral Graph Laplacian Fiedler algebraic connectivity and Cheeger conductance certification, and Log-Domain Exp3 adversarial multi-armed bandit routing) along with the Unified Mathematical Assurance Receipt pipeline (`pandora runtime conformal|topology|bandit|assurance`) backed by 34 formal theorems across 17 phases in `docs/math/`.
 
 ## v3.0.5
 

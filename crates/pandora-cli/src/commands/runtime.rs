@@ -1,6 +1,13 @@
 use super::parse_options;
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::RuntimeService;
+use pandora_runtime::adversarial_bandit::Exp3AdversarialBandit;
+use pandora_runtime::assurance_receipt::UnifiedAssuranceReceipt;
+use pandora_runtime::conformal_calibrator::{
+    AdaptiveConformalTracker, CandidateAction, SplitConformalCalibrator,
+};
+use pandora_runtime::spectral_topology::{SpectralTopologyAnalyzer, WeightedEdge};
+
 use pandora_runtime::byzantine_aggregator::{
     AgentVectorUpdate, AggregationRule, ByzantineAggregator,
 };
@@ -25,8 +32,12 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some("byzantine") => byzantine(&args[1..]),
         Some("drift") | Some("wasserstein") => drift(&args[1..]),
         Some("canary-gate") | Some("martingale") => canary_gate(&args[1..]),
+        Some("conformal") => conformal(&args[1..]),
+        Some("topology") | Some("spectral") => topology(&args[1..]),
+        Some("bandit") | Some("exp3") => bandit(&args[1..]),
+        Some("assurance") | Some("assurance-receipt") => assurance(&args[1..]),
         Some(unknown) if !unknown.starts_with('-') => Err(CliError::usage(format!(
-            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', or 'canary-gate'"
+            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', 'canary-gate', 'conformal', 'topology', 'bandit', or 'assurance'"
         ))),
         _ => engines(args),
     }
@@ -325,6 +336,280 @@ pub(crate) fn canary_gate(args: &[String]) -> Result<CommandResult, CliError> {
     Ok(success(
         "runtime canary-gate",
         serde_json::to_value(&snap).unwrap_or_else(|_| json!({})),
+        human,
+    ))
+}
+
+pub(crate) fn conformal(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "samples",
+            "alpha",
+            "gamma",
+            "steps",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let samples: usize = parsed
+        .value("samples")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--samples must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(99);
+    let alpha: f64 = parsed
+        .value("alpha")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--alpha must be in (0, 1)"))
+        })
+        .transpose()?
+        .unwrap_or(0.10);
+    let gamma: f64 = parsed
+        .value("gamma")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--gamma must be in (0, 1]"))
+        })
+        .transpose()?
+        .unwrap_or(0.05);
+    let steps: usize = parsed
+        .value("steps")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--steps must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(200);
+
+    let scores: Vec<f64> = (1..=samples).map(|i| i as f64 / (samples as f64)).collect();
+    let calibrator = SplitConformalCalibrator::calibrate(&scores, alpha)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+    let summary = calibrator.summary();
+    let pred = calibrator
+        .predict_set(&[
+            CandidateAction {
+                action_id: "safe_tool_call".to_owned(),
+                nonconformity_score: 0.25,
+            },
+            CandidateAction {
+                action_id: "uncertain_mutation".to_owned(),
+                nonconformity_score: 0.96,
+            },
+        ])
+        .map_err(|e| CliError::usage(e.to_string()))?;
+
+    let mut aci =
+        AdaptiveConformalTracker::new(alpha, gamma).map_err(|e| CliError::usage(e.to_string()))?;
+    for t in 0..steps {
+        let q_t = calibrator.quantile_for_alpha(aci.status().current_alpha_t);
+        let test_s = if t % 5 == 0 { 0.95 } else { 0.45 };
+        aci.observe_step(test_s > q_t);
+    }
+    let aci_status = aci.status();
+
+    let human = format!(
+        "Conformal Prediction & ACI Uncertainty Calibrator (Theorems 29 & 30):\n  Calibration Size (n): {samples} | Target Alpha: {alpha:.4} | Rank (k): {}\n  Conformal Quantile q_hat: {:.4} | Marginal Coverage Bound: [{:.4}, {:.4}]\n  Prediction Set: {:?} (Verdict: {:?})\n  ACI Online Steps (T): {steps} | Empirical Coverage: {:.4} | Bound Verified: {}",
+        summary.order_statistic_rank,
+        summary.quantile_threshold,
+        summary.marginal_coverage_lower_bound,
+        summary.marginal_coverage_upper_bound,
+        pred.prediction_set,
+        pred.verdict,
+        aci_status.empirical_coverage_rate,
+        aci_status.within_theoretical_bound
+    );
+
+    Ok(success(
+        "runtime conformal",
+        json!({
+            "calibration": summary,
+            "prediction": pred,
+            "aci_status": aci_status,
+        }),
+        human,
+    ))
+}
+
+pub(crate) fn topology(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "nodes",
+            "bridge-weight",
+            "threshold",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let nodes: usize = parsed
+        .value("nodes")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--nodes must be an integer >= 2"))
+        })
+        .transpose()?
+        .unwrap_or(6);
+    if nodes < 2 {
+        return Err(CliError::usage("--nodes must be at least 2"));
+    }
+    let bridge_weight: f64 = parsed
+        .value("bridge-weight")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--bridge-weight must be > 0"))
+        })
+        .transpose()?
+        .unwrap_or(1.0);
+    let threshold: f64 = parsed
+        .value("threshold")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--threshold must be in (0, 1)"))
+        })
+        .transpose()?
+        .unwrap_or(0.20);
+
+    let mid = nodes / 2;
+    let mut edges = Vec::new();
+    for u in 0..mid {
+        for v in (u + 1)..mid {
+            edges.push(WeightedEdge { u, v, weight: 1.0 });
+        }
+    }
+    for u in mid..nodes {
+        for v in (u + 1)..nodes {
+            edges.push(WeightedEdge { u, v, weight: 1.0 });
+        }
+    }
+    edges.push(WeightedEdge {
+        u: mid.saturating_sub(1),
+        v: mid,
+        weight: bridge_weight,
+    });
+
+    let analyzer = SpectralTopologyAnalyzer::new(nodes, edges, threshold)
+        .map_err(|e| CliError::usage(e.to_string()))?;
+    let report = analyzer.analyze();
+
+    let human = format!(
+        "Spectral Graph Topology & Algebraic Connectivity (Theorems 31 & 32):\n  Nodes (|V|): {} | Edges (|E|): {} | Fiedler Value lambda_2(L): {:.6}\n  Normalized Fiedler nu_2(L_sym): {:.6} | Sweep Conductance h(G): {:.6}\n  Cheeger Bounds: [{:.6}, {:.6}] (Verified: {})\n  Spectral Bisection: {:?} | {:?}\n  Verdict: {:?}",
+        report.node_count,
+        report.edge_count,
+        report.fiedler_value_unnormalized,
+        report.fiedler_value_normalized,
+        report.sweep_cut_conductance,
+        report.cheeger_lower_bound,
+        report.cheeger_upper_bound,
+        report.cheeger_inequality_verified,
+        report.partition_left,
+        report.partition_right,
+        report.verdict
+    );
+
+    Ok(success(
+        "runtime topology",
+        serde_json::to_value(&report).unwrap_or_else(|_| json!({})),
+        human,
+    ))
+}
+
+pub(crate) fn bandit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "arms",
+            "horizon",
+            "gamma",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let k: usize = parsed
+        .value("arms")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--arms must be an integer >= 2"))
+        })
+        .transpose()?
+        .unwrap_or(3);
+    let horizon: usize = parsed
+        .value("horizon")
+        .map(|s| {
+            s.parse()
+                .map_err(|_| CliError::usage("--horizon must be a positive integer"))
+        })
+        .transpose()?
+        .unwrap_or(200);
+
+    let arm_ids: Vec<String> = (0..k).map(|i| format!("route_arm_{i}")).collect();
+    let mut exp3 = if let Some(g_str) = parsed.value("gamma") {
+        let g: f64 = g_str
+            .parse()
+            .map_err(|_| CliError::usage("--gamma must be in (0, 1]"))?;
+        Exp3AdversarialBandit::new(arm_ids, g).map_err(|e| CliError::usage(e.to_string()))?
+    } else {
+        Exp3AdversarialBandit::with_horizon(arm_ids, horizon)
+            .map_err(|e| CliError::usage(e.to_string()))?
+    };
+
+    for t in 0..horizon {
+        let u = ((t as f64 + 1.0) * 0.372_583_002).fract();
+        let (chosen, _, _) = exp3
+            .select_arm(u)
+            .map_err(|e| CliError::usage(e.to_string()))?;
+        let reward = if chosen == 0 { 0.85 } else { 0.35 };
+        exp3.update_reward(chosen, reward)
+            .map_err(|e| CliError::usage(e.to_string()))?;
+    }
+    let status = exp3.status();
+
+    let human = format!(
+        "Exp3 Adversarial Multi-Armed Bandit Router (Theorems 33 & 34):\n  Arms (K): {} | Horizon (T): {} | Exploration gamma: {:.4} (eta: {:.4})\n  Cumulative Observed Reward: {:.2} | Minimax Regret Upper Bound: {:.2}",
+        status.num_arms,
+        status.rounds_elapsed,
+        status.gamma,
+        status.eta,
+        status.cumulative_observed_reward,
+        status.minimax_regret_upper_bound
+    );
+
+    Ok(success(
+        "runtime bandit",
+        serde_json::to_value(&status).unwrap_or_else(|_| json!({})),
+        human,
+    ))
+}
+
+pub(crate) fn assurance(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["run-id", "config", "data-dir", "workspace", "json"])?;
+    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.6");
+    let receipt =
+        UnifiedAssuranceReceipt::generate(run_id).map_err(|e| CliError::execution(e, json!({})))?;
+
+    let human = format!(
+        "Unified Mathematical Assurance Receipt (Phases 9-17, Theorems 17-34):\n  Run ID: {}\n  Phases Certified: {}/9 | All Invariants Verified: {}\n  Receipt Digest: {}",
+        receipt.run_id,
+        receipt.phases_certified,
+        receipt.all_invariants_verified,
+        receipt.receipt_sha256
+    );
+
+    Ok(success(
+        "runtime assurance",
+        serde_json::to_value(&receipt).unwrap_or_else(|_| json!({})),
         human,
     ))
 }

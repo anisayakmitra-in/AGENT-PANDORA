@@ -2,16 +2,19 @@
 
 pub mod a2a_engine;
 pub mod adaptive_engine;
+pub mod adversarial_bandit;
 pub mod agent_loop;
 pub mod approvals;
 pub mod arch_simd;
 pub mod artifact_catalog;
+pub mod assurance_receipt;
 pub mod bandit_router;
 pub mod blaze_adapter;
 pub mod byzantine_aggregator;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
+pub mod conformal_calibrator;
 pub mod connector_engine;
 pub mod containment;
 pub mod content_guard;
@@ -87,6 +90,7 @@ pub mod sessions;
 pub mod shadow_council;
 pub mod skill_engine;
 pub mod society_engine;
+pub mod spectral_topology;
 pub mod speculative_decoding;
 pub mod storage_lifecycle;
 pub mod strategies;
@@ -109,6 +113,9 @@ mod test_support;
 
 pub use a2a_engine::A2aEngine;
 pub use adaptive_engine::{AdaptationResult, AdaptiveEngine, AdaptiveError};
+pub use adversarial_bandit::{
+    AdversarialBanditError, Exp3AdversarialBandit, Exp3ArmState, Exp3BanditStatus,
+};
 pub use agent_loop::{
     AgentApprovalContext, AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentLoop,
     AgentLoopError, AgentRunControl, AgentRunRequest, AgentRunSummary, MAX_AGENT_TOOL_CALLS,
@@ -124,6 +131,7 @@ pub use arch_simd::{
     simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128, student_t_critical_value_95,
 };
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
+pub use assurance_receipt::{PhaseCertificate, UnifiedAssuranceReceipt};
 pub use bandit_router::{
     BanditArm, BanditModelRouter, BanditStrategy, RoutingContext, RoutingReward, SafePrng,
 };
@@ -143,6 +151,11 @@ pub use composition_ledger::{
 };
 pub use config::{
     ConfigOverrides, McpAuthType, McpHttpConfig, McpOAuthConfig, McpServerTarget, RuntimeConfig,
+};
+pub use conformal_calibrator::{
+    AdaptiveConformalStatus, AdaptiveConformalTracker, CandidateAction,
+    ConformalCalibrationSummary, ConformalError, ConformalGovernanceVerdict,
+    ConformalPredictionReport, SplitConformalCalibrator,
 };
 pub use connector_engine::{ConnectorEngine, ConnectorError};
 pub use containment::shipped_executor_containment;
@@ -355,6 +368,10 @@ pub use skill_engine::{
     SkillState,
 };
 pub use society_engine::SocietyEngine;
+pub use spectral_topology::{
+    SpectralTopologyAnalyzer, SpectralTopologyError, SpectralTopologyReport, TopologyVerdict,
+    WeightedEdge,
+};
 pub use speculative_decoding::{
     DraftVerificationResult, RadixKvCache, RadixKvNode, SpeculativeEngine, TokenProbability,
 };

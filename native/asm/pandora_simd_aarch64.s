@@ -1,6 +1,6 @@
 /*
  * pandora_simd_aarch64.s
- * Pure ARM64 (AArch64) NEON Vector Assembly Implementation for AGENT-PANDORA v3.0.5.
+ * Pure ARM64 (AArch64) NEON Vector Assembly Implementation for AGENT-PANDORA v3.0.6.
  *
  * Architecture Parity:
  * Matches AVX2 256-bit engine throughput on Linux AArch64 and Apple Silicon macOS (Mach-O).
