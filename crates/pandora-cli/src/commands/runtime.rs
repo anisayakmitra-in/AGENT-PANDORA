@@ -46,8 +46,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some("pac-bayes") | Some("pacbayes") => pac_bayes(&args[1..]),
         Some("tropical") | Some("max-plus") => tropical(&args[1..]),
         Some("daemon-guard") | Some("guard") => daemon_guard(&args[1..]),
+        Some("cockpit") | Some("mux") => super::cockpit::execute(&args[1..]),
         Some(unknown) if !unknown.starts_with('-') => Err(CliError::usage(format!(
-            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', 'canary-gate', 'conformal', 'topology', 'bandit', 'assurance', 'mfg', 'pac-bayes', 'tropical', or 'daemon-guard'"
+            "unknown runtime command '{unknown}'; expected 'engines', 'decision', 'speculative', 'kv-cache', 'scheduler', 'byzantine', 'drift', 'canary-gate', 'conformal', 'topology', 'bandit', 'assurance', 'mfg', 'pac-bayes', 'tropical', 'daemon-guard', or 'cockpit'"
         ))),
         _ => engines(args),
     }
@@ -605,7 +606,7 @@ pub(crate) fn bandit(args: &[String]) -> Result<CommandResult, CliError> {
 
 pub(crate) fn assurance(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["run-id", "config", "data-dir", "workspace", "json"])?;
-    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.7");
+    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.8");
     let receipt =
         UnifiedAssuranceReceipt::generate(run_id).map_err(|e| CliError::execution(e, json!({})))?;
 

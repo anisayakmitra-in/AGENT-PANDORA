@@ -33,6 +33,20 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
 }
 
 pub fn execute_direct(command: &str, args: &[String]) -> Result<CommandResult, CliError> {
+    if command == "/cockpit" {
+        return super::cockpit::execute(args);
+    }
+    if command == "/panes" {
+        return super::cockpit::panes(args);
+    }
+    if command == "/collab"
+        || pandora_runtime::multi_agent_collab::ExternalAgentKind::parse(command).is_some()
+    {
+        let mut dispatch_args = vec![command.to_owned()];
+        dispatch_args.extend_from_slice(args);
+        return super::cockpit::dispatch(&dispatch_args);
+    }
+
     let parsed = parse_options(args, COMMON_OPTIONS)?;
     let catalog = catalog(&parsed)?;
     let target = catalog

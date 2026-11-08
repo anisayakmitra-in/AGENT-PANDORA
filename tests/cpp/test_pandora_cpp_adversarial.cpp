@@ -15,7 +15,7 @@ int main() {
     // 1. Loop allocation to stress-test RAII destructor and free calls
     for (int i = 0; i < 500; ++i) {
         pandora::Client c("pandora");
-        assert(c.version() == "3.0.7");
+        assert(c.version() == "3.0.8");
     }
     std::cout << "  -> 500 client instances allocated and cleanly destructed without leaks\n";
 
@@ -27,13 +27,13 @@ int main() {
     }
     assert(clients.size() == 10);
     for (const auto& c : clients) {
-        assert(c.version() == "3.0.7");
+        assert(c.version() == "3.0.8");
     }
 
     // Move assignment across elements
     pandora::Client target_client;
     target_client = std::move(clients.back());
-    assert(target_client.version() == "3.0.7");
+    assert(target_client.version() == "3.0.8");
     clients.pop_back();
     std::cout << "  -> Vector move reallocations and transfer verified clean\n";
 
@@ -42,7 +42,7 @@ int main() {
     #pragma GCC diagnostic ignored "-Wself-move"
     target_client = std::move(target_client);
     #pragma GCC diagnostic pop
-    assert(target_client.version() == "3.0.7");
+    assert(target_client.version() == "3.0.8");
     std::cout << "  -> Self-move assignment is non-destructive\n";
 
     // 4. Adversarial envelope inputs
@@ -52,8 +52,8 @@ int main() {
     auto env2 = target_client.ParseEnvelope("{broken_json: false, random_bytes: \xFF\xFE}");
     assert(env2.version.empty());
 
-    auto env3 = target_client.ParseEnvelope("{\"version\":\"3.0.7\",\"command\":\"run\",\"healthy\":true}");
-    assert(env3.version == "3.0.7");
+    auto env3 = target_client.ParseEnvelope("{\"version\":\"3.0.8\",\"command\":\"run\",\"healthy\":true}");
+    assert(env3.version == "3.0.8");
     assert(env3.command == "run");
     assert(env3.healthy == true);
     std::cout << "  -> Envelope parsing robust on corrupted and empty inputs\n";

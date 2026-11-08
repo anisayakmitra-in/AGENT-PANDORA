@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.0.8
+
+### Phase 21 Mission-Control Cockpit, Pexer IPC Multiplexer, & Parallel Multi-Agent Swarm Collaboration (Theorems 41-42)
+- **Phase 21 Mission-Control Cockpit & Subsystem Monitor (`crates/pandora-runtime/src/cockpit.rs`, `crates/pandora-cli/src/commands/cockpit.rs`, `docs/math/cockpit_multi_agent_collaboration.md`)**:
+  - 9-panel (`3x3`) and 12-panel (`3x4`) responsive mission-control grid monitoring all settings, harnesses, genes, and runtime mathematical engines (Phases 1–20) with SHA-256 integrity snapshot verification via `pandora cockpit status`, `pandora runtime cockpit`, and `/cockpit`.
+- **Parallel Multi-Agent Collaboration Orchestrator (`crates/pandora-runtime/src/multi_agent_collab.rs`)**:
+  - Dynamic slash command dispatch (`/agy`, `/claude`, `/codex`, `/gemini`, `/cursor`, `/devin`, `/cline`, `/hermes`, `/qwen`, `/collab`, `/panes`, `/zoom`, `/broadcast`) executing external coding agents in parallel terminal panes.
+  - Native Pexer (`pexer.exe`) CLI/IPC multiplexing with headless terminal fallback and permission prompt detection heuristics (`allow command?`, `waiting for permission`, `enter to confirm`, `Cline needs permission`, `hermes needs your`, `usage of agy`).
+- **Mathematical Foundations (Theorems 41-42 in `docs/math/cockpit_multi_agent_collaboration.md`)**:
+  - Theorem 41: Multi-Agent Swarm Byzantine Consensus Quorum under Dynamic Split-Brain Topology ($|Q_1 \cap Q_2| \ge f+1$).
+  - Theorem 42: Bounded Orchestration Latency and Permission-State Convergence in Multiplexed Agent Workspaces ($\mathbb{E}[T_{\mathrm{resolve}}] \le \frac{K}{\mu - \sum \lambda_i} + O(\log K)$, zero deadlock).
+- **Workspace Release & Safety Invariants**:
+  - Workspace manifests, C/C++ ABI headers, Go SDK, TypeScript client launcher, Python gateway bridge, and installers synchronized to `3.0.8` under strict safe Rust `#![forbid(unsafe_code)]`.
+
 ## v3.0.7
 
 ### Phases 18-20 Mathematical Runtime Frontier (Theorems 35-40), 12-Engine Unified Assurance Pipeline & Live Gateway Daemon Guard

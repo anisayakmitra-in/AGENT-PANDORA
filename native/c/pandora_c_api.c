@@ -1,6 +1,6 @@
 /**
  * @file pandora_c_api.c
- * @brief Implementation of C ABI for AGENT-PANDORA v3.0.7.
+ * @brief Implementation of C ABI for AGENT-PANDORA v3.0.8.
  */
 
 #include "pandora.h"

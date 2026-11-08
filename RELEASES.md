@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, and `v3.0.7`. The active release identity
-is `v3.0.7`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, and `v3.0.8`. The active release identity
+is `v3.0.8`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.8
+
+This release implements Phase 21 of the mathematical runtime and governance roadmap: the 9/12-Panel Mission-Control Cockpit monitoring all runtime settings, harnesses, genes, and mathematical engines across Phases 1–20, and the Parallel Multi-Agent Swarm Collaboration Orchestrator supporting external coding agents (Antigravity, Claude Code, Codex, Gemini, Cursor, Devin, Cline, Hermes, Qwen) multiplexed via `pexer.exe` CLI/IPC or headless fallbacks, backed by Theorem 41 (Multi-Agent Byzantine Consensus Quorum) and Theorem 42 (Bounded Orchestration Latency and Permission Convergence) in `docs/math/cockpit_multi_agent_collaboration.md`.
 
 ## v3.0.7
 

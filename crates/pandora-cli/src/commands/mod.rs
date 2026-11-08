@@ -20,6 +20,7 @@ mod auth;
 mod backup;
 pub(crate) mod branch;
 mod chat;
+pub(crate) mod cockpit;
 mod completions;
 pub(crate) mod connector;
 pub(crate) mod cron;
@@ -205,6 +206,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "backup" => backup::execute(&args[1..]),
         "chat" if json_requested => Err(CliError::usage("chat does not support --json")),
         "chat" => chat::execute(&args[1..]),
+        "cockpit" => cockpit::execute(&args[1..]),
         "completions" => completions::execute(&args[1..]),
         "harness" => harness::execute(&args[1..]),
         "job" => job::execute(&args[1..]),
