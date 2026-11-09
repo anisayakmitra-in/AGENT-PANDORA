@@ -267,6 +267,43 @@ impl MultiAgentCollabManager {
         }
     }
 
+    fn spawn_pane(
+        &mut self,
+        agent: ExternalAgentKind,
+        title: String,
+        prompt: &str,
+        ipc: &mut Vec<String>,
+        spawned: &mut Vec<ExternalAgentKind>,
+    ) -> u32 {
+        let pane_id = self.next_pane_id;
+        self.next_pane_id += 1;
+        let session_id = format!("{}_{}", agent.identifier(), pane_id);
+        let escaped_prompt = prompt.replace('"', "\\\"");
+        let binary = agent.default_binary_name();
+
+        ipc.push(format!(
+            "pexer.exe split right --title \"{title}\" \"{binary} \\\"{escaped_prompt}\\\"\""
+        ));
+
+        self.sessions.insert(
+            session_id.clone(),
+            AgentSession {
+                session_id,
+                agent,
+                pane_id,
+                title,
+                state: AgentSessionState::Running {
+                    active_task: prompt.to_string(),
+                    started_epoch_ms: 0,
+                },
+                recent_output_tail: vec![format!("dispatched task: {prompt}")],
+            },
+        );
+
+        spawned.push(agent);
+        pane_id
+    }
+
     /// Dispatch a slash command, producing Pexer CLI IPC commands and updating session states.
     pub fn dispatch(&mut self, line: &str) -> Result<CollabDispatchResult, String> {
         let parsed = Self::parse_slash_command(line)?;
@@ -275,67 +312,17 @@ impl MultiAgentCollabManager {
 
         let explanation = match parsed {
             SlashDispatchCommand::SingleAgent { agent, prompt } => {
-                let pane_id = self.next_pane_id;
-                self.next_pane_id += 1;
-                let session_id = format!("{}_{}", agent.identifier(), pane_id);
                 let title = format!("[Agent:{}]", agent.display_name());
-
-                let binary = agent.default_binary_name();
-                // Escape prompt
-                let escaped_prompt = prompt.replace('"', "\\\"");
-                ipc.push(format!(
-                    "pexer.exe split right --title \"{title}\" \"{binary} \\\"{escaped_prompt}\\\"\""
-                ));
-
-                self.sessions.insert(
-                    session_id.clone(),
-                    AgentSession {
-                        session_id,
-                        agent,
-                        pane_id,
-                        title,
-                        state: AgentSessionState::Running {
-                            active_task: prompt.clone(),
-                            started_epoch_ms: 0,
-                        },
-                        recent_output_tail: vec![format!("dispatched task: {prompt}")],
-                    },
-                );
-
-                spawned.push(agent);
+                let pane_id = self.spawn_pane(agent, title, &prompt, &mut ipc, &mut spawned);
                 format!(
                     "Spawned terminal pane {pane_id} for {}",
                     agent.display_name()
                 )
             }
             SlashDispatchCommand::CollaborativeSwarm { agents, prompt } => {
-                let escaped_prompt = prompt.replace('"', "\\\"");
                 for agent in &agents {
-                    let pane_id = self.next_pane_id;
-                    self.next_pane_id += 1;
-                    let session_id = format!("{}_{}", agent.identifier(), pane_id);
                     let title = format!("[Swarm:{}]", agent.identifier().to_ascii_uppercase());
-                    let binary = agent.default_binary_name();
-
-                    ipc.push(format!(
-                        "pexer.exe split right --title \"{title}\" \"{binary} \\\"{escaped_prompt}\\\"\""
-                    ));
-
-                    self.sessions.insert(
-                        session_id.clone(),
-                        AgentSession {
-                            session_id,
-                            agent: *agent,
-                            pane_id,
-                            title,
-                            state: AgentSessionState::Running {
-                                active_task: prompt.clone(),
-                                started_epoch_ms: 0,
-                            },
-                            recent_output_tail: vec![format!("swarm task dispatched: {prompt}")],
-                        },
-                    );
-                    spawned.push(*agent);
+                    self.spawn_pane(*agent, title, &prompt, &mut ipc, &mut spawned);
                 }
                 format!(
                     "Spawned {} collaborative agent panes for parallel swarm task",
@@ -374,30 +361,45 @@ impl MultiAgentCollabManager {
     /// Check if a terminal output line contains an agent permission prompt requiring user approval.
     pub fn detect_permission_prompt(line: &str) -> Option<(&'static str, Option<&'static str>)> {
         let lower = line.to_ascii_lowercase();
-
-        if lower.contains("allow command?") || lower.contains("allow execution") {
-            Some(("allow command?", Some("press Enter or 'y' to confirm")))
-        } else if lower.contains("waiting for permission")
-            || lower.contains("requesting permission")
-        {
-            Some((
+        const PROMPTS: &[(&[&str], &str, &str)] = &[
+            (
+                &["allow command?", "allow execution"],
+                "allow command?",
+                "press Enter or 'y' to confirm",
+            ),
+            (
+                &["waiting for permission", "requesting permission"],
                 "waiting for permission",
-                Some("authorize tool call in terminal"),
-            ))
-        } else if lower.contains("enter to confirm") || lower.contains("enter to select") {
-            Some(("enter to confirm", Some("press Enter to accept proposal")))
-        } else if lower.contains("cline needs permission") {
-            Some(("Cline needs permission", Some("grant permission to Cline")))
-        } else if lower.contains("hermes needs your") {
-            Some((
+                "authorize tool call in terminal",
+            ),
+            (
+                &["enter to confirm", "enter to select"],
+                "enter to confirm",
+                "press Enter to accept proposal",
+            ),
+            (
+                &["cline needs permission"],
+                "Cline needs permission",
+                "grant permission to Cline",
+            ),
+            (
+                &["hermes needs your"],
                 "Hermes needs permission",
-                Some("grant permission to Hermes"),
-            ))
-        } else if lower.contains("usage of agy") {
-            Some(("Antigravity prompt", Some("enter agy command parameters")))
-        } else {
-            None
+                "grant permission to Hermes",
+            ),
+            (
+                &["usage of agy"],
+                "Antigravity prompt",
+                "enter agy command parameters",
+            ),
+        ];
+
+        for &(patterns, prompt, action) in PROMPTS {
+            if patterns.iter().any(|&p| lower.contains(p)) {
+                return Some((prompt, Some(action)));
+            }
         }
+        None
     }
 
     pub fn active_sessions(&self) -> &BTreeMap<String, AgentSession> {

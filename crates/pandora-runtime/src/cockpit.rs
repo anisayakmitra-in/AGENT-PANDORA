@@ -385,99 +385,121 @@ impl CockpitController {
 }
 
 fn synthesize_panel_status(kind: PanelKind) -> PanelStatus {
-    let mut metrics = BTreeMap::new();
-    let headline: String;
-    let health: PanelHealth;
+    let (health, headline, raw_metrics): (PanelHealth, &str, &[(&str, &str)]) = match kind {
+        PanelKind::DaemonGuard => (
+            PanelHealth::Healthy,
+            "Daemon loop active; all 12 invariant gates reporting PASS",
+            &[
+                ("circuit_breaker", "CLOSED"),
+                ("tick_hz", "10.0"),
+                ("consecutive_fails", "0"),
+            ],
+        ),
+        PanelKind::Assurance12 => (
+            PanelHealth::Healthy,
+            "12/12 Mathematical engines certified; SHA-256 receipt chain verified",
+            &[
+                ("phases_covered", "9..=20"),
+                ("theorems_verified", "17..=40"),
+                ("hash_chain", "VALID"),
+            ],
+        ),
+        PanelKind::GenesEvolution => (
+            PanelHealth::Healthy,
+            "PAC-Bayes risk certificate bounded; Catoni promotion clear",
+            &[
+                ("active_genes", "64"),
+                ("mutation_rate", "0.015"),
+                ("catoni_risk_max", "0.042"),
+            ],
+        ),
+        PanelKind::HarnessBench => (
+            PanelHealth::Healthy,
+            "Tier 1-3 test harnesses passing; zero regression observed",
+            &[
+                ("suites_active", "8"),
+                ("pass_rate", "100.0%"),
+                ("p99_latency_us", "482"),
+            ],
+        ),
+        PanelKind::ConfigSettings => (
+            PanelHealth::Healthy,
+            "Runtime doctor 100% green; provider endpoints reachable",
+            &[
+                ("providers", "3_online"),
+                ("token_budget", "85%_avail"),
+                ("doctor_verdict", "READY"),
+            ],
+        ),
+        PanelKind::SwarmMfgBft => (
+            PanelHealth::Healthy,
+            "Swarm equilibrium stable; PoA bounded by 4/3",
+            &[
+                ("swarm_nodes", "16"),
+                ("poa_ratio", "1.182"),
+                ("bft_quorum", "11/16"),
+            ],
+        ),
+        PanelKind::TropicalDag => (
+            PanelHealth::Healthy,
+            "Max-plus Kleene star converged; zero positive cycles detected",
+            &[
+                ("dag_tasks", "128"),
+                ("critical_path_ms", "14.2"),
+                ("karp_cycle_mean", "0.00"),
+            ],
+        ),
+        PanelKind::BanditRouter => (
+            PanelHealth::Healthy,
+            "Exp3 adversarial bandit routing active; regret within sublinear bound",
+            &[
+                ("candidate_arms", "5"),
+                ("exp3_gamma", "0.08"),
+                ("top_arm", "local_fast"),
+            ],
+        ),
+        PanelKind::DriftConformal => (
+            PanelHealth::Healthy,
+            "Optimal transport drift below threshold; conformal coverage >= 95%",
+            &[
+                ("wasserstein_w2", "0.021"),
+                ("target_coverage", "95.0%"),
+                ("empirical_coverage", "95.6%"),
+            ],
+        ),
+        PanelKind::PrivacyZk => (
+            PanelHealth::Healthy,
+            "RDP budget unexhausted; Goldilocks ZK state attestation valid",
+            &[
+                ("rdp_epsilon", "1.24"),
+                ("rdp_delta", "1e-6"),
+                ("zk_proof_soundness", "2^-49.7"),
+            ],
+        ),
+        PanelKind::MerkleAudit => (
+            PanelHealth::Healthy,
+            "Merkle-DAG append-only chain valid; zero state tamper detected",
+            &[
+                ("audit_records", "10492"),
+                ("tree_depth", "14"),
+                ("verify_status", "PASS"),
+            ],
+        ),
+        PanelKind::CommandDeck => (
+            PanelHealth::Healthy,
+            "Slash command dispatcher ready; multi-agent bridge listening",
+            &[
+                ("registered_agents", "9"),
+                ("active_collab_jobs", "0"),
+                ("ipc_channel", "CONNECTED"),
+            ],
+        ),
+    };
 
-    match kind {
-        PanelKind::DaemonGuard => {
-            health = PanelHealth::Healthy;
-            headline = "Daemon loop active; all 12 invariant gates reporting PASS".to_string();
-            metrics.insert("circuit_breaker".to_string(), "CLOSED".to_string());
-            metrics.insert("tick_hz".to_string(), "10.0".to_string());
-            metrics.insert("consecutive_fails".to_string(), "0".to_string());
-        }
-        PanelKind::Assurance12 => {
-            health = PanelHealth::Healthy;
-            headline =
-                "12/12 Mathematical engines certified; SHA-256 receipt chain verified".to_string();
-            metrics.insert("phases_covered".to_string(), "9..=20".to_string());
-            metrics.insert("theorems_verified".to_string(), "17..=40".to_string());
-            metrics.insert("hash_chain".to_string(), "VALID".to_string());
-        }
-        PanelKind::GenesEvolution => {
-            health = PanelHealth::Healthy;
-            headline = "PAC-Bayes risk certificate bounded; Catoni promotion clear".to_string();
-            metrics.insert("active_genes".to_string(), "64".to_string());
-            metrics.insert("mutation_rate".to_string(), "0.015".to_string());
-            metrics.insert("catoni_risk_max".to_string(), "0.042".to_string());
-        }
-        PanelKind::HarnessBench => {
-            health = PanelHealth::Healthy;
-            headline = "Tier 1-3 test harnesses passing; zero regression observed".to_string();
-            metrics.insert("suites_active".to_string(), "8".to_string());
-            metrics.insert("pass_rate".to_string(), "100.0%".to_string());
-            metrics.insert("p99_latency_us".to_string(), "482".to_string());
-        }
-        PanelKind::ConfigSettings => {
-            health = PanelHealth::Healthy;
-            headline = "Runtime doctor 100% green; provider endpoints reachable".to_string();
-            metrics.insert("providers".to_string(), "3_online".to_string());
-            metrics.insert("token_budget".to_string(), "85%_avail".to_string());
-            metrics.insert("doctor_verdict".to_string(), "READY".to_string());
-        }
-        PanelKind::SwarmMfgBft => {
-            health = PanelHealth::Healthy;
-            headline = "Swarm equilibrium stable; PoA bounded by 4/3".to_string();
-            metrics.insert("swarm_nodes".to_string(), "16".to_string());
-            metrics.insert("poa_ratio".to_string(), "1.182".to_string());
-            metrics.insert("bft_quorum".to_string(), "11/16".to_string());
-        }
-        PanelKind::TropicalDag => {
-            health = PanelHealth::Healthy;
-            headline = "Max-plus Kleene star converged; zero positive cycles detected".to_string();
-            metrics.insert("dag_tasks".to_string(), "128".to_string());
-            metrics.insert("critical_path_ms".to_string(), "14.2".to_string());
-            metrics.insert("karp_cycle_mean".to_string(), "0.00".to_string());
-        }
-        PanelKind::BanditRouter => {
-            health = PanelHealth::Healthy;
-            headline =
-                "Exp3 adversarial bandit routing active; regret within sublinear bound".to_string();
-            metrics.insert("candidate_arms".to_string(), "5".to_string());
-            metrics.insert("exp3_gamma".to_string(), "0.08".to_string());
-            metrics.insert("top_arm".to_string(), "local_fast".to_string());
-        }
-        PanelKind::DriftConformal => {
-            health = PanelHealth::Healthy;
-            headline =
-                "Optimal transport drift below threshold; conformal coverage >= 95%".to_string();
-            metrics.insert("wasserstein_w2".to_string(), "0.021".to_string());
-            metrics.insert("target_coverage".to_string(), "95.0%".to_string());
-            metrics.insert("empirical_coverage".to_string(), "95.6%".to_string());
-        }
-        PanelKind::PrivacyZk => {
-            health = PanelHealth::Healthy;
-            headline = "RDP budget unexhausted; Goldilocks ZK state attestation valid".to_string();
-            metrics.insert("rdp_epsilon".to_string(), "1.24".to_string());
-            metrics.insert("rdp_delta".to_string(), "1e-6".to_string());
-            metrics.insert("zk_proof_soundness".to_string(), "2^-49.7".to_string());
-        }
-        PanelKind::MerkleAudit => {
-            health = PanelHealth::Healthy;
-            headline = "Merkle-DAG append-only chain valid; zero state tamper detected".to_string();
-            metrics.insert("audit_records".to_string(), "10492".to_string());
-            metrics.insert("tree_depth".to_string(), "14".to_string());
-            metrics.insert("verify_status".to_string(), "PASS".to_string());
-        }
-        PanelKind::CommandDeck => {
-            health = PanelHealth::Healthy;
-            headline = "Slash command dispatcher ready; multi-agent bridge listening".to_string();
-            metrics.insert("registered_agents".to_string(), "9".to_string());
-            metrics.insert("active_collab_jobs".to_string(), "0".to_string());
-            metrics.insert("ipc_channel".to_string(), "CONNECTED".to_string());
-        }
-    }
+    let metrics = raw_metrics
+        .iter()
+        .map(|&(k, v)| (k.to_string(), v.to_string()))
+        .collect();
 
     PanelStatus {
         panel_id: kind.panel_number(),
@@ -485,7 +507,7 @@ fn synthesize_panel_status(kind: PanelKind) -> PanelStatus {
         title: kind.title().to_string(),
         category: kind.category(),
         health,
-        headline,
+        headline: headline.to_string(),
         metrics,
         live_stream_tail: vec![
             "init: panel telemetry stream connected".to_string(),
