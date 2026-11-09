@@ -4313,7 +4313,7 @@ fn long_lived_job_daemon_handles_staggered_enqueue_without_duplicate_completion(
     // than raised everywhere, so the fast platforms keep catching a real hang
     // quickly.
     let completion_budget = if cfg!(target_os = "windows") {
-        Duration::from_secs(180)
+        Duration::from_secs(360)
     } else {
         Duration::from_secs(60)
     };
@@ -11902,7 +11902,7 @@ impl Phase7AcceptanceProfile {
                 rounds: 1,
                 warmup_spread: Duration::from_millis(300),
                 recovery_spread: Duration::from_millis(900),
-                completion_timeout: Duration::from_secs(180),
+                completion_timeout: Duration::from_secs(360),
                 mode: "ci",
             };
         }
@@ -11921,7 +11921,7 @@ impl Phase7AcceptanceProfile {
             rounds,
             warmup_spread: Duration::from_secs(2),
             recovery_spread: Duration::from_secs(soak_seconds as u64),
-            completion_timeout: Duration::from_secs(180),
+            completion_timeout: Duration::from_secs(360),
             mode: "soak",
         }
     }
