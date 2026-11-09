@@ -5,33 +5,56 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "cargo"
     directory: "/fuzz"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "chore(deps-fuzz)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "npm"
     directory: "/npm/pandora-cli"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "chore(deps-npm)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "chore(ci)"
+    ignore:
+      - dependency-name: "*"
