@@ -32,7 +32,7 @@ class MockPandoraClient:
         self.binary_path = "mock-pandora"
 
     def doctor(self):
-        return {"command": "doctor", "healthy": True, "details": {"version": "3.0.8"}}
+        return {"command": "doctor", "healthy": True, "details": {"version": "3.0.9"}}
 
     def list_tools(self):
         return {"command": "tool list", "details": {"tools": ["workspace.read", "tool.search"]}}
@@ -112,7 +112,7 @@ class TestGatewayService(unittest.TestCase):
             data = json.loads(resp.read().decode("utf-8"))
             self.assertEqual(data.get("status"), "healthy")
             self.assertEqual(data.get("service"), "pandora-messaging-gateway")
-            self.assertEqual(data.get("version"), "3.0.8")
+            self.assertEqual(data.get("version"), "3.0.9")
 
     def test_02_webhook_unauthorized_when_token_required(self):
         url = f"http://127.0.0.1:{self.webhook_port}/webhook"

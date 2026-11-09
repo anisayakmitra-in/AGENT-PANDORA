@@ -606,7 +606,7 @@ pub(crate) fn bandit(args: &[String]) -> Result<CommandResult, CliError> {
 
 pub(crate) fn assurance(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["run-id", "config", "data-dir", "workspace", "json"])?;
-    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.8");
+    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.9");
     let receipt =
         UnifiedAssuranceReceipt::generate(run_id).map_err(|e| CliError::execution(e, json!({})))?;
 

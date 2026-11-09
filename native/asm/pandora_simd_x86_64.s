@@ -1,6 +1,6 @@
 /*
  * pandora_simd_x86_64.s
- * Pure x86_64 Assembly implementation for AGENT-PANDORA v3.0.8.
+ * Pure x86_64 Assembly implementation for AGENT-PANDORA v3.0.9.
  * Provides CPUID feature detection and AVX/SSE vector dot product.
  * Target ABI: x86_64 Windows (RCX, RDX, R8, R9 calling convention).
  */

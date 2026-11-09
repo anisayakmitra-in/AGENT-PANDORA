@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.8  
+**Version:** AGENT-PANDORA v3.0.9  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -48,8 +48,10 @@ flowchart TD
         P18 --> P19 --> P20
     end
 
-    subgraph CockpitSwarm["Phase 21: Mission-Control Cockpit & Multi-Agent Swarm"]
+    subgraph CockpitSwarm["Phases 21–22: Mission-Control Cockpit & Multi-Agent Swarm"]
         P21["Phase 21<br/><b>Cockpit & Swarm Collab</b><br/><i>Pexer Multiplexing & Bounded Latency</i>"]
+        P22["Phase 22<br/><b>Interactive TUI & Swarm Consensus</b><br/><i>Ratatui Cockpit & Swarm Code Consensus</i>"]
+        P21 --> P22
     end
 
     Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm
@@ -77,6 +79,7 @@ Every phase is grounded in publication-grade mathematical proofs:
 19. **Phase 19**: McAllester / Maurer Empirical-Bernstein PAC-Bayes KL-divergence risk certificate $\mathrm{kl}(\hat{L}_n(Q) \,\|\, L(Q)) \le \frac{D_{\mathrm{KL}}(Q \| P) + \ln(2\sqrt{n}/\delta)}{n}$ and Catoni optimal Gibbs posterior promotion gate.
 20. **Phase 20**: Max-Plus semiring $(\mathbb{R}\cup\{-\infty\}, \oplus, \otimes)$ Kleene star $A^*$ convergence, DAG makespan, and Karp's maximum cycle mean $\lambda(G) = \max_i \min_{k<n} \frac{(A^n)_{ii} - (A^k)_{ii}}{n-k}$ for SLA deadlock prevention.
 21. **Phase 21**: Multi-Agent Byzantine quorum intersection $|Q_1 \cap Q_2| \ge f + 1$ under dynamic split-brain topology and bounded orchestration latency $\mathbb{E}[T_{\mathrm{resolve}}] \le \frac{K}{\mu - \sum \lambda_i} + O(\log K)$ with zero deadlock.
+22. **Phase 22**: Swarm Byzantine Code Consensus metric distortion bound $\frac{2f}{M - 2f} \cdot \mathrm{diam}(\mathcal{H}) + O(\sigma/\sqrt{M})$ with invariant safety guarantee, and ConPTY multiplexer IPC non-blocking throughput with bounded starvation delay $D_{\max} \le \frac{K \cdot B_{\max}}{\mu}$ and zero deadlock.
 
 ---
 
@@ -568,7 +571,25 @@ $\blacksquare$
 
 ---
 
-## 22. Comprehensive Roadmap Summary Matrix (Phases 1–21)
+## 22. Phase 22: Interactive Cockpit TUI, Swarm Byzantine Consensus & Pexer Multiplexer IPC
+
+### 22.1 Multi-Agent Swarm Byzantine Code Consensus Convergence & Minimum Distortion Bound
+
+**Theorem 43 (Swarm Byzantine Code Consensus Convergence & Distortion Bound):**  
+*Let $\mathcal{A} = \{A_1, \dots, A_M\}$ denote $M$ heterogeneous coding agents generating candidate patch proposals $P_i = (\mathbf{s}_i, \Delta_i)$ with score vectors $\mathbf{s}_i \in [0, 1]^4$. Under coordinate-wise trimmed mean centroid $\mathbf{c}_\alpha$ ($\alpha = f/M$) and Krum metric selection $i^\star = \arg\min_{i} \sum_{j \in \mathcal{N}_k(i)} \|\mathbf{s}_i - \mathbf{s}_j\|_2^2$, with up to $f$ Byzantine proposals ($2f + 1 \le M$):*
+$$\|\mathbf{s}_{i^\star} - \boldsymbol{\mu}^\star\|_2 \le \frac{2f}{M - 2f} \cdot \mathrm{diam}(\mathcal{H}) + O\left(\frac{\sigma}{\sqrt{M}}\right)$$
+*and any proposal violating invariant safety $s_j^{(\mathrm{inv})} < \tau_{\mathrm{inv}}$ satisfies $d(\mathbf{s}_j, \mathbf{c}_\alpha) > \delta_{\max}$ and is filtered out with probability $1$.*
+
+### 22.2 ConPTY / IPC Multiplexer Queue Contention & Non-Blocking Throughput Bound
+
+**Theorem 44 (Multiplexer IPC Contention and Non-Blocking Starvation Bound):**  
+*For $K$ active multiplexer panes under lock-free circular ring buffering with cross-pane round-robin dispatch, the worst-case scheduling delay $D_{\max}$ is bounded by $D_{\max} \le \frac{(K - 1) B_{\max}}{\min_j \mu_j} = O(K \cdot B_{\max})$, queue backlog overflow decays exponentially $\mathbb{P}(Q_k > B) \le e^{-\theta_k B}$, and IPC communication graph acyclicity guarantees $\mathbb{P}(\text{Deadlock}) = 0$.*
+- **Reference**: Detailed proofs documented in `docs/math/phase22_cockpit_tui_and_consensus.md`.  
+$\blacksquare$
+
+---
+
+## 23. Comprehensive Roadmap Summary Matrix (Phases 1–22)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -593,4 +614,5 @@ $\blacksquare$
 | **19** | PAC-Bayes Generalization Monitor | Maurer empirical-Bernstein & Catoni gate | $\mathrm{kl}(\hat{L}_n(Q) \| L(Q)) \le \frac{D_{\mathrm{KL}} + \ln(2\sqrt{n}/\delta)}{n}$ | `pac_bayes_monitor.rs` | `tests/phase18_20_math_tests.rs` |
 | **20** | Tropical Max-Plus DAG Calculus | Kleene star $A^\star$ & Karp cycle mean | $A^\star = \bigoplus_{k=0}^{n-1} A^k$, $\lambda(G) = \max_i \min_{k} \frac{A^n - A^k}{n-k}$ | `tropical_dag.rs` | `tests/phase18_20_math_tests.rs` |
 | **21** | Mission-Control Cockpit & Multi-Agent Swarm | Byzantine consensus quorum & multiplexed latency | $\|Q_1 \cap Q_2\| \ge f+1$, $\mathbb{E}[T] \le \frac{K}{\mu - \Lambda} + O(\log K)$ | `cockpit.rs`, `multi_agent_collab.rs` | `tests/cockpit_multi_agent_tests.rs`, `tests/cockpit_cli_wiring_test.rs` |
+| **22** | Interactive Cockpit TUI & Swarm Consensus | Byzantine code consensus & multiplexer IPC | $\|\mathbf{s}_{i^\star} - \boldsymbol{\mu}^\star\| \le O(\frac{f}{M}\mathrm{diam}(\mathcal{H}))$, $D_{\max} \le O(K B_{\max})$ | `cockpit_tui.rs`, `multi_agent_consensus.rs`, `pexer_ipc.rs` | `tests/multi_agent_consensus_tests.rs`, `tests/pexer_ipc_tests.rs`, `tests/cockpit_phase22_cli_tests.rs` |
 

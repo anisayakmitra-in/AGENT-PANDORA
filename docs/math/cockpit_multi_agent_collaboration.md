@@ -1,7 +1,7 @@
 # Mathematical Foundations: Mission-Control Cockpit & Multi-Agent Swarm Collaboration
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.8  
+**Version:** AGENT-PANDORA v3.0.9  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---

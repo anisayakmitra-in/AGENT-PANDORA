@@ -21,6 +21,7 @@ mod backup;
 pub(crate) mod branch;
 mod chat;
 pub(crate) mod cockpit;
+pub(crate) mod cockpit_tui;
 mod completions;
 pub(crate) mod connector;
 pub(crate) mod cron;

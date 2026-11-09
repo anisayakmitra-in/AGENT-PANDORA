@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, and `v3.0.8`. The active release identity
-is `v3.0.8`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, and `v3.0.9`. The active release identity
+is `v3.0.9`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.9
+
+This release implements Phase 22 of the mathematical runtime and governance roadmap: the Interactive Ratatui Mission-Control Cockpit TUI (dynamically switchable 9-panel and 12-panel matrix layouts, keyboard navigation, drill-down telemetry modal, and headless snapshot fallbacks), the Swarm Byzantine Code Consensus Engine (coordinate-wise trimmed mean centroid and Krum outlier filtering over 4D metric quality space under Theorem 43), and the Pexer Multiplexer IPC Automation Engine (automated grid tiling, dry-run validation, and cross-platform script synthesis under Theorem 44) documented in `docs/math/phase22_cockpit_tui_and_consensus.md`.
 
 ## v3.0.8
 

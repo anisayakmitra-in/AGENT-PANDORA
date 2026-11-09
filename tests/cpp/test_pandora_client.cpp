@@ -11,21 +11,21 @@
 int main() {
     std::cout << "[C++20 Client Test] Verifying version...\n";
     pandora::Client client;
-    assert(client.version() == "3.0.8");
+    assert(client.version() == "3.0.9");
     std::cout << "  -> Client version: " << client.version() << "\n";
 
     std::cout << "[C++20 Client Test] Verifying envelope parsing...\n";
     auto env = client.ParseEnvelope(
-        "{\"version\":\"3.0.8\",\"command\":\"workspace.verify\",\"healthy\":true}"
+        "{\"version\":\"3.0.9\",\"command\":\"workspace.verify\",\"healthy\":true}"
     );
-    assert(env.version == "3.0.8");
+    assert(env.version == "3.0.9");
     assert(env.command == "workspace.verify");
     assert(env.healthy == true);
     std::cout << "  -> Parsed envelope: " << env.command << ", healthy=" << env.healthy << "\n";
 
     std::cout << "[C++20 Client Test] Verifying RAII Move Semantics...\n";
     pandora::Client moved_client = std::move(client);
-    assert(moved_client.version() == "3.0.8");
+    assert(moved_client.version() == "3.0.9");
     std::cout << "  -> Move constructor and RAII transfer passed\n";
 
     std::cout << "[C++20 Client Test] Verifying SIMD vector dot product...\n";

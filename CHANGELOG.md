@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.0.9
+
+### Phase 22 Interactive Cockpit TUI, Swarm Byzantine Code Consensus & Pexer Multiplexer IPC Automation (Theorems 43-44)
+- **Phase 22 Interactive Ratatui Mission-Control Cockpit TUI (`crates/pandora-cli/src/commands/cockpit_tui.rs`)**:
+  - Full-screen interactive terminal cockpit with dynamic 9-panel (`3x3`) and 12-panel (`3x4`) matrix switching (`Tab` / `l`), vim-style keyboard navigation (`h,j,k,l` / arrow keys), drill-down telemetry modal (`Enter`), and multi-agent consensus trigger (`c`).
+  - Automatic headless snapshot fallback on non-interactive stdout/CI pipelines returning structured JSON and ASCII grid telemetry (`pandora cockpit tui`).
+- **Swarm Byzantine Code Consensus Engine (`crates/pandora-runtime/src/multi_agent_consensus.rs`, `docs/math/phase22_cockpit_tui_and_consensus.md`)**:
+  - Coordinate-wise trimmed mean centroid aggregator and Krum geometric outlier filtering in 4D metric feature space (test pass rate, model confidence, AST compactness, and invariant compliance) under **Theorem 43**, producing deterministic SHA-256 cryptographic receipts and automatically filtering hallucinated/adversarial agent patches (`pandora cockpit consensus`, `/consensus`).
+- **Live Pexer Multiplexer IPC Automation (`crates/pandora-runtime/src/pexer_ipc.rs`)**:
+  - Native Pexer (`pexer.exe`) automated grid tiling launcher, probe resolution (including cross-device directories), dry-run validation, and automated PowerShell (`.ps1`) and Windows Batch (`.bat`) script synthesis under **Theorem 44** (`pandora cockpit launch`, `pandora cockpit send`).
+- **Mathematical Foundations (Theorems 43-44 in `docs/math/phase22_cockpit_tui_and_consensus.md`)**:
+  - Theorem 43: Multi-Agent Swarm Byzantine Code Consensus Convergence & Minimum Distortion Bound ($\|\mathbf{s}_{i^\star} - \boldsymbol{\mu}^\star\|_2 \le \frac{2f}{M - 2f} \cdot \mathrm{diam}(\mathcal{H}) + O(\sigma/\sqrt{M})$ with invariant safety guarantee).
+  - Theorem 44: ConPTY / IPC Multiplexer Queue Contention & Non-Blocking Throughput Bound ($D_{\max} \le \frac{K \cdot B_{\max}}{\mu}$, exponential overflow decay, and zero deadlock).
+- **Workspace Release & Safety Invariants**:
+  - Workspace manifests, C/C++ ABI headers, Go SDK, TypeScript client launcher, Python gateway bridge, and installers synchronized to `3.0.9` under strict safe Rust `#[forbid(unsafe_code)]`.
+
 ## v3.0.8
 
 ### Phase 21 Mission-Control Cockpit, Pexer IPC Multiplexer, & Parallel Multi-Agent Swarm Collaboration (Theorems 41-42)
