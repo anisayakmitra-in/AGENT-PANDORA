@@ -75,7 +75,9 @@ struct CockpitTuiState {
     active_panel_idx: usize,
     modal_open: bool,
     consensus_modal_open: bool,
+    autopilot_modal_open: bool,
     last_consensus_summary: Option<String>,
+    last_autopilot_summary: Option<String>,
     cached_snapshot: pandora_runtime::cockpit::CockpitSnapshot,
     last_refresh: Instant,
 }
@@ -95,7 +97,9 @@ impl CockpitTuiState {
             active_panel_idx: 0,
             modal_open: false,
             consensus_modal_open: false,
+            autopilot_modal_open: false,
             last_consensus_summary: None,
+            last_autopilot_summary: None,
             cached_snapshot: snapshot,
             last_refresh: Instant::now(),
         }
@@ -198,6 +202,9 @@ impl CockpitTuiState {
                 } else if self.consensus_modal_open {
                     self.consensus_modal_open = false;
                     false
+                } else if self.autopilot_modal_open {
+                    self.autopilot_modal_open = false;
+                    false
                 } else {
                     true // exit
                 }
@@ -250,6 +257,8 @@ impl CockpitTuiState {
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if self.consensus_modal_open {
                     self.consensus_modal_open = false;
+                } else if self.autopilot_modal_open {
+                    self.autopilot_modal_open = false;
                 } else {
                     self.modal_open = !self.modal_open;
                 }
@@ -258,6 +267,13 @@ impl CockpitTuiState {
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 self.run_consensus_simulation();
                 self.consensus_modal_open = true;
+                self.autopilot_modal_open = false;
+                false
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.run_autopilot_simulation();
+                self.autopilot_modal_open = true;
+                self.consensus_modal_open = false;
                 false
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -414,6 +430,8 @@ impl CockpitTuiState {
             Span::raw(" Drilldown "),
             Span::styled("[C]", Style::default().fg(Color::Yellow)),
             Span::raw(" Swarm Consensus "),
+            Span::styled("[A]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Autopilot "),
             Span::styled("[R]", Style::default().fg(Color::Yellow)),
             Span::raw(" Refresh "),
             Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
@@ -426,6 +444,8 @@ impl CockpitTuiState {
             self.render_drilldown_modal(f, size);
         } else if self.consensus_modal_open {
             self.render_consensus_modal(f, size);
+        } else if self.autopilot_modal_open {
+            self.render_autopilot_modal(f, size);
         }
     }
 
@@ -573,6 +593,58 @@ impl CockpitTuiState {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Double)
                 .border_style(Style::default().fg(Color::Green)),
+        );
+
+        f.render_widget(p, modal_area);
+    }
+
+    fn run_autopilot_simulation(&mut self) {
+        use pandora_runtime::autopilot::{AutopilotSessionConfig, MultiAgentAutopilotOrchestrator};
+        let epoch_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let config = AutopilotSessionConfig::default();
+        match MultiAgentAutopilotOrchestrator::run_session(config, epoch_ms) {
+            Ok(outcome) => {
+                self.last_autopilot_summary = Some(format!(
+                    "Autopilot Mission Certified!\nGoal: {}\nAgents Dispatched: {}\nWinner: {} ({})\nQuorum: {}/{} | Byzantine Filtered: {}\nCertificate: {}",
+                    outcome.task_goal,
+                    outcome.spawned_agents.len(),
+                    outcome.consensus_decision.winning_proposal_id,
+                    outcome.consensus_decision.winning_agent.display_name(),
+                    outcome.consensus_decision.honest_quorum_size,
+                    outcome.consensus_decision.total_proposals,
+                    outcome.consensus_decision.byzantine_filtered_count,
+                    outcome.certified_patch.certificate_digest
+                ));
+            }
+            Err(e) => {
+                self.last_autopilot_summary = Some(format!("Autopilot Failed: {e}"));
+            }
+        }
+    }
+
+    fn render_autopilot_modal(&self, f: &mut Frame, area: Rect) {
+        let modal_area = centered_rect(70, 55, area);
+        f.render_widget(Clear, modal_area);
+
+        let content = self
+            .last_autopilot_summary
+            .clone()
+            .unwrap_or_else(|| "Running multi-agent autopilot...".to_string());
+
+        let lines: Vec<Line> = content
+            .lines()
+            .map(|l| Line::from(Span::styled(l, Style::default().fg(Color::White))))
+            .collect();
+
+        let p = Paragraph::new(lines).block(
+            Block::default()
+                .title(" Live Multi-Agent Autopilot Session (Theorems 43 & 46) ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(Color::Cyan)),
         );
 
         f.render_widget(p, modal_area);

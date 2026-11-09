@@ -34,8 +34,8 @@ impl CockpitLayout {
     /// Parse from numeric panel count string or name.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "9" | "nine" | "3x3" => Some(CockpitLayout::NinePanel),
-            "12" | "twelve" | "3x4" => Some(CockpitLayout::TwelvePanel),
+            "9" | "nine" | "nine_panel" | "3x3" => Some(CockpitLayout::NinePanel),
+            "12" | "twelve" | "twelve_panel" | "3x4" => Some(CockpitLayout::TwelvePanel),
             _ => None,
         }
     }

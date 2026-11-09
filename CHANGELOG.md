@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.0.10
+
+### Phase 23 Federated Policy & Reputation, Live Multi-Agent Autopilot, and Remote Telemetry Dashboard (Theorems 45-46)
+- **Federated Policy Engine (`crates/pandora-runtime/src/federated_policy.rs`, `docs/math/phase23_federated_policy_and_reputation.md`)**: reputation-weighted coordinate-wise trimmed-mean gradient aggregation (Theorem 45) and Beta-conjugate Thompson-sampling reputation with quarantine (Theorem 46). CLI: `pandora runtime federated`, `pandora cockpit reputation`, `/reputation`.
+- **Live Multi-Agent Autopilot (`crates/pandora-runtime/src/autopilot.rs`)**: partitions a goal into roles across the 9 child CLIs, dispatches through the Pexer/collab manager, runs Byzantine swarm consensus (Theorem 43), updates reputations, and issues a `PANDORA_PATCH_CERT_V1` certificate. CLI: `pandora cockpit autopilot`, `/autopilot`, TUI `[A]`. Candidate patches are currently synthesized in-process rather than collected from live child CLI output.
+- **Remote Telemetry Dashboard (`crates/pandora-runtime/src/cockpit_web.rs`)**: zero-dependency std-only HTTP/1.1 + SSE server with a responsive mobile/desktop page, `/api/snapshot`, `/api/events`, and layout/consensus/approve/dispatch actions. CLI: `pandora cockpit web --port 8080 --bind 0.0.0.0`.
+- Workspace manifests, headers, SDKs and installers synchronized to `3.0.10` under `#![forbid(unsafe_code)]`.
+
 ## v3.0.9
 
 ### Phase 22 Interactive Cockpit TUI, Swarm Byzantine Code Consensus & Pexer Multiplexer IPC Automation (Theorems 43-44)

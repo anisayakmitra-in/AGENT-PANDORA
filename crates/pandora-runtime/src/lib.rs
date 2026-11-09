@@ -8,10 +8,12 @@ pub mod approvals;
 pub mod arch_simd;
 pub mod artifact_catalog;
 pub mod assurance_receipt;
+pub mod autopilot;
 pub mod bandit_router;
 pub mod blaze_adapter;
 pub mod byzantine_aggregator;
 pub mod cockpit;
+pub mod cockpit_web;
 pub mod coding_feedback;
 pub mod composition_ledger;
 pub mod config;
@@ -35,6 +37,7 @@ pub mod evolution;
 pub mod execution_controller;
 mod execution_profile;
 pub mod executors;
+pub mod federated_policy;
 pub mod fleet;
 pub mod gateway;
 pub mod gepa;
@@ -140,6 +143,11 @@ pub use arch_simd::{
 };
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
 pub use assurance_receipt::{PhaseCertificate, UnifiedAssuranceReceipt};
+pub use autopilot::{
+    AutopilotCoordinator, AutopilotError, AutopilotExecutionResult, AutopilotGoal,
+    AutopilotSessionConfig, AutopilotSessionOutcome, CertifiedPatchRecord,
+    MultiAgentAutopilotOrchestrator, certify_patch, role_for_agent,
+};
 pub use bandit_router::{
     BanditArm, BanditModelRouter, BanditStrategy, RoutingContext, RoutingReward, SafePrng,
 };
@@ -149,6 +157,11 @@ pub use blaze_adapter::{
 pub use byzantine_aggregator::{
     AgentVectorUpdate, AggregationRule, ByzantineAggregator, ByzantineConsensusResult,
     ByzantineError,
+};
+pub use cockpit_web::{
+    ApproveActionRequest, CockpitWebConfig, CockpitWebServer, ConsensusActionRequest,
+    DASHBOARD_HTML, DEFAULT_SSE_TICK_MS, LayoutActionRequest, MAX_HTTP_BODY_BYTES,
+    format_sse_event,
 };
 pub use coding_feedback::{
     CodingFeedbackError, CodingFeedbackInput, CodingFeedbackLoop, CodingFeedbackResult,
@@ -228,6 +241,12 @@ pub use execution_profile::ExecutionProfileAssemblyError;
 pub use executors::{
     GitWorktreeExecutor, ProviderCallMetrics, WorktreeChange, WorktreeCommand, WorktreeError,
     WorktreeResult,
+};
+pub use federated_policy::{
+    AgentReputationRecord, FederatedPolicyEngine, FederatedPolicyError, FederatedUpdateReceipt,
+    PolicyGradientVector, BYZANTINE_BETA_PENALTY, CRITICAL_REPUTATION_THRESHOLD,
+    DEFAULT_LEARNING_RATE, DEFAULT_MAX_GRADIENT_NORM, DEFAULT_MOMENTUM, MIN_EVALS_FOR_QUARANTINE,
+    POLICY_DIMENSIONS, POLICY_DIMENSION_LABELS, QUARANTINE_WEIGHT_PENALTY,
 };
 pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetFenceState, FleetLease,

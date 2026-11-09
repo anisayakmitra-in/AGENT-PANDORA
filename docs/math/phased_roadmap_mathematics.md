@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.9  
+**Version:** AGENT-PANDORA v3.0.10  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -54,7 +54,11 @@ flowchart TD
         P21 --> P22
     end
 
-    Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm
+    subgraph Evolution["Phase 23: Federated Policy & Self-Evolving Swarm"]
+        P23["Phase 23<br/><b>Federated Policy</b><br/><i>Theorems 45–46 Convergence & Quarantine</i>"]
+    end
+
+    Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm --> Evolution
 ```
 
 Every phase is grounded in publication-grade mathematical proofs:
@@ -80,6 +84,7 @@ Every phase is grounded in publication-grade mathematical proofs:
 20. **Phase 20**: Max-Plus semiring $(\mathbb{R}\cup\{-\infty\}, \oplus, \otimes)$ Kleene star $A^*$ convergence, DAG makespan, and Karp's maximum cycle mean $\lambda(G) = \max_i \min_{k<n} \frac{(A^n)_{ii} - (A^k)_{ii}}{n-k}$ for SLA deadlock prevention.
 21. **Phase 21**: Multi-Agent Byzantine quorum intersection $|Q_1 \cap Q_2| \ge f + 1$ under dynamic split-brain topology and bounded orchestration latency $\mathbb{E}[T_{\mathrm{resolve}}] \le \frac{K}{\mu - \sum \lambda_i} + O(\log K)$ with zero deadlock.
 22. **Phase 22**: Swarm Byzantine Code Consensus metric distortion bound $\frac{2f}{M - 2f} \cdot \mathrm{diam}(\mathcal{H}) + O(\sigma/\sqrt{M})$ with invariant safety guarantee, and ConPTY multiplexer IPC non-blocking throughput with bounded starvation delay $D_{\max} \le \frac{K \cdot B_{\max}}{\mu}$ and zero deadlock.
+23. **Phase 23**: Federated Policy Gradient convergence $\min_{0 \le t < T} \|\nabla J(\boldsymbol{\theta}_t)\|_2^2 \le O(1/T) + \mathcal{E}_{\mathrm{Byz}}^2$ with coordinate-wise trimmed mean resilience bound $\mathcal{E}_{\mathrm{Byz}} \le \frac{4\sum_b w_b}{\sum_h w_h} G \sqrt{d} + \frac{\sigma \sqrt{d}}{\sqrt{\sum_h w_h}}$, and Theorem 46 Beta-conjugate dynamic reputation weighting with finite expected quarantine hitting time $\mathbb{E}[T_{\mathrm{quar}}] = O(1)$ and logarithmic cumulative Byzantine contamination $\sum_{t=1}^T w_b(t) = O(\ln T)$.
 
 ---
 
@@ -589,7 +594,34 @@ $\blacksquare$
 
 ---
 
-## 23. Comprehensive Roadmap Summary Matrix (Phases 1–22)
+## 23. Phase 23: Federated Reinforcement Learning & Self-Evolving Agent Policy
+
+### 23.1 Federated Multi-Agent Policy Gradient Convergence & Byzantine Resilience Bound
+
+**Theorem 45 (Federated Multi-Agent Policy Gradient Convergence & Byzantine Resilience Bound):**  
+*Let $M$ heterogeneous coding agents $\mathcal{A} = \{A_1, \dots, A_M\}$ optimize global policy $\boldsymbol{\theta} \in [0, 1]^6$ under objective function $J(\boldsymbol{\theta})$ with $L$-Lipschitz smoothness, coordinate-wise trimmed mean gradient aggregation with trim fraction $\alpha = f/M < 1/2$, and gradient clipping bound $G > 0$. In the presence of up to $f$ Byzantine agents ($M \ge 2f + 1$), under momentum update $\mathbf{v}_{t+1} = \beta \mathbf{v}_t + (1 - \beta)\hat{\mathbf{g}}_t$ and step size $\eta \le \frac{1-\beta}{2L}$:*
+
+1. *Byzantine Resilience Bound:* At every optimization step $t$, the aggregated gradient error is bounded by:
+   $$\|\hat{\mathbf{g}}_t - \nabla J(\boldsymbol{\theta}_t)\|_2 \le \mathcal{E}_{\mathrm{Byz}}(t) \triangleq \frac{4 \sum_{b \in \mathcal{B}} w_b(t)}{\sum_{h \in \mathcal{H}} w_h(t)} G \sqrt{d} + \frac{\sigma \sqrt{d}}{\sqrt{\sum_{h \in \mathcal{H}} w_h(t)}}.$$
+2. *Ergodic Convergence Rate:* The sequence of policy gradients converges to an asymptotic stationary neighborhood:
+   $$\frac{1}{T} \sum_{t=0}^{T-1} \|\nabla J(\boldsymbol{\theta}_t)\|_2^2 \le \frac{4 (J(\boldsymbol{\theta}_0) - J^*)}{\eta (1 - \beta) T} + \frac{4}{1 - \beta} \cdot \frac{1}{T} \sum_{t=0}^{T-1} \mathcal{E}_{\mathrm{Byz}}^2(t).$$
+
+### 23.2 Dynamic Reputation Weighting & Thompson Sampling Bandit Elimination Bound
+
+**Theorem 46 (Dynamic Reputation Weighting & Thompson Sampling Bandit Elimination Bound):**  
+*Let agent reliability parameters follow Beta-conjugate distributions $p_i \sim \mathrm{Beta}(\alpha_i(t), \beta_i(t))$ updated with honest credit $q_t \in [0.1, 1.0]$ and asymmetric penalty $\kappa_{\mathrm{pen}} \ge 2.0$ upon Byzantine divergence. The consensus weight is the posterior mean $w_i(t) = \frac{\alpha_i(t)}{\alpha_i(t) + \beta_i(t)}$. For any adversarial agent $b \in \mathcal{B}$ with true agreement rate $p_b < \frac{1}{1 + \kappa_{\mathrm{pen}}}$:*
+
+1. *Asymptotic Weight Decay:* $\lim_{t \to \infty} \mathbb{E}[w_b(t)] = \frac{p_b}{p_b + \kappa_{\mathrm{pen}}(1 - p_b)} < \tau_{\mathrm{quar}} = 0.25$.
+2. *Finite-Sample Quarantine Hitting Time:* The probability of evading quarantine decays exponentially:
+   $$\mathbb{P}(w_b(t) \ge \tau_{\mathrm{quar}}) \le \exp\left(-t \cdot D_{\mathrm{KL}}(\gamma_{\mathrm{quar}} \,\|\, p_b)\right), \quad \mathbb{E}[T_{\mathrm{quar}}] = O(1).$$
+3. *Logarithmic Cumulative Contamination:* Under Thompson sampling arm selection, cumulative Byzantine contamination is sublinear:
+   $$\sum_{t=1}^T w_b(t) \le O(1) + w_{\mathrm{quar}} T \quad \text{and} \quad \sum_{t=1}^T w_b(t) = O(\ln T) \text{ under zero-tolerance quarantine}.$$
+- **Reference**: Detailed proofs documented in `docs/math/phase23_federated_policy_and_reputation.md`.  
+$\blacksquare$
+
+---
+
+## 24. Comprehensive Roadmap Summary Matrix (Phases 1–23)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -615,4 +647,5 @@ $\blacksquare$
 | **20** | Tropical Max-Plus DAG Calculus | Kleene star $A^\star$ & Karp cycle mean | $A^\star = \bigoplus_{k=0}^{n-1} A^k$, $\lambda(G) = \max_i \min_{k} \frac{A^n - A^k}{n-k}$ | `tropical_dag.rs` | `tests/phase18_20_math_tests.rs` |
 | **21** | Mission-Control Cockpit & Multi-Agent Swarm | Byzantine consensus quorum & multiplexed latency | $\|Q_1 \cap Q_2\| \ge f+1$, $\mathbb{E}[T] \le \frac{K}{\mu - \Lambda} + O(\log K)$ | `cockpit.rs`, `multi_agent_collab.rs` | `tests/cockpit_multi_agent_tests.rs`, `tests/cockpit_cli_wiring_test.rs` |
 | **22** | Interactive Cockpit TUI & Swarm Consensus | Byzantine code consensus & multiplexer IPC | $\|\mathbf{s}_{i^\star} - \boldsymbol{\mu}^\star\| \le O(\frac{f}{M}\mathrm{diam}(\mathcal{H}))$, $D_{\max} \le O(K B_{\max})$ | `cockpit_tui.rs`, `multi_agent_consensus.rs`, `pexer_ipc.rs` | `tests/multi_agent_consensus_tests.rs`, `tests/pexer_ipc_tests.rs`, `tests/cockpit_phase22_cli_tests.rs` |
+| **23** | Federated Policy & Reputation Engine | Byzantine-resilient trimmed mean & Beta-conjugate reputation decay | Ergodic convergence $O(1/T) + \mathcal{E}_{\mathrm{Byz}}^2$, Quarantine hitting time $O(1)$, Contamination $O(\ln T)$ | `federated_policy.rs` | `tests/phase23_federated_policy_tests.rs` |
 

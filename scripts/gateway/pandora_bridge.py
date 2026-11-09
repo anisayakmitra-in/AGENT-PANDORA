@@ -149,7 +149,7 @@ class GatewayWebhookHandler(BaseHTTPRequestHandler):
             resp = {
                 "status": "healthy",
                 "service": "pandora-messaging-gateway",
-                "version": "3.0.9",
+                "version": "3.0.10",
                 "timestamp": time.time(),
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))

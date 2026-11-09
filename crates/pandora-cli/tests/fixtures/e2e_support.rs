@@ -91,6 +91,7 @@ impl E2eFixture {
         parse_json(&output)
     }
 
+    #[allow(dead_code)]
     pub fn init_git(&self) -> String {
         for args in [
             ["init"].as_slice(),

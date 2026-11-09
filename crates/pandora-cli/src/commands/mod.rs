@@ -334,7 +334,7 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
             if !allowed.contains(&name) {
                 return Err(CliError::usage(format!("unknown option '--{name}'")));
             }
-            if is_flag(name) {
+            if is_flag(name) && inline_value.is_none() {
                 if values.insert(name.to_owned(), String::new()).is_some() {
                     return Err(CliError::usage(format!("option '--{name}' was repeated")));
                 }

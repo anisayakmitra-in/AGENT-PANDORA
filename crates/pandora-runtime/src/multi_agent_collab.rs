@@ -162,6 +162,13 @@ pub enum SlashDispatchCommand {
     ZoomPane { pane_id: u32 },
     /// Broadcast keystrokes to all active agents: `/broadcast <text>`
     BroadcastText { text: String },
+    /// Display current reputation scores across all external coding agents: `/reputation`
+    ReputationStatus,
+    /// Automated multi-agent autopilot orchestration session: `/autopilot <goal>`
+    AutopilotSession {
+        goal: String,
+        agents: Vec<ExternalAgentKind>,
+    },
 }
 
 /// Result of parsing and executing a slash-command dispatch.
@@ -216,6 +223,17 @@ impl MultiAgentCollabManager {
                     return Err("usage: /broadcast <message>".to_string());
                 }
                 Ok(SlashDispatchCommand::BroadcastText { text })
+            }
+            "/reputation" => Ok(SlashDispatchCommand::ReputationStatus),
+            "/autopilot" => {
+                let goal = parts[1..].join(" ");
+                if goal.is_empty() {
+                    return Err("usage: /autopilot <goal>".to_string());
+                }
+                Ok(SlashDispatchCommand::AutopilotSession {
+                    goal,
+                    agents: ExternalAgentKind::all().to_vec(),
+                })
             }
             "/collab" => {
                 // Format: /collab agy claude codex -- <prompt>
@@ -346,6 +364,19 @@ impl MultiAgentCollabManager {
                 format!(
                     "Broadcasted input to {} active agent terminal panes",
                     self.sessions.len()
+                )
+            }
+            SlashDispatchCommand::ReputationStatus => {
+                "Inspecting multi-agent reputation standings (Theorem 46)".to_string()
+            }
+            SlashDispatchCommand::AutopilotSession { ref goal, ref agents } => {
+                for agent in agents {
+                    let title = format!("[Autopilot:{}]", agent.identifier().to_ascii_uppercase());
+                    self.spawn_pane(*agent, title, goal, &mut ipc, &mut spawned);
+                }
+                format!(
+                    "Dispatched autopilot session across {} agents for goal: {goal}",
+                    agents.len()
                 )
             }
         };

@@ -42,6 +42,15 @@ pub fn execute_direct(command: &str, args: &[String]) -> Result<CommandResult, C
     if command == "/consensus" || command == "/vote" {
         return super::cockpit::consensus(args);
     }
+    if command == "/reputation" {
+        return super::cockpit::reputation(args);
+    }
+    if command == "/autopilot" {
+        return super::cockpit::autopilot(args);
+    }
+    if command == "/web" {
+        return super::cockpit::web(args);
+    }
     if command == "/collab"
         || pandora_runtime::multi_agent_collab::ExternalAgentKind::parse(command).is_some()
     {

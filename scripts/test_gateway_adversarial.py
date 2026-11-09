@@ -33,7 +33,7 @@ class MockPandoraClient:
         self.binary_path = "mock-pandora"
 
     def doctor(self):
-        return {"command": "doctor", "healthy": True, "details": {"version": "3.0.9"}}
+        return {"command": "doctor", "healthy": True, "details": {"version": "3.0.10"}}
 
     def list_tools(self):
         return {"command": "tool list", "details": {"tools": ["workspace.read", "tool.search"]}}

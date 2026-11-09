@@ -164,6 +164,16 @@ impl Default for SwarmCodeConsensusEngine {
 }
 
 impl SwarmCodeConsensusEngine {
+    /// Configured minimum composite viability threshold.
+    pub fn min_viability_threshold(&self) -> f64 {
+        self.min_viability_threshold
+    }
+
+    /// Configured maximum centroid divergence.
+    pub fn max_centroid_divergence(&self) -> f64 {
+        self.max_centroid_divergence
+    }
+
     pub fn new(min_viability_threshold: f64, max_centroid_divergence: f64) -> Self {
         Self {
             min_viability_threshold: min_viability_threshold.clamp(0.0, 1.0),
