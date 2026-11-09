@@ -366,7 +366,9 @@ pub(crate) fn reputation(args: &[String]) -> Result<CommandResult, CliError> {
 
     if let Some(target_str) = parsed.value("record-byzantine") {
         let agent = ExternalAgentKind::parse(target_str).ok_or_else(|| {
-            CliError::usage(format!("unknown agent '{target_str}' in --record-byzantine"))
+            CliError::usage(format!(
+                "unknown agent '{target_str}' in --record-byzantine"
+            ))
         })?;
         engine.update_agent_reputation(agent, false, 0.0);
     }
@@ -580,10 +582,12 @@ pub(crate) fn autopilot(args: &[String]) -> Result<CommandResult, CliError> {
 
     let candidate_agents = if let Some(agents_str) = parsed.value("agents") {
         let mut list = Vec::new();
-        for token in agents_str.split([',', ' ']).filter(|s| !s.trim().is_empty()) {
-            let kind = ExternalAgentKind::parse(token).ok_or_else(|| {
-                CliError::usage(format!("unknown agent '{token}' in --agents"))
-            })?;
+        for token in agents_str
+            .split([',', ' '])
+            .filter(|s| !s.trim().is_empty())
+        {
+            let kind = ExternalAgentKind::parse(token)
+                .ok_or_else(|| CliError::usage(format!("unknown agent '{token}' in --agents")))?;
             if !list.contains(&kind) {
                 list.push(kind);
             }
@@ -676,4 +680,3 @@ pub(crate) fn autopilot(args: &[String]) -> Result<CommandResult, CliError> {
         human,
     ))
 }
-

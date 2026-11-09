@@ -10,9 +10,8 @@
 #![forbid(unsafe_code)]
 
 use pandora_runtime::federated_policy::{
-    AgentReputationRecord, FederatedPolicyEngine, FederatedPolicyError, PolicyGradientVector,
-    CRITICAL_REPUTATION_THRESHOLD, DEFAULT_LEARNING_RATE, DEFAULT_MOMENTUM,
-    POLICY_DIMENSION_LABELS,
+    AgentReputationRecord, CRITICAL_REPUTATION_THRESHOLD, DEFAULT_LEARNING_RATE, DEFAULT_MOMENTUM,
+    FederatedPolicyEngine, FederatedPolicyError, POLICY_DIMENSION_LABELS, PolicyGradientVector,
 };
 use pandora_runtime::multi_agent_collab::ExternalAgentKind;
 
@@ -32,13 +31,7 @@ fn test_policy_gradient_vector_primitives_and_validation() {
     assert!((norm - 0.91_f64.sqrt()).abs() < 1e-6);
 
     // 3. Distance calculation
-    let vec2 = PolicyGradientVector::new(
-        ExternalAgentKind::ClaudeCode,
-        [0.0; 6],
-        10,
-        0.5,
-    )
-    .unwrap();
+    let vec2 = PolicyGradientVector::new(ExternalAgentKind::ClaudeCode, [0.0; 6], 10, 0.5).unwrap();
     assert!((vec.distance(&vec2) - norm).abs() < 1e-6);
 
     // 4. Gradient clipping (Theorem 45 norm bound)
@@ -53,14 +46,23 @@ fn test_policy_gradient_vector_primitives_and_validation() {
     // 5. Validation rejection of non-finite components
     let nan_grad = [f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0];
     let err_nan = PolicyGradientVector::new(ExternalAgentKind::CodexCli, nan_grad, 10, 0.1);
-    assert!(matches!(err_nan, Err(FederatedPolicyError::InvalidGradient(_))));
+    assert!(matches!(
+        err_nan,
+        Err(FederatedPolicyError::InvalidGradient(_))
+    ));
 
     let inf_grad = [0.0, f64::INFINITY, 0.0, 0.0, 0.0, 0.0];
     let err_inf = PolicyGradientVector::new(ExternalAgentKind::CodexCli, inf_grad, 10, 0.1);
-    assert!(matches!(err_inf, Err(FederatedPolicyError::InvalidGradient(_))));
+    assert!(matches!(
+        err_inf,
+        Err(FederatedPolicyError::InvalidGradient(_))
+    ));
 
     let neg_loss = PolicyGradientVector::new(ExternalAgentKind::CodexCli, [0.0; 6], 10, -0.5);
-    assert!(matches!(neg_loss, Err(FederatedPolicyError::InvalidGradient(_))));
+    assert!(matches!(
+        neg_loss,
+        Err(FederatedPolicyError::InvalidGradient(_))
+    ));
 }
 
 #[test]
@@ -82,7 +84,10 @@ fn test_agent_reputation_beta_distribution_and_thompson_sampling() {
     // 2. Thompson sampling: deterministic with fixed seed, bounded in [0, 1]
     let s1 = rec.sample_thompson(42);
     let s2 = rec.sample_thompson(42);
-    assert_eq!(s1, s2, "Thompson sample must be deterministic under identical seed");
+    assert_eq!(
+        s1, s2,
+        "Thompson sample must be deterministic under identical seed"
+    );
     assert!((0.0..=1.0).contains(&s1));
 
     let s3 = rec.sample_thompson(999);
@@ -121,7 +126,10 @@ fn test_agent_reputation_beta_distribution_and_thompson_sampling() {
 
     // Another Byzantine outcome: beta = 11.0, evals = 6, reliability = 3 / 14 ≈ 0.214 < 0.25 -> QUARANTINE!
     rec.record_outcome(false, 0.0);
-    assert!(rec.is_quarantined, "agent must be quarantined when reliability drops below 0.25");
+    assert!(
+        rec.is_quarantined,
+        "agent must be quarantined when reliability drops below 0.25"
+    );
 }
 
 #[test]
@@ -244,9 +252,14 @@ fn test_theorem_46_byzantine_quarantine_hitting_time_bound() {
         engine.update_agent_reputation(adversarial_agent, false, 0.0);
     }
 
-    let rec = engine.get_reputation(adversarial_agent).expect("reputation record exists");
+    let rec = engine
+        .get_reputation(adversarial_agent)
+        .expect("reputation record exists");
     assert_eq!(rec.total_evaluations, 6);
-    assert!(rec.is_quarantined, "adversarial agent must be quarantined after 6 Byzantine events");
+    assert!(
+        rec.is_quarantined,
+        "adversarial agent must be quarantined after 6 Byzantine events"
+    );
     assert!(rec.consensus_weight < CRITICAL_REPUTATION_THRESHOLD);
 
     // When quarantined, its aggregation weight is clamped to QUARANTINE_WEIGHT_PENALTY (0.05)
@@ -256,6 +269,8 @@ fn test_theorem_46_byzantine_quarantine_hitting_time_bound() {
         gradients.push(PolicyGradientVector::new(agent, [0.0; 6], 50, 0.2).unwrap());
     }
 
-    let (agg, _) = engine.aggregate_gradients(&gradients).expect("aggregation should succeed");
+    let (agg, _) = engine
+        .aggregate_gradients(&gradients)
+        .expect("aggregation should succeed");
     assert_eq!(agg, [0.0; 6]);
 }

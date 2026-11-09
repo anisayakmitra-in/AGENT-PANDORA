@@ -2,13 +2,13 @@
 
 #![forbid(unsafe_code)]
 
-use pandora_runtime::cockpit_web::{CockpitWebConfig, CockpitWebServer, format_sse_event};
 use pandora_runtime::cockpit::CockpitLayout;
+use pandora_runtime::cockpit_web::{CockpitWebConfig, CockpitWebServer, format_sse_event};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
@@ -32,7 +32,11 @@ impl Running {
         let handle = thread::spawn(move || {
             let _ = server.run();
         });
-        Self { port, flag, handle: Some(handle) }
+        Self {
+            port,
+            flag,
+            handle: Some(handle),
+        }
     }
 
     fn request(&self, method: &str, path: &str, body: &str) -> (u16, String) {
@@ -87,7 +91,11 @@ fn snapshot_reports_twelve_panels() {
 #[test]
 fn layout_switch_persists() {
     let srv = Running::start();
-    let (code, body) = srv.request("POST", "/api/action/layout", &json!({"layout": "nine_panel"}).to_string());
+    let (code, body) = srv.request(
+        "POST",
+        "/api/action/layout",
+        &json!({"layout": "nine_panel"}).to_string(),
+    );
     assert_eq!(code, 200);
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["panel_count"], 9);
@@ -99,7 +107,11 @@ fn layout_switch_persists() {
 #[test]
 fn invalid_layout_and_json_rejected() {
     let srv = Running::start();
-    let (c1, _) = srv.request("POST", "/api/action/layout", &json!({"layout": "bogus"}).to_string());
+    let (c1, _) = srv.request(
+        "POST",
+        "/api/action/layout",
+        &json!({"layout": "bogus"}).to_string(),
+    );
     assert_eq!(c1, 400);
     let (c2, _) = srv.request("POST", "/api/action/layout", "not json{{");
     assert_eq!(c2, 400);
@@ -147,7 +159,8 @@ fn sse_stream_emits_telemetry() {
     let srv = Running::start();
     let mut s = TcpStream::connect(("127.0.0.1", srv.port)).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    s.write_all(b"GET /api/events HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n").unwrap();
+    s.write_all(b"GET /api/events HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n")
+        .unwrap();
     let mut r = BufReader::new(s);
     let mut seen_sse = false;
     let mut seen_event = false;

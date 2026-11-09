@@ -29,12 +29,24 @@ fn autopilot_cli_json() {
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["status"], "certified");
     assert_eq!(v["spawned_agents"].as_array().unwrap().len(), 9);
-    assert!(v["patch_certificate"].as_str().unwrap().starts_with("PANDORA_PATCH_CERT_V1:"));
+    assert!(
+        v["patch_certificate"]
+            .as_str()
+            .unwrap()
+            .starts_with("PANDORA_PATCH_CERT_V1:")
+    );
 }
 
 #[test]
 fn autopilot_slash_and_agent_subset() {
-    let (ok, out, err) = run(&["/autopilot", "fix", "bug", "--agents", "agy,claude,codex", "--json"]);
+    let (ok, out, err) = run(&[
+        "/autopilot",
+        "fix",
+        "bug",
+        "--agents",
+        "agy,claude,codex",
+        "--json",
+    ]);
     assert!(ok, "{err}");
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["spawned_agents"].as_array().unwrap().len(), 3);
@@ -50,7 +62,16 @@ fn autopilot_requires_goal_and_valid_agents() {
 
 #[test]
 fn web_cli_reports_url_without_blocking() {
-    let (ok, out, err) = run(&["cockpit", "web", "--port", "0", "--bind", "127.0.0.1", "--dry-run", "--json"]);
+    let (ok, out, err) = run(&[
+        "cockpit",
+        "web",
+        "--port",
+        "0",
+        "--bind",
+        "127.0.0.1",
+        "--dry-run",
+        "--json",
+    ]);
     assert!(ok, "{err}");
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["status"], "ok");

@@ -213,7 +213,8 @@ pub struct AutopilotSessionConfig {
 impl Default for AutopilotSessionConfig {
     fn default() -> Self {
         Self {
-            task_goal: "Enforce zero-unsafe invariants and optimize subsystem telemetry".to_string(),
+            task_goal: "Enforce zero-unsafe invariants and optimize subsystem telemetry"
+                .to_string(),
             candidate_agents: ExternalAgentKind::all().to_vec(),
             pexer_bin: None,
             dry_run: true,
@@ -312,8 +313,7 @@ impl MultiAgentAutopilotOrchestrator {
         let proposals = Self::synthesize_candidate_proposals(goal, &config.candidate_agents);
 
         // Stage 4: Execute SwarmCodeConsensusEngine (Theorem 43 Byzantine Consensus)
-        let consensus_engine =
-            SwarmCodeConsensusEngine::new(config.threshold, config.divergence);
+        let consensus_engine = SwarmCodeConsensusEngine::new(config.threshold, config.divergence);
         let decision = consensus_engine.resolve_consensus(&proposals, epoch_ms)?;
 
         // Locate winning proposal

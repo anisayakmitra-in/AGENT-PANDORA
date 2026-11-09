@@ -11,17 +11,17 @@ use pandora_runtime::spectral_topology::{SpectralTopologyAnalyzer, WeightedEdge}
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use pandora_runtime::bandit_router::SafePrng;
 use pandora_runtime::byzantine_aggregator::{
     AgentVectorUpdate, AggregationRule, ByzantineAggregator,
 };
+use pandora_runtime::federated_policy::{
+    FederatedPolicyEngine, POLICY_DIMENSION_LABELS, PolicyGradientVector,
+};
 use pandora_runtime::martingale_gate::MartingaleCanaryGate;
 use pandora_runtime::mean_field_game::{MeanFieldGame, MfgResourceConfig};
-use pandora_runtime::pac_bayes_monitor::{PacBayesConfig, PacBayesMonitor};
-use pandora_runtime::bandit_router::SafePrng;
-use pandora_runtime::federated_policy::{
-    FederatedPolicyEngine, PolicyGradientVector, POLICY_DIMENSION_LABELS,
-};
 use pandora_runtime::multi_agent_collab::ExternalAgentKind;
+use pandora_runtime::pac_bayes_monitor::{PacBayesConfig, PacBayesMonitor};
 use pandora_runtime::speculative_decoding::{RadixKvCache, SpeculativeEngine, TokenProbability};
 use pandora_runtime::tropical_dag::{MaxPlusMatrix, TropicalDagScheduler, TropicalError};
 use pandora_runtime::wasserstein_drift::{EmpiricalDistribution, SinkhornDriftDetector};
@@ -612,7 +612,9 @@ pub(crate) fn bandit(args: &[String]) -> Result<CommandResult, CliError> {
 
 pub(crate) fn assurance(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["run-id", "config", "data-dir", "workspace", "json"])?;
-    let run_id = parsed.value("run-id").unwrap_or("pandora-assurance-v3.0.10");
+    let run_id = parsed
+        .value("run-id")
+        .unwrap_or("pandora-assurance-v3.0.10");
     let receipt =
         UnifiedAssuranceReceipt::generate(run_id).map_err(|e| CliError::execution(e, json!({})))?;
 

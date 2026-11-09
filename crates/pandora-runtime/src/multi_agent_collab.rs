@@ -369,7 +369,10 @@ impl MultiAgentCollabManager {
             SlashDispatchCommand::ReputationStatus => {
                 "Inspecting multi-agent reputation standings (Theorem 46)".to_string()
             }
-            SlashDispatchCommand::AutopilotSession { ref goal, ref agents } => {
+            SlashDispatchCommand::AutopilotSession {
+                ref goal,
+                ref agents,
+            } => {
                 for agent in agents {
                     let title = format!("[Autopilot:{}]", agent.identifier().to_ascii_uppercase());
                     self.spawn_pane(*agent, title, goal, &mut ipc, &mut spawned);

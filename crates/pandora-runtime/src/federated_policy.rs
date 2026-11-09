@@ -84,7 +84,10 @@ pub enum FederatedPolicyError {
     /// Not enough participating agents to form a valid consensus quorum.
     InsufficientQuorum { required: usize, actual: usize },
     /// Byzantine fraction exceeds the theoretical trimmed mean breakdown limit ($f \ge M/2$).
-    ByzantineQuorumExceeded { participating: usize, byzantine_count: usize },
+    ByzantineQuorumExceeded {
+        participating: usize,
+        byzantine_count: usize,
+    },
     /// Gradient components or loss values contained non-finite numbers (NaN/Inf).
     InvalidGradient(String),
 }
@@ -94,7 +97,10 @@ impl fmt::Display for FederatedPolicyError {
         match self {
             Self::EmptyGradients => write!(f, "cannot aggregate empty gradient set"),
             Self::DimensionMismatch { expected, actual } => {
-                write!(f, "dimension mismatch: expected {expected}, actual {actual}")
+                write!(
+                    f,
+                    "dimension mismatch: expected {expected}, actual {actual}"
+                )
             }
             Self::InvalidLearningRate(lr) => {
                 write!(f, "invalid learning rate: {lr} (must be in (0.0, 1.0])")
@@ -106,12 +112,22 @@ impl fmt::Display for FederatedPolicyError {
                 write!(f, "invalid gradient norm: {gn} (must be > 0.0)")
             }
             Self::QuarantinedAgent(agent) => {
-                write!(f, "agent {} is quarantined and rejected from consensus", agent.identifier())
+                write!(
+                    f,
+                    "agent {} is quarantined and rejected from consensus",
+                    agent.identifier()
+                )
             }
             Self::InsufficientQuorum { required, actual } => {
-                write!(f, "insufficient quorum: required {required}, actual {actual}")
+                write!(
+                    f,
+                    "insufficient quorum: required {required}, actual {actual}"
+                )
             }
-            Self::ByzantineQuorumExceeded { participating, byzantine_count } => {
+            Self::ByzantineQuorumExceeded {
+                participating,
+                byzantine_count,
+            } => {
                 write!(
                     f,
                     "byzantine quorum exceeded: {byzantine_count} byzantine out of {participating} total (requires < 50% for trimmed mean)"
@@ -237,11 +253,7 @@ impl AgentReputationRecord {
     /// Expected reliability score $\mathbb{E}[w] = \frac{\alpha}{\alpha + \beta}$.
     pub fn expected_reliability(&self) -> f64 {
         let sum = self.alpha + self.beta;
-        if sum <= 0.0 {
-            0.5
-        } else {
-            self.alpha / sum
-        }
+        if sum <= 0.0 { 0.5 } else { self.alpha / sum }
     }
 
     /// Posterior variance $\mathrm{Var}[w] = \frac{\alpha \beta}{(\alpha+\beta)^2(\alpha+\beta+1)}$.
@@ -306,7 +318,11 @@ pub struct FederatedPolicyEngine {
 
 impl Default for FederatedPolicyEngine {
     fn default() -> Self {
-        Self::new(DEFAULT_LEARNING_RATE, DEFAULT_MOMENTUM, DEFAULT_MAX_GRADIENT_NORM)
+        Self::new(
+            DEFAULT_LEARNING_RATE,
+            DEFAULT_MOMENTUM,
+            DEFAULT_MAX_GRADIENT_NORM,
+        )
     }
 }
 
@@ -427,8 +443,7 @@ impl FederatedPolicyEngine {
 
         // Update velocity and apply momentum: v_{t+1} = \beta v_t + (1 - \beta) g_t
         for (i, &g_i) in agg_grad.iter().enumerate() {
-            self.velocity[i] =
-                self.momentum * self.velocity[i] + (1.0 - self.momentum) * g_i;
+            self.velocity[i] = self.momentum * self.velocity[i] + (1.0 - self.momentum) * g_i;
             // Gradient descent step: \theta_{t+1} = \theta_t - \eta v_{t+1}
             self.current_policy[i] =
                 (self.current_policy[i] - self.learning_rate * self.velocity[i]).clamp(0.0, 1.0);

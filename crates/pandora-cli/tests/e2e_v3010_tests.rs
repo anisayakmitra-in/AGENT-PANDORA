@@ -94,7 +94,10 @@ impl TestWebServer {
                         let mut content_length = 0usize;
                         loop {
                             let mut header_line = String::new();
-                            if reader.read_line(&mut header_line).is_err() || header_line == "\r\n" || header_line.is_empty() {
+                            if reader.read_line(&mut header_line).is_err()
+                                || header_line == "\r\n"
+                                || header_line.is_empty()
+                            {
                                 break;
                             }
                             let lower = header_line.to_lowercase();
@@ -159,7 +162,11 @@ impl TestWebServer {
                             }
                             ("GET", "/api/snapshot") | ("GET", "/api/status") => {
                                 let current_layout = active_layout.lock().unwrap().clone();
-                                let panel_count = if current_layout == "nine_panel" { 9 } else { 12 };
+                                let panel_count = if current_layout == "nine_panel" {
+                                    9
+                                } else {
+                                    12
+                                };
                                 let snap = json!({
                                     "status": "ok",
                                     "layout": current_layout,
@@ -182,16 +189,26 @@ impl TestWebServer {
                             ("GET", "/api/events") | ("GET", "/events") => {
                                 let initial_headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
                                 if stream.write_all(initial_headers.as_bytes()).is_ok() {
-                                    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                                    let now_ms = SystemTime::now()
+                                        .duration_since(UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_millis()
+                                        as u64;
                                     let current_layout = active_layout.lock().unwrap().clone();
-                                    let panel_count = if current_layout == "nine_panel" { 9 } else { 12 };
+                                    let panel_count = if current_layout == "nine_panel" {
+                                        9
+                                    } else {
+                                        12
+                                    };
                                     let telemetry_payload = json!({
                                         "layout": current_layout,
                                         "panel_count": panel_count,
                                         "healthy_panels": panel_count,
                                         "timestamp_ms": now_ms
                                     });
-                                    let event_msg = format!("event: telemetry\nid: {now_ms}\ndata: {telemetry_payload}\n\n");
+                                    let event_msg = format!(
+                                        "event: telemetry\nid: {now_ms}\ndata: {telemetry_payload}\n\n"
+                                    );
                                     let _ = stream.write_all(event_msg.as_bytes());
                                     let _ = stream.write_all(b": keepalive\n\n");
                                     let _ = stream.flush();
@@ -200,10 +217,13 @@ impl TestWebServer {
                             ("POST", "/api/action/layout") => {
                                 match serde_json::from_slice::<Value>(&body) {
                                     Ok(json_body) => {
-                                        if let Some(target) = json_body.get("layout").and_then(Value::as_str) {
+                                        if let Some(target) =
+                                            json_body.get("layout").and_then(Value::as_str)
+                                        {
                                             if target == "nine_panel" || target == "twelve_panel" {
                                                 *active_layout.lock().unwrap() = target.to_string();
-                                                let panel_count = if target == "nine_panel" { 9 } else { 12 };
+                                                let panel_count =
+                                                    if target == "nine_panel" { 9 } else { 12 };
                                                 let resp_json = json!({
                                                     "status": "ok",
                                                     "layout": target,
@@ -219,18 +239,30 @@ impl TestWebServer {
                                                 let _ = stream.write_all(resp.as_bytes());
                                             } else {
                                                 let err = "{\"error\":\"invalid_layout\",\"expected\":[\"nine_panel\",\"twelve_panel\"]}";
-                                                let resp = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err.len(), err);
+                                                let resp = format!(
+                                                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                                    err.len(),
+                                                    err
+                                                );
                                                 let _ = stream.write_all(resp.as_bytes());
                                             }
                                         } else {
                                             let err = "{\"error\":\"missing_layout_field\"}";
-                                            let resp = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err.len(), err);
+                                            let resp = format!(
+                                                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                                err.len(),
+                                                err
+                                            );
                                             let _ = stream.write_all(resp.as_bytes());
                                         }
                                     }
                                     Err(_) => {
                                         let err = "{\"error\":\"invalid_json\"}";
-                                        let resp = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err.len(), err);
+                                        let resp = format!(
+                                            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                            err.len(),
+                                            err
+                                        );
                                         let _ = stream.write_all(resp.as_bytes());
                                     }
                                 }
@@ -238,10 +270,17 @@ impl TestWebServer {
                             ("POST", "/api/action/consensus") => {
                                 match serde_json::from_slice::<Value>(&body) {
                                     Ok(json_body) => {
-                                        let threshold = json_body.get("threshold").and_then(Value::as_f64).unwrap_or(0.50);
-                                        let divergence = json_body.get("divergence").and_then(Value::as_f64).unwrap_or(0.45);
+                                        let threshold = json_body
+                                            .get("threshold")
+                                            .and_then(Value::as_f64)
+                                            .unwrap_or(0.50);
+                                        let divergence = json_body
+                                            .get("divergence")
+                                            .and_then(Value::as_f64)
+                                            .unwrap_or(0.45);
 
-                                        let engine = SwarmCodeConsensusEngine::new(threshold, divergence);
+                                        let engine =
+                                            SwarmCodeConsensusEngine::new(threshold, divergence);
                                         let proposals = vec![
                                             AgentPatchProposal::new(
                                                 "p_agy".to_string(),
@@ -281,10 +320,16 @@ impl TestWebServer {
                                             ),
                                         ];
 
-                                        let decision = engine.resolve_consensus(
-                                            &proposals,
-                                            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
-                                        ).expect("consensus resolution");
+                                        let decision = engine
+                                            .resolve_consensus(
+                                                &proposals,
+                                                SystemTime::now()
+                                                    .duration_since(UNIX_EPOCH)
+                                                    .unwrap()
+                                                    .as_millis()
+                                                    as u64,
+                                            )
+                                            .expect("consensus resolution");
 
                                         let resp_json = json!({
                                             "status": "consensus_achieved",
@@ -309,7 +354,11 @@ impl TestWebServer {
                                     }
                                     Err(_) => {
                                         let err = "{\"error\":\"invalid_json\"}";
-                                        let resp = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err.len(), err);
+                                        let resp = format!(
+                                            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                            err.len(),
+                                            err
+                                        );
                                         let _ = stream.write_all(resp.as_bytes());
                                     }
                                 }
@@ -317,12 +366,24 @@ impl TestWebServer {
                             ("POST", "/api/action/approve") => {
                                 match serde_json::from_slice::<Value>(&body) {
                                     Ok(json_body) => {
-                                        let approval_id = json_body.get("approval_id").and_then(Value::as_str).unwrap_or("unknown");
-                                        let allow = json_body.get("allow").and_then(Value::as_bool).unwrap_or(false);
-                                        let approver_id = json_body.get("approver_id").and_then(Value::as_str).unwrap_or("local-user");
+                                        let approval_id = json_body
+                                            .get("approval_id")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("unknown");
+                                        let allow = json_body
+                                            .get("allow")
+                                            .and_then(Value::as_bool)
+                                            .unwrap_or(false);
+                                        let approver_id = json_body
+                                            .get("approver_id")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("local-user");
 
                                         let verdict = if allow { "approved" } else { "denied" };
-                                        approvals.lock().unwrap().insert(approval_id.to_string(), verdict.to_string());
+                                        approvals
+                                            .lock()
+                                            .unwrap()
+                                            .insert(approval_id.to_string(), verdict.to_string());
 
                                         let resp_json = json!({
                                             "status": "resolved",
@@ -341,7 +402,11 @@ impl TestWebServer {
                                     }
                                     Err(_) => {
                                         let err = "{\"error\":\"invalid_json\"}";
-                                        let resp = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err.len(), err);
+                                        let resp = format!(
+                                            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                            err.len(),
+                                            err
+                                        );
                                         let _ = stream.write_all(resp.as_bytes());
                                     }
                                 }
@@ -352,7 +417,11 @@ impl TestWebServer {
                             }
                             _ => {
                                 let err = "{\"error\":\"not_found\",\"path\":\"unknown\"}";
-                                let resp = format!("HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", err.len(), err);
+                                let resp = format!(
+                                    "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                    err.len(),
+                                    err
+                                );
                                 let _ = stream.write_all(resp.as_bytes());
                             }
                         }
@@ -398,7 +467,12 @@ pub struct TestPolicyGradient {
 }
 
 impl TestPolicyGradient {
-    pub fn new(agent: ExternalAgentKind, gradients: [f64; 6], sample_count: usize, loss: f64) -> Self {
+    pub fn new(
+        agent: ExternalAgentKind,
+        gradients: [f64; 6],
+        sample_count: usize,
+        loss: f64,
+    ) -> Self {
         Self {
             agent,
             gradients,
@@ -504,7 +578,13 @@ pub fn test_aggregate_gradients_trimmed_mean(
             .map(|g| {
                 let weight = reputations
                     .get(&g.agent)
-                    .map(|r| if r.is_quarantined { 0.05 } else { r.consensus_weight })
+                    .map(|r| {
+                        if r.is_quarantined {
+                            0.05
+                        } else {
+                            r.consensus_weight
+                        }
+                    })
                     .unwrap_or(0.5);
                 (g.gradients[d], weight)
             })
@@ -632,25 +712,40 @@ fn test_tier1_r1_03_autopilot_swarm_consensus_resolution() {
         ),
     ];
 
-    let decision = engine.resolve_consensus(&proposals, 1731139200000).expect("resolve consensus");
+    let decision = engine
+        .resolve_consensus(&proposals, 1731139200000)
+        .expect("resolve consensus");
     assert_eq!(decision.total_proposals, 4);
     assert_eq!(decision.honest_quorum_size, 3);
     assert_eq!(decision.byzantine_filtered_count, 1);
     assert_eq!(decision.winning_proposal_id, "p_agy");
-    assert_eq!(decision.consensus_hash.len(), 64, "consensus hash must be 64-char hex digest");
+    assert_eq!(
+        decision.consensus_hash.len(),
+        64,
+        "consensus hash must be 64-char hex digest"
+    );
 }
 
 #[test]
 fn test_tier1_r1_04_autopilot_reputation_update_on_consensus() {
     let mut tracker = BTreeMap::new();
-    tracker.insert(ExternalAgentKind::Agy, TestAgentReputation::new(ExternalAgentKind::Agy));
-    tracker.insert(ExternalAgentKind::Hermes, TestAgentReputation::new(ExternalAgentKind::Hermes));
+    tracker.insert(
+        ExternalAgentKind::Agy,
+        TestAgentReputation::new(ExternalAgentKind::Agy),
+    );
+    tracker.insert(
+        ExternalAgentKind::Hermes,
+        TestAgentReputation::new(ExternalAgentKind::Hermes),
+    );
 
     // Agy contributes winning honest patch
     let agy_rep = tracker.get_mut(&ExternalAgentKind::Agy).unwrap();
     let initial_weight = agy_rep.consensus_weight;
     agy_rep.record_outcome(true, 0.98);
-    assert!(agy_rep.consensus_weight > initial_weight, "honest quality increases consensus weight");
+    assert!(
+        agy_rep.consensus_weight > initial_weight,
+        "honest quality increases consensus weight"
+    );
     assert_eq!(agy_rep.total_evaluations, 1);
     assert!(!agy_rep.is_quarantined);
 
@@ -658,7 +753,10 @@ fn test_tier1_r1_04_autopilot_reputation_update_on_consensus() {
     let hermes_rep = tracker.get_mut(&ExternalAgentKind::Hermes).unwrap();
     let h_initial_weight = hermes_rep.consensus_weight;
     hermes_rep.record_outcome(false, 0.0);
-    assert!(hermes_rep.consensus_weight < h_initial_weight, "byzantine penalty decreases consensus weight");
+    assert!(
+        hermes_rep.consensus_weight < h_initial_weight,
+        "byzantine penalty decreases consensus weight"
+    );
     assert_eq!(hermes_rep.total_evaluations, 1);
 }
 
@@ -677,8 +775,15 @@ fn test_tier1_r1_05_autopilot_patch_certification_receipt() {
     let consensus_hash = "PANDORA_CONSENSUS_V1:abcd1234efgh5678";
 
     let cert = certify_patch(goal, &winner, consensus_hash, 0.85);
-    assert!(cert.starts_with("PANDORA_PATCH_CERT_V1:"), "certificate must have standard prefix");
-    assert_eq!(cert.len(), "PANDORA_PATCH_CERT_V1:".len() + 64, "must contain 256-bit SHA-256 hex digest");
+    assert!(
+        cert.starts_with("PANDORA_PATCH_CERT_V1:"),
+        "certificate must have standard prefix"
+    );
+    assert_eq!(
+        cert.len(),
+        "PANDORA_PATCH_CERT_V1:".len() + 64,
+        "must contain 256-bit SHA-256 hex digest"
+    );
 }
 
 #[test]
@@ -686,7 +791,15 @@ fn test_tier1_r1_06_autopilot_cli_and_slash_dispatch() {
     let fixture = E2eFixture::new();
 
     // Verify cockpit consensus CLI invocation
-    let out = fixture.run(&["cockpit", "consensus", "--threshold", "0.50", "--divergence", "0.40", "--json"]);
+    let out = fixture.run(&[
+        "cockpit",
+        "consensus",
+        "--threshold",
+        "0.50",
+        "--divergence",
+        "0.40",
+        "--json",
+    ]);
     assert!(out.status.success(), "cockpit consensus must succeed");
     let val: Value = serde_json::from_slice(&out.stdout).expect("valid json");
     assert_eq!(val["total_proposals"], 4);
@@ -709,13 +822,21 @@ fn test_tier1_r2_01_web_microserver_startup_and_status() {
     // Query /api/snapshot endpoint
     let url = format!("http://127.0.0.1:{}/api/snapshot", server.port);
     let resp = reqwest::blocking::get(&url).expect("connect to test micro-server");
-    assert!(resp.status().is_success(), "snapshot query must return HTTP 200");
+    assert!(
+        resp.status().is_success(),
+        "snapshot query must return HTTP 200"
+    );
 
     let val: Value = resp.json().expect("valid json snapshot");
     assert_eq!(val["status"], "ok");
     assert_eq!(val["panel_count"], 12);
     assert_eq!(val["healthy_panels"], 12);
-    assert!(val["snapshot_digest"].as_str().unwrap().contains("PANDORA_COCKPIT_V1:"));
+    assert!(
+        val["snapshot_digest"]
+            .as_str()
+            .unwrap()
+            .contains("PANDORA_COCKPIT_V1:")
+    );
 }
 
 #[test]
@@ -726,15 +847,32 @@ fn test_tier1_r2_02_responsive_xiaomi15_mobile_html() {
     let resp = reqwest::blocking::get(&url).expect("fetch index.html");
     assert!(resp.status().is_success());
 
-    let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("text/html"));
 
     let body = resp.text().expect("html body");
     // Verify Xiaomi 15 calibrated viewport meta tag
-    assert!(body.contains("viewport-fit=cover"), "must include viewport-fit=cover for notch/island support");
-    assert!(body.contains("width=device-width"), "must adapt to device width");
-    assert!(body.contains("max-width: 768px"), "must contain responsive media query for mobile screens");
-    assert!(body.contains("min-height: 48px"), "touch targets must satisfy 48px minimum height");
+    assert!(
+        body.contains("viewport-fit=cover"),
+        "must include viewport-fit=cover for notch/island support"
+    );
+    assert!(
+        body.contains("width=device-width"),
+        "must adapt to device width"
+    );
+    assert!(
+        body.contains("max-width: 768px"),
+        "must contain responsive media query for mobile screens"
+    );
+    assert!(
+        body.contains("min-height: 48px"),
+        "touch targets must satisfy 48px minimum height"
+    );
 }
 
 #[test]
@@ -742,8 +880,12 @@ fn test_tier1_r2_03_realtime_sse_telemetry_stream() {
     let server = TestWebServer::start();
 
     // Connect to SSE stream via raw TCP stream
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).expect("connect to SSE port");
-    let req = format!("GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: text/event-stream\r\n\r\n", server.port);
+    let mut stream =
+        TcpStream::connect(format!("127.0.0.1:{}", server.port)).expect("connect to SSE port");
+    let req = format!(
+        "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: text/event-stream\r\n\r\n",
+        server.port
+    );
     stream.write_all(req.as_bytes()).expect("send SSE GET");
 
     let mut reader = BufReader::new(stream);
@@ -760,12 +902,20 @@ fn test_tier1_r2_03_realtime_sse_telemetry_stream() {
             break;
         }
     }
-    assert!(is_sse, "server response must specify Content-Type: text/event-stream");
+    assert!(
+        is_sse,
+        "server response must specify Content-Type: text/event-stream"
+    );
 
     // Read first event lines
     let mut event_type_line = String::new();
-    reader.read_line(&mut event_type_line).expect("read event line");
-    assert!(event_type_line.starts_with("event: telemetry"), "must emit telemetry event");
+    reader
+        .read_line(&mut event_type_line)
+        .expect("read event line");
+    assert!(
+        event_type_line.starts_with("event: telemetry"),
+        "must emit telemetry event"
+    );
 
     let mut id_line = String::new();
     reader.read_line(&mut id_line).expect("read id line");
@@ -783,7 +933,8 @@ fn test_tier1_r2_04_interactive_layout_switch_action() {
     let url = format!("http://127.0.0.1:{}/api/action/layout", server.port);
 
     // Switch to nine_panel
-    let resp9 = client.post(&url)
+    let resp9 = client
+        .post(&url)
         .json(&json!({"layout": "nine_panel"}))
         .send()
         .expect("send layout switch");
@@ -794,7 +945,8 @@ fn test_tier1_r2_04_interactive_layout_switch_action() {
     assert_eq!(val9["panel_count"], 9);
 
     // Switch back to twelve_panel
-    let resp12 = client.post(&url)
+    let resp12 = client
+        .post(&url)
         .json(&json!({"layout": "twelve_panel"}))
         .send()
         .expect("send layout switch");
@@ -811,7 +963,8 @@ fn test_tier1_r2_05_interactive_consensus_and_approve_actions() {
 
     // Trigger consensus action
     let consensus_url = format!("http://127.0.0.1:{}/api/action/consensus", server.port);
-    let resp_c = client.post(&consensus_url)
+    let resp_c = client
+        .post(&consensus_url)
         .json(&json!({"threshold": 0.55, "divergence": 0.40}))
         .send()
         .expect("trigger consensus action");
@@ -824,7 +977,8 @@ fn test_tier1_r2_05_interactive_consensus_and_approve_actions() {
 
     // Trigger approve permission action
     let approve_url = format!("http://127.0.0.1:{}/api/action/approve", server.port);
-    let resp_a = client.post(&approve_url)
+    let resp_a = client
+        .post(&approve_url)
         .json(&json!({"approval_id": "appr-v3010-01", "allow": true, "approver_id": "test-admin"}))
         .send()
         .expect("trigger approve action");
@@ -864,7 +1018,10 @@ fn test_tier1_r3_01_policy_gradient_vector_primitives() {
         5,
         0.08,
     );
-    assert!((grad1.distance(&grad2)).abs() < 1e-9, "identical coordinates have zero distance");
+    assert!(
+        (grad1.distance(&grad2)).abs() < 1e-9,
+        "identical coordinates have zero distance"
+    );
 }
 
 #[test]
@@ -894,10 +1051,30 @@ fn test_tier1_r3_03_federated_trimmed_mean_aggregation() {
 
     // 4 agents: 3 honest around 0.5, 1 extreme Byzantine outlier at 10.0
     let gradients = vec![
-        TestPolicyGradient::new(ExternalAgentKind::Agy, [0.48, 0.49, 0.50, 0.51, 0.52, 0.50], 1, 0.1),
-        TestPolicyGradient::new(ExternalAgentKind::ClaudeCode, [0.50, 0.50, 0.50, 0.50, 0.50, 0.50], 1, 0.1),
-        TestPolicyGradient::new(ExternalAgentKind::CodexCli, [0.52, 0.51, 0.50, 0.49, 0.48, 0.50], 1, 0.1),
-        TestPolicyGradient::new(ExternalAgentKind::Devin, [10.0, 10.0, 10.0, 10.0, 10.0, 10.0], 1, 5.0),
+        TestPolicyGradient::new(
+            ExternalAgentKind::Agy,
+            [0.48, 0.49, 0.50, 0.51, 0.52, 0.50],
+            1,
+            0.1,
+        ),
+        TestPolicyGradient::new(
+            ExternalAgentKind::ClaudeCode,
+            [0.50, 0.50, 0.50, 0.50, 0.50, 0.50],
+            1,
+            0.1,
+        ),
+        TestPolicyGradient::new(
+            ExternalAgentKind::CodexCli,
+            [0.52, 0.51, 0.50, 0.49, 0.48, 0.50],
+            1,
+            0.1,
+        ),
+        TestPolicyGradient::new(
+            ExternalAgentKind::Devin,
+            [10.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+            1,
+            5.0,
+        ),
     ];
 
     let (agg, trimmed_count) = test_aggregate_gradients_trimmed_mean(&gradients, &reputations, 1.0)
@@ -906,7 +1083,10 @@ fn test_tier1_r3_03_federated_trimmed_mean_aggregation() {
     // Devin is trimmed as top outlier (k = 4/4 = 1 top and bottom)
     assert_eq!(trimmed_count, 2);
     for val in &agg {
-        assert!(*val <= 0.60 && *val >= 0.40, "aggregated gradient must be shielded from outlier: {val}");
+        assert!(
+            *val <= 0.60 && *val >= 0.40,
+            "aggregated gradient must be shielded from outlier: {val}"
+        );
     }
 }
 
@@ -943,7 +1123,10 @@ fn test_tier1_r3_05_cli_reputation_status_all_9_agents() {
     let fixture = E2eFixture::new();
 
     let out = fixture.run(&["cockpit", "reputation", "--json"]);
-    assert!(out.status.success(), "cockpit reputation CLI command must succeed");
+    assert!(
+        out.status.success(),
+        "cockpit reputation CLI command must succeed"
+    );
 
     let val: Value = serde_json::from_slice(&out.stdout).expect("valid json output");
     assert_eq!(val["status"], "ok");
@@ -952,9 +1135,14 @@ fn test_tier1_r3_05_cli_reputation_status_all_9_agents() {
     assert_eq!(val["quarantine_threshold"], 0.25);
 
     let agents_obj = val["agents"].as_object().expect("agents map");
-    let expected_keys = ["agy", "claude", "cline", "codex", "cursor", "devin", "gemini", "hermes", "qwen"];
+    let expected_keys = [
+        "agy", "claude", "cline", "codex", "cursor", "devin", "gemini", "hermes", "qwen",
+    ];
     for key in expected_keys {
-        assert!(agents_obj.contains_key(key), "missing agent {key} in reputation status");
+        assert!(
+            agents_obj.contains_key(key),
+            "missing agent {key} in reputation status"
+        );
         let a = &agents_obj[key];
         assert_eq!(a["is_quarantined"], false);
         assert!((a["consensus_weight"].as_f64().unwrap() - 0.666667).abs() < 1e-4);
@@ -974,7 +1162,10 @@ fn test_tier1_r3_05_cli_reputation_status_all_9_agents() {
 fn test_tier2_r1_01_autopilot_empty_or_whitespace_goal() {
     let mut collab = MultiAgentCollabManager::new();
     let res_empty = collab.dispatch("/autopilot ");
-    assert!(res_empty.is_err(), "empty goal must be rejected with validation error");
+    assert!(
+        res_empty.is_err(),
+        "empty goal must be rejected with validation error"
+    );
 
     let res_spaces = collab.dispatch("/autopilot    ");
     assert!(res_spaces.is_err(), "whitespace-only goal must be rejected");
@@ -988,20 +1179,21 @@ fn test_tier2_r1_02_autopilot_subquorum_single_agent() {
     assert!(res_empty.is_err(), "empty proposal slice must return Err");
 
     // 2. Non-viable sub-quorum proposal (fails invariant compliance < 0.40) must safely return Err
-    let non_viable = vec![
-        AgentPatchProposal::new(
-            "p_solo_fail".to_string(),
-            ExternalAgentKind::Agy,
-            "Solo non-viable".to_string(),
-            "Non-viable proposal test".to_string(),
-            "--- a/solo.rs\n+++ b/solo.rs\n@@ -1 +1 @@\n-a\n+b".to_string(),
-            ProposalScoreVector::new(0.30, 0.20, 0.10, 0.20),
-            50,
-        ),
-    ];
+    let non_viable = vec![AgentPatchProposal::new(
+        "p_solo_fail".to_string(),
+        ExternalAgentKind::Agy,
+        "Solo non-viable".to_string(),
+        "Non-viable proposal test".to_string(),
+        "--- a/solo.rs\n+++ b/solo.rs\n@@ -1 +1 @@\n-a\n+b".to_string(),
+        ProposalScoreVector::new(0.30, 0.20, 0.10, 0.20),
+        50,
+    )];
 
     let res_fail = engine.resolve_consensus(&non_viable, 1000);
-    assert!(res_fail.is_err(), "non-viable proposal must safely return Err instead of panicking");
+    assert!(
+        res_fail.is_err(),
+        "non-viable proposal must safely return Err instead of panicking"
+    );
 }
 
 #[test]
@@ -1010,21 +1202,39 @@ fn test_tier2_r1_03_autopilot_all_byzantine_rejection() {
     // All proposals violate invariant compliance (< 0.40) or threshold
     let bad_proposals = vec![
         AgentPatchProposal::new(
-            "b1".to_string(), ExternalAgentKind::Agy, "Bad 1".to_string(), "bad".to_string(),
-            "bad".to_string(), ProposalScoreVector::new(0.20, 0.20, 0.20, 0.20), 10,
+            "b1".to_string(),
+            ExternalAgentKind::Agy,
+            "Bad 1".to_string(),
+            "bad".to_string(),
+            "bad".to_string(),
+            ProposalScoreVector::new(0.20, 0.20, 0.20, 0.20),
+            10,
         ),
         AgentPatchProposal::new(
-            "b2".to_string(), ExternalAgentKind::ClaudeCode, "Bad 2".to_string(), "bad".to_string(),
-            "bad".to_string(), ProposalScoreVector::new(0.10, 0.30, 0.15, 0.10), 10,
+            "b2".to_string(),
+            ExternalAgentKind::ClaudeCode,
+            "Bad 2".to_string(),
+            "bad".to_string(),
+            "bad".to_string(),
+            ProposalScoreVector::new(0.10, 0.30, 0.15, 0.10),
+            10,
         ),
         AgentPatchProposal::new(
-            "b3".to_string(), ExternalAgentKind::CodexCli, "Bad 3".to_string(), "bad".to_string(),
-            "bad".to_string(), ProposalScoreVector::new(0.25, 0.15, 0.25, 0.10), 10,
+            "b3".to_string(),
+            ExternalAgentKind::CodexCli,
+            "Bad 3".to_string(),
+            "bad".to_string(),
+            "bad".to_string(),
+            ProposalScoreVector::new(0.25, 0.15, 0.25, 0.10),
+            10,
         ),
     ];
 
     let res = engine.resolve_consensus(&bad_proposals, 2000);
-    assert!(res.is_err(), "when all proposals are below threshold, consensus must reject all");
+    assert!(
+        res.is_err(),
+        "when all proposals are below threshold, consensus must reject all"
+    );
 }
 
 #[test]
@@ -1034,14 +1244,19 @@ fn test_tier2_r1_04_autopilot_malformed_diff_injection() {
         ExternalAgentKind::Devin,
         "Corrupted binary diff".to_string(),
         "Adversarial binary injection".to_string(),
-        String::from_utf8_lossy(b"\x00\xFF\xFE\xFD\x80\x90BINARY_GARBAGE_NO_DIFF_HEADER\r\n\x00").to_string(),
+        String::from_utf8_lossy(b"\x00\xFF\xFE\xFD\x80\x90BINARY_GARBAGE_NO_DIFF_HEADER\r\n\x00")
+            .to_string(),
         ProposalScoreVector::new(0.90, 0.85, 0.80, 0.90),
         100,
     );
 
     // Fingerprint calculation must handle arbitrary binary sequences safely without panic
     let fp = proposal.fingerprint();
-    assert_eq!(fp.len(), 64, "fingerprint must compute SHA-256 successfully over malformed diff bytes");
+    assert_eq!(
+        fp.len(),
+        64,
+        "fingerprint must compute SHA-256 successfully over malformed diff bytes"
+    );
 }
 
 #[test]
@@ -1051,20 +1266,30 @@ fn test_tier2_r1_05_autopilot_quarantined_agent_exclusion() {
     rep.record_outcome(false, 0.0);
     rep.record_outcome(false, 0.0);
     rep.record_outcome(false, 0.0);
-    assert!(rep.is_quarantined, "agent must be quarantined after 3 byzantine outcomes");
+    assert!(
+        rep.is_quarantined,
+        "agent must be quarantined after 3 byzantine outcomes"
+    );
 
     // In trimmed mean, quarantined agent weight drops to 0.05
     let mut reputations = BTreeMap::new();
     reputations.insert(ExternalAgentKind::CursorAgent, rep);
-    reputations.insert(ExternalAgentKind::Agy, TestAgentReputation::new(ExternalAgentKind::Agy));
+    reputations.insert(
+        ExternalAgentKind::Agy,
+        TestAgentReputation::new(ExternalAgentKind::Agy),
+    );
 
     let g_cursor = TestPolicyGradient::new(ExternalAgentKind::CursorAgent, [1.0; 6], 1, 0.5);
     let g_agy = TestPolicyGradient::new(ExternalAgentKind::Agy, [0.0; 6], 1, 0.1);
 
-    let (agg, _) = test_aggregate_gradients_trimmed_mean(&[g_cursor, g_agy], &reputations, 1.0).unwrap();
+    let (agg, _) =
+        test_aggregate_gradients_trimmed_mean(&[g_cursor, g_agy], &reputations, 1.0).unwrap();
     // Agy has weight 0.667 while Cursor has penalty weight 0.05, so aggregate should be very close to 0.0
     for val in &agg {
-        assert!(*val < 0.15, "quarantined agent weight must have negligible influence on aggregate: {val}");
+        assert!(
+            *val < 0.15,
+            "quarantined agent weight must have negligible influence on aggregate: {val}"
+        );
     }
 }
 
@@ -1079,7 +1304,10 @@ fn test_tier2_r2_01_web_rapid_reconnect_and_stream_close() {
     // Rapidly open and drop 10 connections in a loop
     for _ in 0..10 {
         let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port));
-        assert!(stream.is_ok(), "connection must succeed without socket exhaustion");
+        assert!(
+            stream.is_ok(),
+            "connection must succeed without socket exhaustion"
+        );
         drop(stream);
     }
 
@@ -1096,13 +1324,18 @@ fn test_tier2_r2_02_web_invalid_json_payload() {
     let url = format!("http://127.0.0.1:{}/api/action/layout", server.port);
 
     // Send malformed non-JSON body
-    let resp = client.post(&url)
+    let resp = client
+        .post(&url)
         .header("Content-Type", "application/json")
         .body("INVALID_MALFORMED_JSON_STRING{{{")
         .send()
         .expect("send bad json");
 
-    assert_eq!(resp.status().as_u16(), 400, "malformed JSON must return HTTP 400 Bad Request");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "malformed JSON must return HTTP 400 Bad Request"
+    );
 }
 
 #[test]
@@ -1113,21 +1346,33 @@ fn test_tier2_r2_03_web_oversized_payload_protection() {
 
     // Create 70 KB payload (> 64 KB protection boundary)
     let oversized = vec![b'A'; 70 * 1024];
-    let resp = client.post(&url)
+    let resp = client
+        .post(&url)
         .header("Content-Type", "application/json")
         .body(oversized)
         .send()
         .expect("send oversized body");
 
-    assert_eq!(resp.status().as_u16(), 413, "payloads > 64 KB must return HTTP 413 Payload Too Large");
+    assert_eq!(
+        resp.status().as_u16(),
+        413,
+        "payloads > 64 KB must return HTTP 413 Payload Too Large"
+    );
 }
 
 #[test]
 fn test_tier2_r2_04_web_unknown_endpoint_404() {
     let server = TestWebServer::start();
-    let url = format!("http://127.0.0.1:{}/api/non_existent_endpoint_v3010", server.port);
+    let url = format!(
+        "http://127.0.0.1:{}/api/non_existent_endpoint_v3010",
+        server.port
+    );
     let resp = reqwest::blocking::get(&url).expect("query unknown endpoint");
-    assert_eq!(resp.status().as_u16(), 404, "unknown routes must return HTTP 404 Not Found");
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "unknown routes must return HTTP 404 Not Found"
+    );
 }
 
 #[test]
@@ -1135,7 +1380,10 @@ fn test_tier2_r2_05_web_port_conflict_handling() {
     let server = TestWebServer::start();
     // Attempt to bind another TcpListener on the same port
     let conflict = TcpListener::bind(format!("127.0.0.1:{}", server.port));
-    assert!(conflict.is_err(), "binding an already occupied port must return std::io::Error");
+    assert!(
+        conflict.is_err(),
+        "binding an already occupied port must return std::io::Error"
+    );
 }
 
 // ----------------------------------------------------------------------------
@@ -1153,7 +1401,10 @@ fn test_tier2_r3_01_gradient_zero_and_infinite_norms() {
     // Extreme gradient
     let huge_g = TestPolicyGradient::new(ExternalAgentKind::ClaudeCode, [1e8; 6], 1, 100.0);
     let clipped_huge = huge_g.clipped(1.0);
-    assert!((clipped_huge.l2_norm() - 1.0).abs() < 1e-6, "extreme gradients must be clipped to max norm bound");
+    assert!(
+        (clipped_huge.l2_norm() - 1.0).abs() < 1e-6,
+        "extreme gradients must be clipped to max norm bound"
+    );
 }
 
 #[test]
@@ -1161,7 +1412,10 @@ fn test_tier2_r3_02_empty_gradient_set_error() {
     let reputations = BTreeMap::new();
     let empty_vec: Vec<TestPolicyGradient> = Vec::new();
     let res = test_aggregate_gradients_trimmed_mean(&empty_vec, &reputations, 1.0);
-    assert!(res.is_err(), "aggregating empty gradient slice must return Err");
+    assert!(
+        res.is_err(),
+        "aggregating empty gradient slice must return Err"
+    );
 }
 
 #[test]
@@ -1192,7 +1446,10 @@ fn test_tier2_r3_04_quarantine_threshold_decay() {
     // Eval 3: Byzantine -> beta = 7.0 -> weight = 2/9 = 0.222 (< 0.25 threshold, total >= 3)
     rec.record_outcome(false, 0.0);
     assert_eq!(rec.total_evaluations, 3);
-    assert!(rec.is_quarantined, "must be quarantined when weight < 0.25 after >= 3 evaluations");
+    assert!(
+        rec.is_quarantined,
+        "must be quarantined when weight < 0.25 after >= 3 evaluations"
+    );
 }
 
 #[test]
@@ -1223,7 +1480,8 @@ fn test_tier3_01_web_action_triggers_consensus_and_updates_reputation() {
 
     // 1. Trigger consensus action via HTTP POST
     let url = format!("http://127.0.0.1:{}/api/action/consensus", server.port);
-    let resp = client.post(&url)
+    let resp = client
+        .post(&url)
         .json(&json!({"threshold": 0.50, "divergence": 0.45}))
         .send()
         .expect("consensus POST");
@@ -1235,15 +1493,30 @@ fn test_tier3_01_web_action_triggers_consensus_and_updates_reputation() {
 
     // 2. Feed consensus outcome into reputation tracker
     let mut tracker = BTreeMap::new();
-    tracker.insert(ExternalAgentKind::Agy, TestAgentReputation::new(ExternalAgentKind::Agy));
-    tracker.insert(ExternalAgentKind::Hermes, TestAgentReputation::new(ExternalAgentKind::Hermes));
+    tracker.insert(
+        ExternalAgentKind::Agy,
+        TestAgentReputation::new(ExternalAgentKind::Agy),
+    );
+    tracker.insert(
+        ExternalAgentKind::Hermes,
+        TestAgentReputation::new(ExternalAgentKind::Hermes),
+    );
 
     // Agy won (honest)
-    tracker.get_mut(&ExternalAgentKind::Agy).unwrap().record_outcome(true, 0.95);
+    tracker
+        .get_mut(&ExternalAgentKind::Agy)
+        .unwrap()
+        .record_outcome(true, 0.95);
     // Hermes was filtered (Byzantine)
-    tracker.get_mut(&ExternalAgentKind::Hermes).unwrap().record_outcome(false, 0.0);
+    tracker
+        .get_mut(&ExternalAgentKind::Hermes)
+        .unwrap()
+        .record_outcome(false, 0.0);
 
-    assert!(tracker[&ExternalAgentKind::Agy].consensus_weight > tracker[&ExternalAgentKind::Hermes].consensus_weight);
+    assert!(
+        tracker[&ExternalAgentKind::Agy].consensus_weight
+            > tracker[&ExternalAgentKind::Hermes].consensus_weight
+    );
 }
 
 #[test]
@@ -1257,7 +1530,11 @@ fn test_tier3_02_layout_switch_during_live_sse_stream() {
         thread::sleep(Duration::from_millis(50));
         let client = reqwest::blocking::Client::new();
         let url = format!("http://127.0.0.1:{port}/api/action/layout");
-        let resp = client.post(&url).json(&json!({"layout": "nine_panel"})).send().unwrap();
+        let resp = client
+            .post(&url)
+            .json(&json!({"layout": "nine_panel"}))
+            .send()
+            .unwrap();
         assert!(resp.status().is_success());
     });
 
@@ -1301,8 +1578,11 @@ fn test_tier3_04_permission_approval_unblocks_autopilot_flow() {
 
     // 1. Approve permission via Web API
     let approve_url = format!("http://127.0.0.1:{}/api/action/approve", server.port);
-    let resp = client.post(&approve_url)
-        .json(&json!({"approval_id": "tool-call-git-push", "allow": true, "approver_id": "operator"}))
+    let resp = client
+        .post(&approve_url)
+        .json(
+            &json!({"approval_id": "tool-call-git-push", "allow": true, "approver_id": "operator"}),
+        )
         .send()
         .unwrap();
     assert!(resp.status().is_success());
@@ -1324,7 +1604,10 @@ fn test_tier3_05_federated_gradient_update_and_reputation_quarantine_sync() {
 
     // Agent Devin goes rogue 3 times
     for _ in 0..3 {
-        reputations.get_mut(&ExternalAgentKind::Devin).unwrap().record_outcome(false, 0.0);
+        reputations
+            .get_mut(&ExternalAgentKind::Devin)
+            .unwrap()
+            .record_outcome(false, 0.0);
     }
     assert!(reputations[&ExternalAgentKind::Devin].is_quarantined);
 
@@ -1343,7 +1626,10 @@ fn test_tier3_05_federated_gradient_update_and_reputation_quarantine_sync() {
     let (agg, _) = test_aggregate_gradients_trimmed_mean(&gradients, &reputations, 1.0).unwrap();
     // Aggregated gradient remains close to honest workers (0.1)
     for val in &agg {
-        assert!(*val < 0.25, "quarantined rogue agent must not compromise federated policy update: {val}");
+        assert!(
+            *val < 0.25,
+            "quarantined rogue agent must not compromise federated policy update: {val}"
+        );
     }
 }
 
@@ -1375,20 +1661,40 @@ fn test_tier4_01_full_lifecycle_autonomous_mission() {
     let engine = SwarmCodeConsensusEngine::new(0.50, 0.40);
     let proposals = vec![
         AgentPatchProposal::new(
-            "p1".to_string(), ExternalAgentKind::Agy, "Safe parser".to_string(), "safe".to_string(),
-            "diff".to_string(), ProposalScoreVector::new(1.0, 0.98, 0.95, 1.0), 90,
+            "p1".to_string(),
+            ExternalAgentKind::Agy,
+            "Safe parser".to_string(),
+            "safe".to_string(),
+            "diff".to_string(),
+            ProposalScoreVector::new(1.0, 0.98, 0.95, 1.0),
+            90,
         ),
         AgentPatchProposal::new(
-            "p2".to_string(), ExternalAgentKind::ClaudeCode, "Bounds".to_string(), "safe".to_string(),
-            "diff".to_string(), ProposalScoreVector::new(0.95, 0.95, 0.92, 0.95), 110,
+            "p2".to_string(),
+            ExternalAgentKind::ClaudeCode,
+            "Bounds".to_string(),
+            "safe".to_string(),
+            "diff".to_string(),
+            ProposalScoreVector::new(0.95, 0.95, 0.92, 0.95),
+            110,
         ),
         AgentPatchProposal::new(
-            "p3".to_string(), ExternalAgentKind::CodexCli, "AST".to_string(), "safe".to_string(),
-            "diff".to_string(), ProposalScoreVector::new(0.92, 0.90, 0.88, 0.90), 105,
+            "p3".to_string(),
+            ExternalAgentKind::CodexCli,
+            "AST".to_string(),
+            "safe".to_string(),
+            "diff".to_string(),
+            ProposalScoreVector::new(0.92, 0.90, 0.88, 0.90),
+            105,
         ),
         AgentPatchProposal::new(
-            "p4_byz".to_string(), ExternalAgentKind::Devin, "Byz".to_string(), "bad".to_string(),
-            "diff".to_string(), ProposalScoreVector::new(0.10, 0.15, 0.10, 0.05), 190,
+            "p4_byz".to_string(),
+            ExternalAgentKind::Devin,
+            "Byz".to_string(),
+            "bad".to_string(),
+            "diff".to_string(),
+            ProposalScoreVector::new(0.10, 0.15, 0.10, 0.05),
+            190,
         ),
     ];
     let decision = engine.resolve_consensus(&proposals, 1000).unwrap();
@@ -1421,8 +1727,15 @@ fn test_tier4_02_byzantine_swarm_quarantine_and_recovery() {
         rep.record_outcome(true, 1.0);
     }
     assert!(rep.consensus_weight > min_weight);
-    assert!(rep.consensus_weight > 0.50, "rehabilitated agent weight must exceed 0.50: {}", rep.consensus_weight);
-    assert!(!rep.is_quarantined, "rehabilitated agent must no longer be quarantined");
+    assert!(
+        rep.consensus_weight > 0.50,
+        "rehabilitated agent weight must exceed 0.50: {}",
+        rep.consensus_weight
+    );
+    assert!(
+        !rep.is_quarantined,
+        "rehabilitated agent must no longer be quarantined"
+    );
 }
 
 #[test]
@@ -1432,22 +1745,46 @@ fn test_tier4_03_mobile_companion_interactive_control_loop() {
 
     // 1. Mobile browser loads Xiaomi 15 calibrated HTML
     let index_url = format!("http://127.0.0.1:{}/", server.port);
-    let html = client.get(&index_url).header("User-Agent", "Mozilla/5.0 (Linux; Android 15; Xiaomi 15)").send().unwrap().text().unwrap();
+    let html = client
+        .get(&index_url)
+        .header("User-Agent", "Mozilla/5.0 (Linux; Android 15; Xiaomi 15)")
+        .send()
+        .unwrap()
+        .text()
+        .unwrap();
     assert!(html.contains("viewport-fit=cover"));
 
     // 2. Mobile user toggles layout to nine_panel
     let layout_url = format!("http://127.0.0.1:{}/api/action/layout", server.port);
-    let l_resp: Value = client.post(&layout_url).json(&json!({"layout": "nine_panel"})).send().unwrap().json().unwrap();
+    let l_resp: Value = client
+        .post(&layout_url)
+        .json(&json!({"layout": "nine_panel"}))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
     assert_eq!(l_resp["panel_count"], 9);
 
     // 3. Mobile user triggers Byzantine consensus
     let consensus_url = format!("http://127.0.0.1:{}/api/action/consensus", server.port);
-    let c_resp: Value = client.post(&consensus_url).json(&json!({"threshold": 0.50})).send().unwrap().json().unwrap();
+    let c_resp: Value = client
+        .post(&consensus_url)
+        .json(&json!({"threshold": 0.50}))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
     assert_eq!(c_resp["status"], "consensus_achieved");
 
     // 4. Mobile user approves permission prompt
     let approve_url = format!("http://127.0.0.1:{}/api/action/approve", server.port);
-    let a_resp: Value = client.post(&approve_url).json(&json!({"approval_id": "appr-mobile", "allow": true})).send().unwrap().json().unwrap();
+    let a_resp: Value = client
+        .post(&approve_url)
+        .json(&json!({"approval_id": "appr-mobile", "allow": true}))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
     assert_eq!(a_resp["verdict"], "approved");
 }
 
@@ -1479,8 +1816,12 @@ fn test_tier4_04_multi_step_federated_policy_convergence() {
             })
             .collect();
 
-        let (agg, trimmed) = test_aggregate_gradients_trimmed_mean(&gradients, &reputations, 1.0).unwrap();
-        assert_eq!(trimmed, 4, "step {step}: must trim 2 top and 2 bottom outliers across 9 agents");
+        let (agg, trimmed) =
+            test_aggregate_gradients_trimmed_mean(&gradients, &reputations, 1.0).unwrap();
+        assert_eq!(
+            trimmed, 4,
+            "step {step}: must trim 2 top and 2 bottom outliers across 9 agents"
+        );
 
         // Momentum descent
         for d in 0..6 {
@@ -1491,7 +1832,10 @@ fn test_tier4_04_multi_step_federated_policy_convergence() {
 
     // Policy parameters must have successfully decreased from initial 0.5 towards optimal descent
     for val in &policy {
-        assert!(*val < 0.50, "federated policy parameter must decrease in direction of descent: {val}");
+        assert!(
+            *val < 0.50,
+            "federated policy parameter must decrease in direction of descent: {val}"
+        );
         assert!(*val >= 0.0, "policy parameter must respect [0, 1] bounds");
     }
 }

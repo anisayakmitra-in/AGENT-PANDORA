@@ -243,10 +243,10 @@ pub use executors::{
     WorktreeResult,
 };
 pub use federated_policy::{
-    AgentReputationRecord, FederatedPolicyEngine, FederatedPolicyError, FederatedUpdateReceipt,
-    PolicyGradientVector, BYZANTINE_BETA_PENALTY, CRITICAL_REPUTATION_THRESHOLD,
-    DEFAULT_LEARNING_RATE, DEFAULT_MAX_GRADIENT_NORM, DEFAULT_MOMENTUM, MIN_EVALS_FOR_QUARANTINE,
-    POLICY_DIMENSIONS, POLICY_DIMENSION_LABELS, QUARANTINE_WEIGHT_PENALTY,
+    AgentReputationRecord, BYZANTINE_BETA_PENALTY, CRITICAL_REPUTATION_THRESHOLD,
+    DEFAULT_LEARNING_RATE, DEFAULT_MAX_GRADIENT_NORM, DEFAULT_MOMENTUM, FederatedPolicyEngine,
+    FederatedPolicyError, FederatedUpdateReceipt, MIN_EVALS_FOR_QUARANTINE,
+    POLICY_DIMENSION_LABELS, POLICY_DIMENSIONS, PolicyGradientVector, QUARANTINE_WEIGHT_PENALTY,
 };
 pub use fleet::{
     FLEET_SCHEMA_VERSION, FleetBudget, FleetEngine, FleetError, FleetFenceState, FleetLease,

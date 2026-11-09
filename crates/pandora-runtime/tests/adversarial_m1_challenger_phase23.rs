@@ -13,9 +13,9 @@
 
 use pandora_runtime::bandit_router::SafePrng;
 use pandora_runtime::federated_policy::{
-    AgentReputationRecord, FederatedPolicyEngine, FederatedPolicyError, PolicyGradientVector,
-    BYZANTINE_BETA_PENALTY, CRITICAL_REPUTATION_THRESHOLD, DEFAULT_LEARNING_RATE,
-    DEFAULT_MAX_GRADIENT_NORM, DEFAULT_MOMENTUM, MIN_EVALS_FOR_QUARANTINE, POLICY_DIMENSIONS,
+    AgentReputationRecord, BYZANTINE_BETA_PENALTY, CRITICAL_REPUTATION_THRESHOLD,
+    DEFAULT_LEARNING_RATE, DEFAULT_MAX_GRADIENT_NORM, DEFAULT_MOMENTUM, FederatedPolicyEngine,
+    FederatedPolicyError, MIN_EVALS_FOR_QUARANTINE, POLICY_DIMENSIONS, PolicyGradientVector,
     QUARANTINE_WEIGHT_PENALTY,
 };
 use pandora_runtime::multi_agent_collab::ExternalAgentKind;
@@ -611,7 +611,7 @@ fn test_adversarial_all_agents_quarantined_fallback() {
     // Aggregation should succeed without dividing by zero, even when all agents are quarantined
     let (agg, trimmed) = engine.aggregate_gradients(&grads).unwrap();
     assert_eq!(trimmed, 2); // 4 / 4 = 1 per side
-                            // Interior slice retains index 1 (0.1) and index 2 (0.2) -> mean 0.15
+    // Interior slice retains index 1 (0.1) and index 2 (0.2) -> mean 0.15
     for &val in &agg {
         assert!((val - 0.15).abs() < 1e-6);
     }

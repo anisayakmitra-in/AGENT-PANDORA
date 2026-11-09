@@ -156,9 +156,14 @@ fn test_runtime_federated_custom_parameters_and_quarantine() {
     assert!((data["learning_rate"].as_f64().unwrap() - 0.08).abs() < 1e-4);
     assert!((data["momentum"].as_f64().unwrap() - 0.85).abs() < 1e-4);
 
-    let quarantined = data["quarantined_agents"].as_array().expect("quarantined array");
+    let quarantined = data["quarantined_agents"]
+        .as_array()
+        .expect("quarantined array");
     // After 6 steps of Byzantine updates, adversarial agents must be quarantined under Theorem 46
-    assert!(!quarantined.is_empty(), "adversarial agents must be quarantined after 6 steps");
+    assert!(
+        !quarantined.is_empty(),
+        "adversarial agents must be quarantined after 6 steps"
+    );
 }
 
 #[test]
@@ -166,32 +171,15 @@ fn test_runtime_federated_invalid_parameters() {
     let fixture = Fixture::new();
 
     // 1. Byzantine >= agents / 2
-    let err = fixture.run_failure(&[
-        "runtime",
-        "federated",
-        "--agents",
-        "4",
-        "--byzantine",
-        "2",
-    ]);
+    let err = fixture.run_failure(&["runtime", "federated", "--agents", "4", "--byzantine", "2"]);
     assert!(err.contains("trimmed mean breakdown resilience"));
 
     // 2. Agents outside bounds
-    let err_agents = fixture.run_failure(&[
-        "runtime",
-        "federated",
-        "--agents",
-        "2",
-    ]);
+    let err_agents = fixture.run_failure(&["runtime", "federated", "--agents", "2"]);
     assert!(err_agents.contains("--agents must be between 3 and 9"));
 
     // 3. Zero steps
-    let err_steps = fixture.run_failure(&[
-        "runtime",
-        "federated",
-        "--steps",
-        "0",
-    ]);
+    let err_steps = fixture.run_failure(&["runtime", "federated", "--steps", "0"]);
     assert!(err_steps.contains("--steps must be at least 1"));
 }
 
