@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, and `v3.0.9`. The active release identity
-is `v3.0.9`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, and `v3.0.10`. The active release identity
+is `v3.0.10`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.0.10
+
+This release implements Phase 23 of the mathematical runtime and governance roadmap: the Federated Policy Engine with reputation-weighted coordinate-wise trimmed mean gradient aggregation (Theorem 45) and dynamic Beta-conjugate Thompson sampling reputation with automated quarantine (Theorem 46) documented in `docs/math/phase23_federated_policy_and_reputation.md`, the Live Interactive Multi-Agent Autopilot Session orchestrator (`pandora cockpit autopilot`, `/autopilot`, and TUI `[A]`), and the Web / Mobile Remote Telemetry Dashboard micro-server (`pandora cockpit web --port 8080 --bind 0.0.0.0`) delivering real-time SSE telemetry streams and mobile/desktop responsive companion control under strict `#![forbid(unsafe_code)]`.
 
 ## v3.0.9
 
