@@ -121,6 +121,7 @@ pub struct AutopilotExecutionResult {
     pub patch_certificate: String,
     pub partitioned_roles: BTreeMap<String, String>,
     pub pexer_ipc_commands: Vec<String>,
+    pub canary_staging_receipt: Option<crate::canary_worktree::CanaryStagingReceipt>,
 }
 
 /// Coordinator wiring `SwarmCodeConsensusEngine` (Theorem 43) and `FederatedPolicyEngine` (Theorem 46).
@@ -188,6 +189,30 @@ impl AutopilotCoordinator {
         )
         .map_err(AutopilotError::ConsensusFailed)?;
 
+        let mut canary_staging_receipt = None;
+        if !goal.dry_run {
+            let branch = format!("pandora/canary/{}", goal.task_id);
+            if let Ok(mut worktree) = crate::canary_worktree::GitWorktreeManager::create_worktree(
+                &goal.workspace_root,
+                &branch,
+                &outcome.certified_patch.certificate_digest,
+            ) {
+                let pipeline = crate::canary_worktree::CanaryStagePipeline::default();
+                let proposal = AgentPatchProposal::new(
+                    outcome.certified_patch.winning_proposal_id.clone(),
+                    outcome.certified_patch.winning_agent,
+                    "Certified Candidate Patch",
+                    "Autopilot winning candidate patch for canary staging",
+                    outcome.certified_patch.diff_content.clone(),
+                    outcome.certified_patch.scores,
+                    0,
+                );
+                if let Ok(receipt) = pipeline.stage_candidate_patch(&mut worktree, &proposal) {
+                    canary_staging_receipt = Some(receipt);
+                }
+            }
+        }
+
         Ok(AutopilotExecutionResult {
             task_id: goal.task_id.clone(),
             consensus_decision: outcome.consensus_decision,
@@ -195,6 +220,7 @@ impl AutopilotCoordinator {
             patch_certificate: outcome.certified_patch.certificate_digest,
             partitioned_roles: outcome.partitioned_roles,
             pexer_ipc_commands: outcome.pexer_ipc_commands,
+            canary_staging_receipt,
         })
     }
 }

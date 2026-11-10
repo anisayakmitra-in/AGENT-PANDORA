@@ -34,11 +34,15 @@ pub const DEFAULT_SSE_TICK_MS: u64 = 1000;
 
 /// Embedded zero-dependency HTML5/CSS3/JS single-page dashboard calibrated for
 /// Xiaomi 15 mobile (~393×851 px, 20:9 aspect ratio) and desktop viewports.
-pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
+pub const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0d14">
+    <link rel="manifest" href="/manifest.webmanifest">
     <title>AGENT-PANDORA Cockpit Web v3.0.10</title>
     <style>
         :root {
@@ -87,6 +91,27 @@ pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
             background: rgba(16, 185, 129, 0.15);
             color: var(--emerald);
             border: 1px solid var(--emerald);
+        }
+        .sparkline-box {
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .sparkline-label {
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+        canvas#sparkline {
+            width: 100%;
+            height: 38px;
+            display: block;
+            border-radius: 4px;
+            background: #0d121d;
         }
         .grid-9 {
             display: grid;
@@ -158,9 +183,16 @@ pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
         <div class="brand" id="status">PANDORA_COCKPIT_WEB_V3010</div>
         <div>
             <span class="badge" id="health-pill">12/12 HEALTHY</span>
-            <span id="digest-pill" style="margin-left:8px;color:var(--muted);font-size:11px;">SSE LIVE</span>
+            <span id="digest-pill" style="margin-left:8px;color:var(--muted);font-size:11px;">CONNECTING...</span>
         </div>
     </header>
+    <div class="sparkline-box">
+        <div class="sparkline-label">
+            <span>LIVE TELEMETRY SPARKLINE</span>
+            <span id="sparkline-rate">100% NOMINAL</span>
+        </div>
+        <canvas id="sparkline" width="360" height="38"></canvas>
+    </div>
     <main id="matrix" class="grid-12"></main>
     <nav class="dock">
         <button class="btn" onclick="toggleLayout()">Toggle 9P / 12P</button>
@@ -169,13 +201,69 @@ pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
     </nav>
     <script>
         let currentLayout = "twelve_panel";
+        const sparkData = [1.0, 1.0, 1.0, 1.0, 1.0];
+
+        function triggerHaptic(type) {
+            if (navigator.vibrate) {
+                if (type === "consensus") navigator.vibrate([100, 50, 100, 50, 200]);
+                else navigator.vibrate(25);
+            }
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.frequency.value = type === "consensus" ? 880 : 440;
+                gain.gain.setValueAtTime(0.04, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.15);
+            } catch (_) {}
+        }
+
+        function updateSparkline(ratio) {
+            sparkData.push(ratio);
+            if (sparkData.length > 30) sparkData.shift();
+            const canvas = document.getElementById("sparkline");
+            if (!canvas) return;
+            const ctx = canvas.getContext("2d");
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = "rgba(0, 240, 255, 0.15)";
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            const step = w / Math.max(sparkData.length - 1, 1);
+            for (let i = 0; i < sparkData.length; i++) {
+                const y = h - (sparkData[i] * (h - 8)) - 4;
+                ctx.lineTo(i * step, y);
+            }
+            ctx.lineTo((sparkData.length - 1) * step, h);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "#00f0ff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < sparkData.length; i++) {
+                const y = h - (sparkData[i] * (h - 8)) - 4;
+                if (i === 0) ctx.moveTo(0, y);
+                else ctx.lineTo(i * step, y);
+            }
+            ctx.stroke();
+            const pct = Math.round(ratio * 100);
+            document.getElementById("sparkline-rate").textContent = pct + "% NOMINAL";
+        }
+
         function renderSnapshot(snap) {
             if (!snap) return;
             currentLayout = snap.layout || currentLayout;
             const matrix = document.getElementById("matrix");
             matrix.className = currentLayout === "nine_panel" ? "grid-9" : "grid-12";
-            document.getElementById("health-pill").textContent =
-                (snap.healthy_panels || snap.panel_count || 12) + "/" + (snap.panel_count || 12) + " HEALTHY";
+            const healthy = snap.healthy_panels || snap.panel_count || 12;
+            const total = snap.panel_count || 12;
+            document.getElementById("health-pill").textContent = healthy + "/" + total + " HEALTHY";
+            updateSparkline(healthy / Math.max(total, 1));
             if (Array.isArray(snap.panels)) {
                 matrix.innerHTML = snap.panels.map(p => `
                     <div class="panel-card">
@@ -185,39 +273,330 @@ pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
                 `).join("");
             }
         }
+
         async function toggleLayout() {
+            triggerHaptic("tap");
             const next = currentLayout === "nine_panel" ? "twelve_panel" : "nine_panel";
-            const res = await fetch("/api/action/layout", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({layout: next})
-            });
-            if (res.ok) { const d = await res.json(); currentLayout = d.layout; }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action: "layout", layout: next}));
+            } else {
+                const res = await fetch("/api/action/layout", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({layout: next})
+                });
+                if (res.ok) { const d = await res.json(); currentLayout = d.layout; }
+            }
         }
+
         async function runConsensus() {
-            await fetch("/api/action/consensus", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({threshold: 0.50, divergence: 0.45})
-            });
+            triggerHaptic("consensus");
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action: "consensus", threshold: 0.50, divergence: 0.45}));
+            } else {
+                await fetch("/api/action/consensus", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({threshold: 0.50, divergence: 0.45})
+                });
+            }
         }
+
         async function approvePending() {
+            triggerHaptic("tap");
             await fetch("/api/action/approve", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({approval_id: "appr-live", allow: true, approver_id: "mobile-operator"})
             });
         }
+
+        // Swipe gestures for Xiaomi 15 (20:9 ratio viewport)
+        let touchStartX = 0;
+        let touchStartY = 0;
+        document.addEventListener("touchstart", e => {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        }, {passive: true});
+        document.addEventListener("touchend", e => {
+            const diffX = e.changedTouches[0].screenX - touchStartX;
+            const diffY = e.changedTouches[0].screenY - touchStartY;
+            if (Math.abs(diffX) > 60 && Math.abs(diffY) < 50) {
+                toggleLayout();
+            }
+        }, {passive: true});
+
+        // WebSocket with auto-reconnect and SSE fallback
+        let ws = null;
+        function initWebSocket() {
+            const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = wsProto + "//" + location.host + "/api/ws";
+            try {
+                ws = new WebSocket(wsUrl);
+                ws.onopen = () => {
+                    const pill = document.getElementById("digest-pill");
+                    pill.textContent = "WS LIVE (RFC 6455)";
+                    pill.style.color = "var(--cyan)";
+                };
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.event === "telemetry") {
+                            renderSnapshot(msg.snapshot || msg);
+                        } else if (msg.event === "consensus_decision") {
+                            triggerHaptic("consensus");
+                        }
+                    } catch (_) {}
+                };
+                ws.onclose = () => {
+                    document.getElementById("digest-pill").textContent = "SSE FALLBACK";
+                    document.getElementById("digest-pill").style.color = "var(--amber)";
+                    setTimeout(initWebSocket, 2000);
+                };
+                ws.onerror = () => { if (ws) ws.close(); };
+            } catch (e) {
+                initSSE();
+            }
+        }
+
+        function initSSE() {
+            if (typeof EventSource !== "undefined") {
+                const es = new EventSource("/api/events");
+                es.addEventListener("telemetry", e => {
+                    try { renderSnapshot(JSON.parse(e.data)); } catch (_) {}
+                });
+                es.addEventListener("consensus", () => triggerHaptic("consensus"));
+            }
+        }
+
         fetch("/api/snapshot").then(r => r.json()).then(renderSnapshot).catch(() => {});
-        if (typeof EventSource !== "undefined") {
-            const es = new EventSource("/api/events");
-            es.addEventListener("telemetry", e => {
-                try { renderSnapshot(JSON.parse(e.data)); } catch (_) {}
+        initWebSocket();
+        initSSE();
+
+        if ("serviceWorker" in navigator) {
+            window.addEventListener("load", () => {
+                navigator.serviceWorker.register("/sw.js").catch(() => {});
             });
         }
     </script>
 </body>
-</html>"#;
+</html>"##;
+
+/// Embedded PWA manifest JSON for standalone mobile installation.
+pub const PWA_MANIFEST_JSON: &str = r##"{
+  "name": "AGENT-PANDORA Mobile Cockpit",
+  "short_name": "Pandora",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0d14",
+  "theme_color": "#00f0ff",
+  "description": "Real-time Autonomous Cockpit, Byzantine Swarm Telemetry & Mobile Controls",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230a0d14'/><circle cx='50' cy='50' r='35' fill='none' stroke='%2300f0ff' stroke-width='8'/><path d='M35 50 L45 60 L65 40' fill='none' stroke='%2310b981' stroke-width='8' stroke-linecap='round'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}"##;
+
+/// Embedded offline Service Worker for caching app shell assets and resilience.
+pub const SERVICE_WORKER_JS: &str = r#"const CACHE_NAME = 'pandora-cockpit-v3.0.10';
+const STATIC_ASSETS = ['/', '/index.html', '/manifest.webmanifest'];
+
+self.addEventListener('install', (event) => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    );
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(
+        caches.keys().then((keys) =>
+            Promise.all(
+                keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+            )
+        )
+    );
+    self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+    if (url.pathname.startsWith('/api/')) {
+        event.respondWith(
+            fetch(event.request).catch(() => new Response(JSON.stringify({ status: 'offline', error: 'network_unavailable' }), {
+                headers: { 'Content-Type': 'application/json' }
+            }))
+        );
+    } else {
+        event.respondWith(
+            caches.match(event.request).then((cached) => cached || fetch(event.request))
+        );
+    }
+});"#;
+
+const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Pure RFC 3174 SHA-1 digest implementation strictly under `#![forbid(unsafe_code)]`.
+pub fn sha1_digest(data: &[u8]) -> [u8; 20] {
+    let mut h0: u32 = 0x67452301;
+    let mut h1: u32 = 0xEFCDAB89;
+    let mut h2: u32 = 0x98BADCFE;
+    let mut h3: u32 = 0x10325476;
+    let mut h4: u32 = 0xC3D2E1F0;
+
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0x00);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    let mut offset = 0;
+    while offset + 64 <= msg.len() {
+        let chunk = &msg[offset..offset + 64];
+        offset += 64;
+        let mut w = [0u32; 80];
+        for (i, slot) in w.iter_mut().take(16).enumerate() {
+            let start = i * 4;
+            *slot = u32::from_be_bytes([
+                chunk[start],
+                chunk[start + 1],
+                chunk[start + 2],
+                chunk[start + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+
+        let mut a = h0;
+        let mut b = h1;
+        let mut c = h2;
+        let mut d = h3;
+        let mut e = h4;
+
+        for (i, &item) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A827999),
+                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
+                _ => (b ^ c ^ d, 0xCA62C1D6),
+            };
+
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(item);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+
+        h0 = h0.wrapping_add(a);
+        h1 = h1.wrapping_add(b);
+        h2 = h2.wrapping_add(c);
+        h3 = h3.wrapping_add(d);
+        h4 = h4.wrapping_add(e);
+    }
+
+    let mut out = [0u8; 20];
+    out[0..4].copy_from_slice(&h0.to_be_bytes());
+    out[4..8].copy_from_slice(&h1.to_be_bytes());
+    out[8..12].copy_from_slice(&h2.to_be_bytes());
+    out[12..16].copy_from_slice(&h3.to_be_bytes());
+    out[16..20].copy_from_slice(&h4.to_be_bytes());
+    out
+}
+
+/// Compute `Sec-WebSocket-Accept` from `Sec-WebSocket-Key` per RFC 6455 Section 1.3.
+pub fn compute_websocket_accept(sec_key: &str) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    let combined = format!("{}{}", sec_key.trim(), WS_GUID);
+    let digest = sha1_digest(combined.as_bytes());
+    BASE64.encode(digest)
+}
+
+/// Encode an unmasked server text frame per RFC 6455.
+pub fn encode_ws_text_frame(payload: &[u8]) -> Vec<u8> {
+    let mut header = Vec::with_capacity(10 + payload.len());
+    header.push(0x81); // FIN + opcode 0x1 (text)
+    let len = payload.len();
+    if len <= 125 {
+        header.push(len as u8);
+    } else if len <= 65535 {
+        header.push(126);
+        header.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        header.push(127);
+        header.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+    header.extend_from_slice(payload);
+    header
+}
+
+/// Read and decode a client WebSocket frame (unmasking payload per RFC 6455).
+pub fn read_client_ws_frame(stream: &mut TcpStream) -> IoResult<Option<(u8, Vec<u8>)>> {
+    let mut hdr = [0u8; 2];
+    match stream.read_exact(&mut hdr) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    }
+
+    let opcode = hdr[0] & 0x0F;
+    let masked = (hdr[1] & 0x80) != 0;
+    let mut payload_len = (hdr[1] & 0x7F) as usize;
+
+    if payload_len == 126 {
+        let mut ext = [0u8; 2];
+        stream.read_exact(&mut ext)?;
+        payload_len = u16::from_be_bytes(ext) as usize;
+    } else if payload_len == 127 {
+        let mut ext = [0u8; 8];
+        stream.read_exact(&mut ext)?;
+        payload_len = u64::from_be_bytes(ext) as usize;
+    }
+
+    if payload_len > 1024 * 1024 {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            "WebSocket frame exceeds 1MB",
+        ));
+    }
+
+    let mask_key = if masked {
+        let mut key = [0u8; 4];
+        stream.read_exact(&mut key)?;
+        Some(key)
+    } else {
+        None
+    };
+
+    let mut payload = vec![0u8; payload_len];
+    if payload_len > 0 {
+        stream.read_exact(&mut payload)?;
+    }
+
+    if let Some(key) = mask_key {
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b ^= key[i % 4];
+        }
+    }
+
+    Ok(Some((opcode, payload)))
+}
 
 /// Configuration for the embedded Cockpit Web Micro-Server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +654,7 @@ pub struct CockpitWebServer {
     approval_store: Option<Arc<ApprovalStore>>,
     approvals_map: Arc<Mutex<BTreeMap<String, String>>>,
     sse_clients: Arc<Mutex<Vec<TcpStream>>>,
+    ws_clients: Arc<Mutex<Vec<TcpStream>>>,
     shutdown_flag: Arc<AtomicBool>,
 }
 
@@ -311,6 +691,7 @@ impl CockpitWebServer {
             approval_store,
             approvals_map: Arc::new(Mutex::new(BTreeMap::new())),
             sse_clients: Arc::new(Mutex::new(Vec::new())),
+            ws_clients: Arc::new(Mutex::new(Vec::new())),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -389,6 +770,15 @@ impl CockpitWebServer {
         }
     }
 
+    /// Broadcast an RFC 6455 unmasked text frame to all active WebSocket clients.
+    fn broadcast_ws(ws_clients: &Arc<Mutex<Vec<TcpStream>>>, payload: &Value) {
+        let text = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
+        let frame = encode_ws_text_frame(text.as_bytes());
+        if let Ok(mut clients) = ws_clients.lock() {
+            clients.retain_mut(|stream| stream.write_all(&frame).is_ok() && stream.flush().is_ok());
+        }
+    }
+
     /// Run the blocking accept loop until `shutdown()` is invoked.
     pub fn run(&self) -> IoResult<()> {
         let mut last_tick = std::time::Instant::now();
@@ -401,6 +791,8 @@ impl CockpitWebServer {
                     let approval_store = self.approval_store.clone();
                     let approvals_map = Arc::clone(&self.approvals_map);
                     let sse_clients = Arc::clone(&self.sse_clients);
+                    let ws_clients = Arc::clone(&self.ws_clients);
+                    let shutdown_flag = Arc::clone(&self.shutdown_flag);
                     thread::spawn(move || {
                         let _ = handle_connection(
                             stream,
@@ -408,6 +800,8 @@ impl CockpitWebServer {
                             approval_store,
                             approvals_map,
                             sse_clients,
+                            ws_clients,
+                            shutdown_flag,
                         );
                     });
                 }
@@ -420,6 +814,14 @@ impl CockpitWebServer {
             if last_tick.elapsed() >= tick_duration {
                 let snap_val = Self::current_snapshot_json(&self.controller);
                 Self::broadcast_sse(&self.sse_clients, "telemetry", &snap_val);
+                Self::broadcast_ws(
+                    &self.ws_clients,
+                    &json!({
+                        "event": "telemetry",
+                        "timestamp_ms": current_epoch_ms(),
+                        "snapshot": snap_val,
+                    }),
+                );
                 last_tick = std::time::Instant::now();
             }
         }
@@ -441,6 +843,8 @@ fn handle_connection(
     _approval_store: Option<Arc<ApprovalStore>>,
     approvals_map: Arc<Mutex<BTreeMap<String, String>>>,
     sse_clients: Arc<Mutex<Vec<TcpStream>>>,
+    ws_clients: Arc<Mutex<Vec<TcpStream>>>,
+    shutdown_flag: Arc<AtomicBool>,
 ) -> IoResult<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(1500)))?;
@@ -475,6 +879,7 @@ fn handle_connection(
 
     // Read headers
     let mut content_length = 0usize;
+    let mut sec_websocket_key = String::new();
     loop {
         let mut header_line = String::new();
         let bytes_read = reader.read_line(&mut header_line)?;
@@ -484,6 +889,9 @@ fn handle_connection(
         let lower = header_line.to_ascii_lowercase();
         if let Some(val_str) = lower.strip_prefix("content-length:") {
             content_length = val_str.trim().parse::<usize>().unwrap_or(0);
+        }
+        if lower.starts_with("sec-websocket-key:") {
+            sec_websocket_key = header_line["sec-websocket-key:".len()..].trim().to_string();
         }
     }
 
@@ -548,6 +956,190 @@ fn handle_connection(
                 clients.push(cloned);
             }
         }
+        ("GET", "/manifest.webmanifest") => {
+            let manifest_bytes = PWA_MANIFEST_JSON.as_bytes();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: application/manifest+json; charset=utf-8\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                manifest_bytes.len()
+            );
+            stream.write_all(headers.as_bytes())?;
+            stream.write_all(manifest_bytes)?;
+            stream.flush()?;
+        }
+        ("GET", "/sw.js") => {
+            let sw_bytes = SERVICE_WORKER_JS.as_bytes();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: application/javascript; charset=utf-8\r\nCache-Control: no-cache\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                sw_bytes.len()
+            );
+            stream.write_all(headers.as_bytes())?;
+            stream.write_all(sw_bytes)?;
+            stream.flush()?;
+        }
+        ("GET", "/api/ws") => {
+            if !sec_websocket_key.is_empty() {
+                let accept = compute_websocket_accept(&sec_websocket_key);
+                let resp = format!(
+                    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+                );
+                stream.write_all(resp.as_bytes())?;
+                stream.flush()?;
+
+                if let Ok(writer_clone) = stream.try_clone()
+                    && let Ok(mut clients) = ws_clients.lock()
+                {
+                    clients.push(writer_clone);
+                }
+
+                // Send initial telemetry frame immediately
+                let snap_val = CockpitWebServer::current_snapshot_json(&controller);
+                let init_event = json!({
+                    "event": "telemetry",
+                    "timestamp_ms": current_epoch_ms(),
+                    "snapshot": snap_val,
+                });
+                let init_frame = encode_ws_text_frame(
+                    serde_json::to_string(&init_event)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                );
+                let _ = stream.write_all(&init_frame);
+                let _ = stream.flush();
+
+                // Enter WebSocket frame loop
+                stream.set_read_timeout(Some(Duration::from_millis(50)))?;
+                while !shutdown_flag.load(Ordering::Relaxed) {
+                    match read_client_ws_frame(&mut stream) {
+                        Ok(Some((0x8, _))) => {
+                            let _ = stream.write_all(&[0x88, 0x00]);
+                            let _ = stream.flush();
+                            break;
+                        }
+                        Ok(Some((0x9, _))) => {
+                            let _ = stream.write_all(&[0x8A, 0x00]);
+                            let _ = stream.flush();
+                        }
+                        Ok(Some((0x1, payload))) => {
+                            if let Ok(val) = serde_json::from_slice::<Value>(&payload) {
+                                let action =
+                                    val.get("action").and_then(Value::as_str).unwrap_or("");
+                                match action {
+                                    "layout" => {
+                                        if let Some(layout_str) =
+                                            val.get("layout").and_then(Value::as_str)
+                                            && let Some(new_layout) =
+                                                CockpitLayout::parse(layout_str)
+                                        {
+                                            if let Ok(mut guard) = controller.lock() {
+                                                *guard = CockpitController::new(new_layout);
+                                            }
+                                            let snap = CockpitWebServer::current_snapshot_json(
+                                                &controller,
+                                            );
+                                            CockpitWebServer::broadcast_sse(
+                                                &sse_clients,
+                                                "telemetry",
+                                                &snap,
+                                            );
+                                            CockpitWebServer::broadcast_ws(
+                                                &ws_clients,
+                                                &json!({
+                                                    "event": "telemetry",
+                                                    "timestamp_ms": current_epoch_ms(),
+                                                    "snapshot": &snap,
+                                                }),
+                                            );
+                                            let reply = json!({
+                                                "event": "layout_updated",
+                                                "layout": layout_str,
+                                                "timestamp_ms": current_epoch_ms(),
+                                            });
+                                            let reply_frame = encode_ws_text_frame(
+                                                serde_json::to_string(&reply)
+                                                    .unwrap_or_default()
+                                                    .as_bytes(),
+                                            );
+                                            let _ = stream.write_all(&reply_frame);
+                                            let _ = stream.flush();
+                                        }
+                                    }
+                                    "consensus" => {
+                                        let threshold = val
+                                            .get("threshold")
+                                            .and_then(Value::as_f64)
+                                            .unwrap_or(0.50);
+                                        let divergence = val
+                                            .get("divergence")
+                                            .and_then(Value::as_f64)
+                                            .unwrap_or(0.45);
+                                        let engine =
+                                            SwarmCodeConsensusEngine::new(threshold, divergence);
+                                        let proposals = default_consensus_proposals();
+                                        let now_ms = current_epoch_ms();
+                                        if let Ok(decision) =
+                                            engine.resolve_consensus(&proposals, now_ms)
+                                        {
+                                            let resp_val = json!({
+                                                "event": "consensus_decision",
+                                                "status": "consensus_achieved",
+                                                "winning_proposal_id": decision.winning_proposal_id,
+                                                "winning_agent": decision.winning_agent.identifier(),
+                                                "winning_title": decision.winning_title,
+                                                "consensus_confidence": decision.consensus_confidence,
+                                                "total_proposals": decision.total_proposals,
+                                                "honest_quorum_size": decision.honest_quorum_size,
+                                                "byzantine_filtered_count": decision.byzantine_filtered_count,
+                                                "proposal_verdicts": decision.proposal_verdicts,
+                                                "consensus_hash": decision.consensus_hash,
+                                                "timestamp_ms": decision.timestamp_ms,
+                                            });
+                                            CockpitWebServer::broadcast_sse(
+                                                &sse_clients,
+                                                "consensus",
+                                                &resp_val,
+                                            );
+                                            CockpitWebServer::broadcast_ws(&ws_clients, &resp_val);
+                                            let frame = encode_ws_text_frame(
+                                                serde_json::to_string(&resp_val)
+                                                    .unwrap_or_default()
+                                                    .as_bytes(),
+                                            );
+                                            let _ = stream.write_all(&frame);
+                                            let _ = stream.flush();
+                                        }
+                                    }
+                                    "ping" => {
+                                        let resp = json!({"event": "pong", "timestamp_ms": current_epoch_ms()});
+                                        let frame = encode_ws_text_frame(
+                                            serde_json::to_string(&resp)
+                                                .unwrap_or_default()
+                                                .as_bytes(),
+                                        );
+                                        let _ = stream.write_all(&frame);
+                                        let _ = stream.flush();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Ok(Some(_)) => {}
+                        Ok(None) => {
+                            thread::sleep(Duration::from_millis(15));
+                        }
+                        Err(_) => break,
+                    }
+                }
+                return Ok(());
+            } else {
+                write_json_response(
+                    &mut stream,
+                    400,
+                    "Bad Request",
+                    &json!({"error": "missing_sec_websocket_key"}),
+                )?;
+                return Ok(());
+            }
+        }
         ("POST", "/api/action/layout") => match serde_json::from_slice::<Value>(&body) {
             Ok(json_body) => {
                 if let Some(target_str) = json_body.get("layout").and_then(Value::as_str) {
@@ -557,6 +1149,14 @@ fn handle_connection(
                         }
                         let snap_val = CockpitWebServer::current_snapshot_json(&controller);
                         CockpitWebServer::broadcast_sse(&sse_clients, "telemetry", &snap_val);
+                        CockpitWebServer::broadcast_ws(
+                            &ws_clients,
+                            &json!({
+                                "event": "telemetry",
+                                "timestamp_ms": current_epoch_ms(),
+                                "snapshot": &snap_val,
+                            }),
+                        );
                         let layout_name = match new_layout {
                             CockpitLayout::NinePanel => "nine_panel",
                             CockpitLayout::TwelvePanel => "twelve_panel",
@@ -641,6 +1241,7 @@ fn handle_connection(
                         "timestamp_ms": decision.timestamp_ms,
                     });
                     CockpitWebServer::broadcast_sse(&sse_clients, "consensus", &resp_val);
+                    CockpitWebServer::broadcast_ws(&ws_clients, &resp_val);
                     write_json_response(&mut stream, 200, "OK", &resp_val)?;
                 }
                 Err(e) => {
@@ -696,6 +1297,13 @@ fn handle_connection(
                     "timestamp_ms": now_ms,
                 });
                 CockpitWebServer::broadcast_sse(&sse_clients, "permission", &resp_val);
+                CockpitWebServer::broadcast_ws(
+                    &ws_clients,
+                    &json!({
+                        "event": "permission",
+                        "data": &resp_val,
+                    }),
+                );
                 write_json_response(&mut stream, 200, "OK", &resp_val)?;
             }
             Err(_) => {

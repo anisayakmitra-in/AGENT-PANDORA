@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.10  
+**Version:** AGENT-PANDORA v3.0.11  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -58,7 +58,12 @@ flowchart TD
         P23["Phase 23<br/><b>Federated Policy</b><br/><i>Theorems 45–46 Convergence & Quarantine</i>"]
     end
 
-    Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm --> Evolution
+    subgraph DistributedMesh["Phase 24: Distributed Swarm Mesh & Cross-Node Consensus"]
+        P24["Phase 24<br/><b>Distributed Swarm Mesh</b><br/><i>Theorem 47 Byzantine Quorum & Policy Mesh</i>"]
+    end
+
+    P23 --> P24
+    Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm --> Evolution --> DistributedMesh
 ```
 
 Every phase is grounded in publication-grade mathematical proofs:
@@ -85,6 +90,7 @@ Every phase is grounded in publication-grade mathematical proofs:
 21. **Phase 21**: Multi-Agent Byzantine quorum intersection $|Q_1 \cap Q_2| \ge f + 1$ under dynamic split-brain topology and bounded orchestration latency $\mathbb{E}[T_{\mathrm{resolve}}] \le \frac{K}{\mu - \sum \lambda_i} + O(\log K)$ with zero deadlock.
 22. **Phase 22**: Swarm Byzantine Code Consensus metric distortion bound $\frac{2f}{M - 2f} \cdot \mathrm{diam}(\mathcal{H}) + O(\sigma/\sqrt{M})$ with invariant safety guarantee, and ConPTY multiplexer IPC non-blocking throughput with bounded starvation delay $D_{\max} \le \frac{K \cdot B_{\max}}{\mu}$ and zero deadlock.
 23. **Phase 23**: Federated Policy Gradient convergence $\min_{0 \le t < T} \|\nabla J(\boldsymbol{\theta}_t)\|_2^2 \le O(1/T) + \mathcal{E}_{\mathrm{Byz}}^2$ with coordinate-wise trimmed mean resilience bound $\mathcal{E}_{\mathrm{Byz}} \le \frac{4\sum_b w_b}{\sum_h w_h} G \sqrt{d} + \frac{\sigma \sqrt{d}}{\sqrt{\sum_h w_h}}$, and Theorem 46 Beta-conjugate dynamic reputation weighting with finite expected quarantine hitting time $\mathbb{E}[T_{\mathrm{quar}}] = O(1)$ and logarithmic cumulative Byzantine contamination $\sum_{t=1}^T w_b(t) = O(\ln T)$.
+24. **Phase 24**: Distributed Cross-Node Swarm Mesh Byzantine quorum non-equivocation $|Q_1 \cap Q_2| \ge f + 1$ under partially synchronous P2P channels with split-brain impossibility $\mathbb{P}(\text{Split-Brain Fork}) = 0$, bounded commit latency $T_{\mathrm{commit}} \le 2\Delta_{\max} + T_{\mathrm{sandbox}} + \frac{4\ln(P-1)}{\beta} = O(\Delta_{\max} + T_{\mathrm{sandbox}} + \log P)$, robust coordinate-wise metric centroid filtering $\|\mathbf{s}_k - \mathbf{c}_\alpha\|_2 \le 0.45$, linear policy gradient variance reduction $\operatorname{Var}(\hat{\mathbf{g}}) \le \frac{C(\alpha)\sigma^2 d_0}{\sum w_h}$, and cryptographic certificate unforgeability $\operatorname{Adv}_{\mathrm{forge}} \le \frac{q_s}{2^{128}} + \frac{q_h^2}{2^{257}} + \frac{q_h}{2^{256}} \le 2^{-98} + 2^{-137} + 2^{-196} \approx 3.16 \times 10^{-30} \le 10^{-29} \approx 0$.
 
 ---
 
@@ -621,7 +627,33 @@ $\blacksquare$
 
 ---
 
-## 24. Comprehensive Roadmap Summary Matrix (Phases 1–23)
+## 24. Phase 24: Distributed Cross-Node Swarm Mesh & Cross-Machine Byzantine Patch Consensus
+
+### 24.1 Distributed Cross-Node Swarm Mesh Consensus, Byzantine Patch Quorum Convergence & Federated Gradient Dissemination Bounds
+
+**Theorem 47 (Distributed Cross-Node Swarm Mesh Consensus, Byzantine Patch Quorum Convergence & Federated Gradient Dissemination Bounds):**  
+*Let $\mathcal{N} = \{N_1, \dots, N_P\}$ denote a distributed P2P network of $P$ physical nodes communicating over partially synchronous channels with maximum message delay $\Delta_{\max}$, where at most $f$ nodes exhibit Byzantine behavior ($P \ge 3f + 1$). Under supermajority quorum threshold $Q = \lfloor \frac{P + f}{2} \rfloor + 1$:*
+
+1. *Cross-Node Byzantine Safety & Quorum Non-Equivocation:* Any two valid commit quorums $Q_1, Q_2 \subset \mathcal{N}$ satisfy $|Q_1 \cap Q_2| \ge f + 1$. Because the intersection contains at least one non-faulty node, no two conflicting candidate patches can simultaneously achieve quorum approval:
+   $$\mathbb{P}(\text{Split-Brain Fork}) = 0.$$
+2. *Asymptotic Decision Termination & Commit Time Bounding:* Under randomized epidemic gossip with round rate $\beta$, message broadcast of patch proposal $P_{\text{cand}}$ and vote collection terminate across all honest nodes in bounded time:
+   $$T_{\mathrm{commit}} \le 2 \Delta_{\max} + T_{\mathrm{sandbox}} + \frac{4 \ln(P - 1)}{\beta} = O(\Delta_{\max} + T_{\mathrm{sandbox}} + \log P)$$
+   (or $T_{\mathrm{commit}} \le 2 \Delta_{\max} + T_{\mathrm{sandbox}} + \frac{2 \ln(P - 1)}{\beta}$ under point-to-point star return).
+3. *Cross-Machine Metric Centroid Distortion Bound:* Let each node $N_k$ independently evaluate candidate patch score vector $\mathbf{s}_k \in [0, 1]^4$. Under coordinate-wise trimmed mean aggregation with trim parameter $k = \min(f, \lfloor \frac{m-1}{2} \rfloor)$, where $k = f$ for all quorums $m \ge Q \ge 2f + 1$, the distance between the estimated centroid $\mathbf{c}_\alpha$ and the true honest consensus mean $\mathbf{c}^*$ satisfies:
+   $$\|\mathbf{c}_\alpha - \mathbf{c}^*\|_2 \le \frac{2f}{m - 2f} \cdot \mathrm{diam}(\mathcal{H}) + \frac{\sigma \sqrt{d}}{\sqrt{m - 2f}}.$$
+   Any adversarial node injecting a defective patch or broken invariant diverges by $\|\mathbf{s}_k - \mathbf{c}_\alpha\|_2 > \delta_{\max} = 0.45$ and is filtered out with probability $1$.
+4. *Distributed Federated Policy Gradient Variance Reduction:* When $P$ distributed cluster nodes exchange local empirical policy gradients $\mathbf{g}_k(\boldsymbol{\theta})$ ($d_0 = 6$) aggregated via coordinate-wise trimmed mean weighted by agent reputation $w_k$, the aggregated gradient variance satisfies:
+   $$\operatorname{Var}(\hat{\mathbf{g}}) \le \frac{C(\alpha)\sigma^2 d_0}{\sum_{h \in \mathcal{H}_{\text{trim}}} w_h},$$
+   and the global policy parameter sequence converges ergodically at rate:
+   $$\frac{1}{T} \sum_{t=0}^{T-1} \|\nabla J(\boldsymbol{\theta}_t)\|_2^2 \le \frac{4(J(\boldsymbol{\theta}_0) - J^*)}{\eta (1 - \beta) T} + \frac{4 \eta L}{1 - \beta} \left( \frac{C(\alpha) \sigma^2 d_0}{\sum_{h \in \mathcal{H}_{\text{trim}}} w_h} \right) + \frac{4}{1 - \beta} \cdot \frac{1}{T}\sum_{t=0}^{T-1}\mathcal{E}_{\mathrm{Byz}}^2(t).$$
+5. *Cryptographic Certificate Unforgeability:* Under Ed25519 digital signatures and SHA-256 hash chaining, the advantage of a coalition of $f$ Byzantine machines forging a valid patch certificate $\text{PANDORA\_PATCH\_CERT\_V1}$ without private keys of honest nodes satisfies:
+   $$\operatorname{Adv}_{\mathrm{forge}} \le \frac{q_s}{2^{128}} + \frac{q_h^2}{2^{257}} + \frac{q_h}{2^{256}} \le 2^{-98} + 2^{-137} + 2^{-196} \approx 3.16 \times 10^{-30} \le 10^{-29} \approx 0.$$
+- **Reference**: Detailed proofs documented in `docs/math/phase24_distributed_swarm_mesh.md`.  
+$\blacksquare$
+
+---
+
+## 25. Comprehensive Roadmap Summary Matrix (Phases 1–24)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -648,4 +680,5 @@ $\blacksquare$
 | **21** | Mission-Control Cockpit & Multi-Agent Swarm | Byzantine consensus quorum & multiplexed latency | $\|Q_1 \cap Q_2\| \ge f+1$, $\mathbb{E}[T] \le \frac{K}{\mu - \Lambda} + O(\log K)$ | `cockpit.rs`, `multi_agent_collab.rs` | `tests/cockpit_multi_agent_tests.rs`, `tests/cockpit_cli_wiring_test.rs` |
 | **22** | Interactive Cockpit TUI & Swarm Consensus | Byzantine code consensus & multiplexer IPC | $\|\mathbf{s}_{i^\star} - \boldsymbol{\mu}^\star\| \le O(\frac{f}{M}\mathrm{diam}(\mathcal{H}))$, $D_{\max} \le O(K B_{\max})$ | `cockpit_tui.rs`, `multi_agent_consensus.rs`, `pexer_ipc.rs` | `tests/multi_agent_consensus_tests.rs`, `tests/pexer_ipc_tests.rs`, `tests/cockpit_phase22_cli_tests.rs` |
 | **23** | Federated Policy & Reputation Engine | Byzantine-resilient trimmed mean & Beta-conjugate reputation decay | Ergodic convergence $O(1/T) + \mathcal{E}_{\mathrm{Byz}}^2$, Quarantine hitting time $O(1)$, Contamination $O(\ln T)$ | `federated_policy.rs` | `tests/phase23_federated_policy_tests.rs` |
+| **24** | Distributed Swarm Mesh & Consensus | Byzantine quorum non-equivocation & trimmed centroid | $\|Q_1 \cap Q_2\| \ge f+1$, $\operatorname{Var}(\hat{\mathbf{g}}) \le \frac{C(\alpha)\sigma^2 d_0}{\sum w_h}$, $\operatorname{Adv} \le 10^{-29}$ | `distributed_swarm.rs` | `tests/phase24_distributed_swarm_tests.rs` |
 

@@ -2,8 +2,4 @@
 # https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
 
 [advisories]
-ignore = [
-    # RUSTSEC-2026-0459: libsqlite3-sys via C SQLite CVE-2026-119375.
-    # Fixed upstream in libsqlite3-sys >=0.39.0 which requires rusqlite >=0.41.0.
-    "RUSTSEC-2026-0459",
-]
+ignore = []

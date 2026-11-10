@@ -19,6 +19,7 @@ pub(crate) mod audit;
 mod auth;
 mod backup;
 pub(crate) mod branch;
+pub(crate) mod canary;
 mod chat;
 pub(crate) mod cockpit;
 pub(crate) mod cockpit_tui;
@@ -72,6 +73,7 @@ mod skill;
 mod slash;
 mod subagent;
 pub(crate) mod subagent_run;
+pub(crate) mod swarm;
 mod tool;
 mod tui;
 pub(crate) mod tui_backdrop;
@@ -275,6 +277,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "scheduler" | "work-stealing" => runtime::scheduler(&args[1..]),
         "lsp" => lsp::execute(&args[1..]),
         "release" => release::execute(&args[1..]),
+        "swarm" => swarm::execute(&args[1..]),
+        "canary" => canary::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
@@ -381,6 +385,7 @@ fn is_flag(name: &str) -> bool {
         "agent"
             | "all"
             | "allow"
+            | "approve"
             | "auto-promote"
             | "check"
             | "deny"
@@ -390,6 +395,7 @@ fn is_flag(name: &str) -> bool {
             | "interactive"
             | "once"
             | "plan"
+            | "reject"
             | "rollback"
             | "yes"
             | "retryable"

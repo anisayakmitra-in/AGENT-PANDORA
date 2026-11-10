@@ -8,7 +8,8 @@ use pandora_runtime::{
     StorageLifecycleReceipt, StorageLifecycleStore, StorageLifecycleStoreError,
 };
 use pandora_types::{StorageLifecycleAction, StorageLifecycleManifest, StorageLifecycleProvider};
-use rusqlite::{Connection, DatabaseName};
+use rusqlite::backup::NO_PROGRESS;
+use rusqlite::{Connection, MAIN_DB};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
@@ -766,7 +767,7 @@ fn sqlite_snapshot_bytes(source: &Path) -> Result<Vec<u8>, CliError> {
             .busy_timeout(Duration::from_secs(5))
             .map_err(sqlite_error)?;
         connection
-            .backup(DatabaseName::Main, &snapshot, None)
+            .backup(MAIN_DB, &snapshot, NO_PROGRESS)
             .map_err(sqlite_error)?;
         let metadata = fs::symlink_metadata(&snapshot).map_err(io_error)?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {

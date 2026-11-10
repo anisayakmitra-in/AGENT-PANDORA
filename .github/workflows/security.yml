@@ -38,7 +38,7 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Audit Rust dependencies
-        run: cargo audit --deny warnings --ignore RUSTSEC-2026-0459
+        run: cargo audit --deny warnings
 
       - name: Validate repository contents
         run: python scripts/validate_repo.py

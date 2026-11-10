@@ -12,6 +12,7 @@ pub mod autopilot;
 pub mod bandit_router;
 pub mod blaze_adapter;
 pub mod byzantine_aggregator;
+pub mod canary_worktree;
 pub mod cockpit;
 pub mod cockpit_web;
 pub mod coding_feedback;
@@ -28,6 +29,7 @@ pub mod cron_engine;
 pub mod curator;
 pub mod decision_engine;
 pub mod device_trust;
+pub mod distributed_swarm;
 pub mod efficiency_engine;
 pub mod efficiency_store;
 pub mod evaluation_engine;
@@ -158,6 +160,11 @@ pub use byzantine_aggregator::{
     AgentVectorUpdate, AggregationRule, ByzantineAggregator, ByzantineConsensusResult,
     ByzantineError,
 };
+pub use canary_worktree::{
+    CanaryPredicate, CanaryStagePipeline, CanaryStagingReceipt, CanaryVerificationResult,
+    CosignCanaryAttestation, GitWorktreeManager, IsolatedWorktree, IsolatedWorktreeGuard,
+    WorktreeError as CanaryWorktreeError, WorktreeStatus as CanaryWorktreeStatus,
+};
 pub use cockpit_web::{
     ApproveActionRequest, CockpitWebConfig, CockpitWebServer, ConsensusActionRequest,
     DASHBOARD_HTML, DEFAULT_SSE_TICK_MS, LayoutActionRequest, MAX_HTTP_BODY_BYTES,
@@ -206,6 +213,11 @@ pub use decision_engine::{
 };
 pub use device_trust::{
     DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
+};
+pub use distributed_swarm::{
+    DistributedConsensusDecision, DistributedConsensusVote, DistributedFederatedEngine,
+    DistributedGradientPacket, DistributedPatchProposal, DistributedSwarmConsensusEngine,
+    DistributedSwarmError, DistributedSwarmMessage, DistributedSwarmNode, SwarmPayload, SwarmPeer,
 };
 pub use efficiency_engine::{DEFAULT_MAX_SAMPLES_PER_TARGET, EfficiencyEngine, EfficiencyError};
 pub use efficiency_store::{EfficiencyStore, EfficiencyStoreError};

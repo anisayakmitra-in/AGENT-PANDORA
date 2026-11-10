@@ -185,3 +185,146 @@ fn sse_frame_format() {
     let f = format_sse_event("telemetry", 7, &json!({"a": 1}));
     assert_eq!(f, "event: telemetry\nid: 7\ndata: {\"a\":1}\n\n");
 }
+
+fn encode_client_test_frame(opcode: u8, payload: &[u8], mask: [u8; 4]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(14 + payload.len());
+    out.push(0x80 | (opcode & 0x0F));
+    let len = payload.len();
+    if len <= 125 {
+        out.push(0x80 | (len as u8));
+    } else if len <= 65535 {
+        out.push(0x80 | 126);
+        out.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        out.push(0x80 | 127);
+        out.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+    out.extend_from_slice(&mask);
+    for (i, &b) in payload.iter().enumerate() {
+        out.push(b ^ mask[i % 4]);
+    }
+    out
+}
+
+fn read_server_test_frame(s: &mut TcpStream) -> (u8, Vec<u8>) {
+    let mut hdr = [0u8; 2];
+    s.read_exact(&mut hdr).expect("read header");
+    let opcode = hdr[0] & 0x0F;
+    let mut len = (hdr[1] & 0x7F) as usize;
+    if len == 126 {
+        let mut ext = [0u8; 2];
+        s.read_exact(&mut ext).expect("read ext16");
+        len = u16::from_be_bytes(ext) as usize;
+    } else if len == 127 {
+        let mut ext = [0u8; 8];
+        s.read_exact(&mut ext).expect("read ext64");
+        len = u64::from_be_bytes(ext) as usize;
+    }
+    let mut payload = vec![0u8; len];
+    if len > 0 {
+        s.read_exact(&mut payload).expect("read payload");
+    }
+    (opcode, payload)
+}
+
+#[test]
+fn serves_pwa_manifest() {
+    let srv = Running::start();
+    let (code, body) = srv.request("GET", "/manifest.webmanifest", "");
+    assert_eq!(code, 200);
+    assert!(body.contains("standalone"));
+    assert!(body.contains("AGENT-PANDORA Mobile Cockpit"));
+    assert!(body.contains("theme_color"));
+}
+
+#[test]
+fn serves_service_worker() {
+    let srv = Running::start();
+    let (code, body) = srv.request("GET", "/sw.js", "");
+    assert_eq!(code, 200);
+    assert!(body.contains("CACHE_NAME"));
+    assert!(body.contains("addEventListener('fetch'"));
+    assert!(body.contains("/manifest.webmanifest"));
+}
+
+#[test]
+fn websocket_handshake_and_bidirectional_frames() {
+    let srv = Running::start();
+    let mut s = TcpStream::connect(("127.0.0.1", srv.port)).expect("connect");
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+    let key = "dGhlIHNhbXBsZSBub25jZQ==";
+    let req = format!(
+        "GET /api/ws HTTP/1.1\r\n\
+         Host: 127.0.0.1:{}\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Key: {key}\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n",
+        srv.port
+    );
+    s.write_all(req.as_bytes()).unwrap();
+
+    // 1. Read HTTP 101 Handshake Response
+    let mut reader = BufReader::new(s.try_clone().unwrap());
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line).unwrap();
+    assert!(status_line.contains("101 Switching Protocols"));
+
+    let mut found_accept = false;
+    for _ in 0..10 {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+        if line
+            .to_ascii_lowercase()
+            .starts_with("sec-websocket-accept:")
+        {
+            assert!(line.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+            found_accept = true;
+        }
+    }
+    assert!(
+        found_accept,
+        "Handshake must include RFC 6455 Sec-WebSocket-Accept"
+    );
+
+    // 2. Read initial telemetry frame sent by server
+    let (op, payload) = read_server_test_frame(&mut s);
+    assert_eq!(op, 0x1, "Server must emit initial text frame");
+    let init_json: Value = serde_json::from_slice(&payload).expect("valid json");
+    assert_eq!(init_json["event"], "telemetry");
+
+    // 3. Client sends masked Ping frame
+    let ping_msg = json!({"action": "ping"}).to_string();
+    let frame = encode_client_test_frame(0x1, ping_msg.as_bytes(), [1, 2, 3, 4]);
+    s.write_all(&frame).unwrap();
+
+    // 4. Server replies with Pong event
+    let (op, payload) = read_server_test_frame(&mut s);
+    assert_eq!(op, 0x1);
+    let pong_json: Value = serde_json::from_slice(&payload).expect("valid json");
+    assert_eq!(pong_json["event"], "pong");
+
+    // 5. Client sends layout switch frame
+    let layout_msg = json!({"action": "layout", "layout": "nine_panel"}).to_string();
+    let frame = encode_client_test_frame(0x1, layout_msg.as_bytes(), [5, 6, 7, 8]);
+    s.write_all(&frame).unwrap();
+
+    // 6. Server updates layout and broadcasts telemetry + replies with layout_updated event
+    let (op, payload) = read_server_test_frame(&mut s);
+    assert_eq!(op, 0x1);
+    let first_json: Value = serde_json::from_slice(&payload).expect("valid json");
+    if first_json["event"] == "telemetry" {
+        let (op2, payload2) = read_server_test_frame(&mut s);
+        assert_eq!(op2, 0x1);
+        let second_json: Value = serde_json::from_slice(&payload2).expect("valid json");
+        assert_eq!(second_json["event"], "layout_updated");
+        assert_eq!(second_json["layout"], "nine_panel");
+    } else {
+        assert_eq!(first_json["event"], "layout_updated");
+        assert_eq!(first_json["layout"], "nine_panel");
+    }
+}
