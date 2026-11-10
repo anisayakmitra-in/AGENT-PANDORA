@@ -5,7 +5,7 @@
 //! Exposes subcommands for connecting peers, checking mesh status, proposing candidate
 //! patches, casting Byzantine consensus votes, and synchronizing federated policy gradients.
 
-use super::{load_config, parse_options, require_config_file};
+use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
 use pandora_runtime::distributed_swarm::{
     DistributedConsensusDecision, DistributedConsensusVote, DistributedFederatedEngine,
@@ -126,14 +126,14 @@ fn connect(args: &[String]) -> Result<CommandResult, CliError> {
         args,
         &["config", "data-dir", "workspace", "peer", "node-id"],
     )?;
-    let config = load_config(&parsed)?;
-    require_config_file(&config)?;
-    let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     let peer_addr = parsed
         .value("peer")
         .or_else(|| parsed.positionals.first().map(String::as_str))
         .ok_or_else(|| CliError::usage("swarm connect requires '--peer <address>'"))?;
+
+    let config = load_config(&parsed)?;
+    let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     let remote_node_id = parsed
         .value("node-id")
@@ -185,7 +185,6 @@ fn connect(args: &[String]) -> Result<CommandResult, CliError> {
 fn status(args: &[String]) -> Result<CommandResult, CliError> {
     let parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
     let config = load_config(&parsed)?;
-    require_config_file(&config)?;
     let (identity, state) = load_or_init_state(config.data_dir())?;
 
     let mut text = String::new();
@@ -279,14 +278,14 @@ fn propose(args: &[String]) -> Result<CommandResult, CliError> {
             "proposal-id",
         ],
     )?;
-    let config = load_config(&parsed)?;
-    require_config_file(&config)?;
-    let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     let goal = parsed
         .value("goal")
         .or_else(|| parsed.positionals.first().map(String::as_str))
         .ok_or_else(|| CliError::usage("swarm propose requires '--goal <task_goal>'"))?;
+
+    let config = load_config(&parsed)?;
+    let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     let diff_input = parsed
         .value("diff")
@@ -388,14 +387,15 @@ fn vote(args: &[String]) -> Result<CommandResult, CliError> {
             "invariant",
         ],
     )?;
-    let config = load_config(&parsed)?;
-    require_config_file(&config)?;
-    let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     let proposal_id = parsed
         .value("proposal")
+        .or_else(|| parsed.value("proposal-id"))
         .or_else(|| parsed.positionals.first().map(String::as_str))
         .ok_or_else(|| CliError::usage("swarm vote requires '--proposal <id>'"))?;
+
+    let config = load_config(&parsed)?;
+    let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     // Find proposal
     let proposal = state
@@ -543,7 +543,6 @@ fn sync_gradients(args: &[String]) -> Result<CommandResult, CliError> {
         ],
     )?;
     let config = load_config(&parsed)?;
-    require_config_file(&config)?;
     let (identity, mut state) = load_or_init_state(config.data_dir())?;
 
     let epoch = parsed
