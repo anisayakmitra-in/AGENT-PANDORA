@@ -106,3 +106,36 @@ fn test_tropical_network_serialization_and_tamper_detection() {
 
     let _ = fs::remove_file(&path);
 }
+
+#[test]
+fn test_train_synthetic_tpan_and_export_default_model() {
+    let model = TropicalNetwork::train_synthetic_tpan(16, 64, 1, 30)
+        .expect("synthetic TPAN training succeeds");
+    assert_eq!(model.layers.len(), 3);
+    assert_eq!(model.layers[0].in_features, 16);
+    assert_eq!(model.layers[0].out_features, 64);
+    assert_eq!(model.layers[1].in_features, 64);
+    assert_eq!(model.layers[1].out_features, 32);
+    assert_eq!(model.layers[2].in_features, 32);
+    assert_eq!(model.layers[2].out_features, 1);
+
+    let sample_x = vec![0.5f32; 16];
+    let output = model.forward(&sample_x).expect("forward pass succeeds");
+    assert_eq!(output.len(), 1);
+
+    // Save default model artifact to .pandora/model_tpan.pnn
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root exists");
+    let model_path = workspace_root.join(".pandora").join("model_tpan.pnn");
+    model
+        .save_to_file(&model_path)
+        .expect("save model artifact succeeds");
+
+    // Load back and verify integrity
+    let reloaded = TropicalNetwork::load_from_file(&model_path)
+        .expect("reloading model succeeds with verified digest");
+    assert_eq!(reloaded.layers.len(), 3);
+    assert_eq!(reloaded.sha256_digest, model.sha256_digest);
+}
