@@ -11,7 +11,7 @@
 int main() {
     std::cout << "[C++20 Client Test] Verifying version...\n";
     pandora::Client client;
-    assert(client.version() == "3.0.10");
+    assert(client.version() == "3.1.2");
     std::cout << "  -> Client version: " << client.version() << "\n";
 
     std::cout << "[C++20 Client Test] Verifying envelope parsing...\n";
@@ -25,7 +25,7 @@ int main() {
 
     std::cout << "[C++20 Client Test] Verifying RAII Move Semantics...\n";
     pandora::Client moved_client = std::move(client);
-    assert(moved_client.version() == "3.0.10");
+    assert(moved_client.version() == "3.1.2");
     std::cout << "  -> Move constructor and RAII transfer passed\n";
 
     std::cout << "[C++20 Client Test] Verifying SIMD vector dot product...\n";

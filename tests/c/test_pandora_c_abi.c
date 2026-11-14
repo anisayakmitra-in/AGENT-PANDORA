@@ -13,7 +13,7 @@ int main(void) {
     printf("[C ABI Test] Checking AGENT-PANDORA version...\n");
     const char* version = pandora_version();
     assert(version != NULL);
-    assert(strcmp(version, "3.0.10") == 0);
+    assert(strcmp(version, "3.1.2") == 0);
     printf("  -> Verified version: %s\n", version);
 
     printf("[C ABI Test] Checking client allocation and lifecycle...\n");

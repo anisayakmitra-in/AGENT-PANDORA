@@ -328,7 +328,9 @@ fn test_tier1_r2_cli_model_moira_subcommands() {
         assert!(sync_ok, "pandora model sync --dry-run succeeds");
         let sync_parsed: Value = serde_json::from_str(&sync_stdout).expect("valid sync JSON");
         assert!(
-            sync_stdout.contains("anisayakmitra-in/moira")
+            sync_stdout.contains("anisayakmitra-in/FATE-O-SISTERS")
+                || sync_stdout.contains("anisayakmitra-in/moira")
+                || sync_parsed.to_string().contains("FATE-O-SISTERS")
                 || sync_parsed.to_string().contains("moira")
         );
     } else {
