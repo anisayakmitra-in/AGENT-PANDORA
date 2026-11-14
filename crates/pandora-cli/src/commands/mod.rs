@@ -23,6 +23,7 @@ pub(crate) mod canary;
 mod chat;
 pub(crate) mod cockpit;
 pub(crate) mod cockpit_tui;
+pub(crate) mod colab;
 mod completions;
 pub(crate) mod connector;
 pub(crate) mod cron;
@@ -279,6 +280,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "release" => release::execute(&args[1..]),
         "swarm" => swarm::execute(&args[1..]),
         "canary" => canary::execute(&args[1..]),
+        "colab" => colab::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));
