@@ -813,9 +813,10 @@ fn test_tier1_r6_python_embed_validation_scripts() {
         String::from_utf8_lossy(&repo_out.stderr)
     );
 
-    // 3. release_identity.py v3.0.10
+    // 3. release_identity.py for current Cargo package version
+    let version_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     let id_out = Command::new(&python)
-        .args(["scripts/release_identity.py", "v3.0.10"])
+        .args(["scripts/release_identity.py", &version_tag])
         .current_dir(&root)
         .output()
         .unwrap();
@@ -832,10 +833,10 @@ fn test_tier1_r6_typescript_client_build_and_launcher() {
     let ts_dir = root.join("npm").join("pandora-cli");
     assert!(ts_dir.join("package.json").exists());
 
-    // Verify TypeScript package.json version parity 3.0.10
+    // Verify TypeScript package.json version parity with workspace version
     let pkg_content = fs::read_to_string(ts_dir.join("package.json")).unwrap();
     let pkg_val: Value = serde_json::from_str(&pkg_content).unwrap();
-    assert_eq!(pkg_val["version"], "3.0.10");
+    assert_eq!(pkg_val["version"], env!("CARGO_PKG_VERSION"));
 
     // Execute typescript client test script via node
     let node_out = Command::new("node")
