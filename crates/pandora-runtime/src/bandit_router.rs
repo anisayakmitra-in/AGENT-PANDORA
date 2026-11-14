@@ -1233,3 +1233,72 @@ impl ContextualThompsonSamplingRouter {
         2.5 * (d as f64) * ((rounds as f64) * (rounds as f64).ln()).sqrt()
     }
 }
+
+/// Offline Tropical Polyhedral AST complexity prior for model routing.
+///
+/// Loads `.pandora/model_tpan.pnn` (if present) and evaluates 16-dim AST/task
+/// feature vectors with zero floating-point multiplications to produce a
+/// calibrated complexity score in `[0.0, 1.0]`. Falls back to `0.5` when no
+/// `.pnn` artifact exists on disk.
+#[derive(Debug, Clone)]
+pub struct TropicalComplexityPrior {
+    network: Option<crate::tropical_nn::TropicalNetwork>,
+}
+
+impl Default for TropicalComplexityPrior {
+    fn default() -> Self {
+        Self::from_default_path()
+    }
+}
+
+impl TropicalComplexityPrior {
+    /// Loads a `.pnn` model from `.pandora/model_tpan.pnn` if present.
+    pub fn from_default_path() -> Self {
+        Self::from_pnn_path(Path::new(".pandora/model_tpan.pnn"))
+    }
+
+    /// Loads a `.pnn` model from an explicit path; falls back gracefully if absent.
+    pub fn from_pnn_path(path: &Path) -> Self {
+        let network = crate::tropical_nn::TropicalNetwork::load_from_file(path).ok();
+        Self { network }
+    }
+
+    /// Constructs from an in-memory `TropicalNetwork`.
+    pub fn with_network(network: Option<crate::tropical_nn::TropicalNetwork>) -> Self {
+        Self { network }
+    }
+
+    /// Evaluates a 16-dimensional AST feature vector and squashes the tropical
+    /// output into `[0.0, 1.0]` via logistic sigmoid.
+    pub fn score_complexity(&self, ast_features: &[f32; 16]) -> f64 {
+        let Some(ref net) = self.network else {
+            return 0.5;
+        };
+        match net.forward(ast_features) {
+            Ok(out) => {
+                let raw = out.first().copied().unwrap_or(0.0) as f64;
+                1.0 / (1.0 + (-raw).exp())
+            }
+            Err(_) => 0.5,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tropical_prior_tests {
+    use super::TropicalComplexityPrior;
+    use crate::tropical_nn::{TropicalLayer, TropicalNetwork};
+    use std::path::Path;
+
+    #[test]
+    fn test_tropical_complexity_prior_fallback_and_scoring() {
+        let missing = TropicalComplexityPrior::from_pnn_path(Path::new("nonexistent_tpan.pnn"));
+        assert_eq!(missing.score_complexity(&[0.0; 16]), 0.5);
+
+        let layer = TropicalLayer::new(16, 1, vec![0.2; 16], None).unwrap();
+        let net = TropicalNetwork::new("tpan_prior_test", "ast", vec![layer]).unwrap();
+        let prior = TropicalComplexityPrior::with_network(Some(net));
+        let score = prior.score_complexity(&[1.0; 16]);
+        assert!(score > 0.5 && score <= 1.0);
+    }
+}

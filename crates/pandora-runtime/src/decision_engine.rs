@@ -799,6 +799,17 @@ impl SinglePassLogitEngine {
                 config.uncertainty_threshold,
             )),
             DecisionDriverKind::Mock => Arc::new(MockDecisionDriver::new()),
+            DecisionDriverKind::Moira => {
+                let pnn_path = config
+                    .model_name
+                    .as_deref()
+                    .unwrap_or(".pandora/model_decision.pnn");
+                let mut driver =
+                    TropicalDecisionDriver::from_pnn_path(std::path::Path::new(pnn_path));
+                driver.default_temperature = config.temperature;
+                driver.uncertainty_threshold = config.uncertainty_threshold;
+                Arc::new(driver)
+            }
             DecisionDriverKind::Ollama => {
                 let endpoint = config
                     .endpoint_url
@@ -1458,5 +1469,54 @@ mod tests {
         let engine = SinglePassLogitEngine::from_config(&config).unwrap();
         assert_eq!(engine.default_temperature(), 0.8);
         assert_eq!(engine.uncertainty_threshold(), 0.20);
+    }
+
+    #[test]
+    fn moira_decision_driver_fallback_and_pnn_evaluation() {
+        // 1. Missing .pnn path falls back cleanly to HeuristicDecisionDriver
+        let fallback_driver =
+            MoiraDecisionDriver::from_pnn_path(std::path::Path::new("nonexistent_moira.pnn"));
+        assert!(!fallback_driver.has_loaded_network());
+        let q = DecisionQuestion::binary(
+            "safety-1",
+            "Run rm -rf / on production server",
+            ("allow", "reject"),
+        );
+        let verdict = fallback_driver.evaluate_question(&q).unwrap();
+        assert_eq!(verdict.selected_label, "reject");
+
+        // 2. Loaded TropicalNetwork evaluates without multiplications
+        let mut weights = vec![0.0f32; 16];
+        weights[4] = 5.0; // is_reject feature index 4
+        weights[3] = -5.0; // is_allow feature index 3
+        let layer = crate::tropical_nn::TropicalLayer::new(16, 1, weights, None).unwrap();
+        let net = crate::tropical_nn::TropicalNetwork::new(
+            "moira_unit_test",
+            "decision_policy_scoring",
+            vec![layer],
+        )
+        .unwrap();
+        let loaded_driver = MoiraDecisionDriver::new(Some(net));
+        assert!(loaded_driver.has_loaded_network());
+
+        let loaded_verdict = loaded_driver.evaluate_question(&q).unwrap();
+        assert_eq!(loaded_verdict.selected_label, "reject");
+        assert!(loaded_verdict.confidence > 0.9);
+    }
+
+    #[test]
+    fn moira_decision_driver_config_instantiation() {
+        let config = DecisionDriverConfig {
+            kind: DecisionDriverKind::Moira,
+            endpoint_url: None,
+            model_name: Some("nonexistent_moira.pnn".to_string()),
+            api_key: None,
+            timeout_ms: 1000,
+            temperature: 0.9,
+            uncertainty_threshold: 0.15,
+        };
+        let engine = SinglePassLogitEngine::from_config(&config).unwrap();
+        assert_eq!(engine.default_temperature(), 0.9);
+        assert_eq!(engine.uncertainty_threshold(), 0.15);
     }
 }

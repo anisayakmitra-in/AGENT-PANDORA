@@ -359,6 +359,7 @@ pub enum DecisionDriverKind {
     Heuristic,
     Ollama,
     OpenAiCompatible,
+    Moira,
     Mock,
 }
 
@@ -368,6 +369,7 @@ impl DecisionDriverKind {
             Self::Heuristic => "heuristic",
             Self::Ollama => "ollama",
             Self::OpenAiCompatible => "openai_compatible",
+            Self::Moira => "moira",
             Self::Mock => "mock",
         }
     }

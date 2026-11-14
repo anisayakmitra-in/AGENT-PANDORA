@@ -80,10 +80,11 @@ fn evaluate(args: &[String]) -> Result<CommandResult, CliError> {
         "heuristic" => DecisionDriverKind::Heuristic,
         "ollama" => DecisionDriverKind::Ollama,
         "custom" | "openai" | "openai_compatible" => DecisionDriverKind::OpenAiCompatible,
+        "moira" | "tropical" => DecisionDriverKind::Moira,
         "mock" => DecisionDriverKind::Mock,
         other => {
             return Err(CliError::usage(format!(
-                "invalid driver '{other}'; supported: heuristic, ollama, custom, mock"
+                "invalid driver '{other}'; supported: heuristic, moira, ollama, custom, mock"
             )));
         }
     };
