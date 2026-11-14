@@ -15,13 +15,8 @@ fn test_tropical_layer_forward_exact_math() {
     //
     // Output 0: max(1.0 + 2.0, 3.0 + 1.0) + 0.1 = max(3.0, 4.0) + 0.1 = 4.1
     // Output 1: max(-2.0 + 2.0, 0.5 + 1.0) - 0.2 = max(0.0, 1.5) - 0.2 = 1.3
-    let layer = TropicalLayer::new(
-        2,
-        2,
-        vec![1.0, 3.0, -2.0, 0.5],
-        Some(vec![0.1, -0.2]),
-    )
-    .expect("layer constructs successfully");
+    let layer = TropicalLayer::new(2, 2, vec![1.0, 3.0, -2.0, 0.5], Some(vec![0.1, -0.2]))
+        .expect("layer constructs successfully");
 
     let input = vec![2.0, 1.0];
     let output = layer.forward(&input).expect("forward pass succeeds");
@@ -59,21 +54,9 @@ fn test_tropical_layer_dimension_validation() {
 fn test_tropical_multi_layer_chaining() {
     // Layer 1: 3 in -> 2 out
     // Layer 2: 2 in -> 1 out
-    let layer1 = TropicalLayer::new(
-        3,
-        2,
-        vec![1.0, 0.0, 2.0, -1.0, 4.0, 1.0],
-        None,
-    )
-    .unwrap();
+    let layer1 = TropicalLayer::new(3, 2, vec![1.0, 0.0, 2.0, -1.0, 4.0, 1.0], None).unwrap();
 
-    let layer2 = TropicalLayer::new(
-        2,
-        1,
-        vec![0.5, -0.5],
-        Some(vec![1.0]),
-    )
-    .unwrap();
+    let layer2 = TropicalLayer::new(2, 1, vec![0.5, -0.5], Some(vec![1.0])).unwrap();
 
     let net = TropicalNetwork::new("test_tpan", "ast_scoring", vec![layer1, layer2])
         .expect("network constructs successfully");

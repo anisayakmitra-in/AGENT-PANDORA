@@ -36,11 +36,17 @@ impl fmt::Display for TropicalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DimensionMismatch { expected, actual } => {
-                write!(f, "Tropical dimension mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "Tropical dimension mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::InvalidArchitecture(msg) => write!(f, "Invalid tropical architecture: {msg}"),
             Self::IntegrityFailure { expected, actual } => {
-                write!(f, "Tropical model integrity failure: expected SHA-256 {expected}, got {actual}")
+                write!(
+                    f,
+                    "Tropical model integrity failure: expected SHA-256 {expected}, got {actual}"
+                )
             }
             Self::Io(msg) => write!(f, "Tropical model I/O error: {msg}"),
             Self::Serialization(msg) => write!(f, "Tropical serialization error: {msg}"),
@@ -65,9 +71,16 @@ pub struct TropicalLayer {
 
 impl TropicalLayer {
     /// Constructs a new tropical layer.
-    pub fn new(in_features: usize, out_features: usize, weights: Vec<f32>, bias: Option<Vec<f32>>) -> Result<Self, TropicalError> {
+    pub fn new(
+        in_features: usize,
+        out_features: usize,
+        weights: Vec<f32>,
+        bias: Option<Vec<f32>>,
+    ) -> Result<Self, TropicalError> {
         if in_features == 0 || out_features == 0 {
-            return Err(TropicalError::InvalidArchitecture("Features must be non-zero".to_string()));
+            return Err(TropicalError::InvalidArchitecture(
+                "Features must be non-zero".to_string(),
+            ));
         }
         let expected_weights = in_features * out_features;
         if weights.len() != expected_weights {
@@ -146,9 +159,15 @@ pub struct TropicalNetwork {
 
 impl TropicalNetwork {
     /// Constructs and validates a tropical network, computing its SHA-256 digest.
-    pub fn new(name: impl Into<String>, domain: impl Into<String>, layers: Vec<TropicalLayer>) -> Result<Self, TropicalError> {
+    pub fn new(
+        name: impl Into<String>,
+        domain: impl Into<String>,
+        layers: Vec<TropicalLayer>,
+    ) -> Result<Self, TropicalError> {
         if layers.is_empty() {
-            return Err(TropicalError::InvalidArchitecture("Network must contain at least one layer".to_string()));
+            return Err(TropicalError::InvalidArchitecture(
+                "Network must contain at least one layer".to_string(),
+            ));
         }
 
         // Validate dimensional chain consistency: layer[k].out_features == layer[k+1].in_features
