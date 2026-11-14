@@ -17,6 +17,7 @@ pub mod cockpit;
 pub mod cockpit_web;
 pub mod coding_feedback;
 pub mod colab_bridge;
+pub mod tropical_nn;
 pub mod composition_ledger;
 pub mod config;
 pub mod conformal_calibrator;
