@@ -365,4 +365,4 @@ pandora evolution island run --state island_state.json --generations 5
 
 ## License
 
-Pandora is released under the [Apache License 2.0](LICENSE).
+Pandora is released under the [GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE).

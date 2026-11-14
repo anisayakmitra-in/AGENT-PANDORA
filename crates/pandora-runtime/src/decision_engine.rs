@@ -286,11 +286,34 @@ impl TropicalDecisionDriver {
         Self::new(network)
     }
 
+    /// Loads from the default `.pandora/model_decision.pnn` path if present.
+    pub fn from_default_pandora_path() -> Self {
+        Self::from_pnn_path(std::path::Path::new(".pandora/model_decision.pnn"))
+    }
+
     /// Returns `true` if a verified `.pnn` policy network is loaded.
     pub fn has_loaded_network(&self) -> bool {
         self.network.is_some()
     }
+
+    /// Computes normalized Shannon entropy in `[0.0, 1.0]` for MOIRA's DSR gate.
+    fn normalized_entropy(probs: &[f64]) -> f64 {
+        if probs.len() <= 1 {
+            return 0.0;
+        }
+        let max_h = (probs.len() as f64).ln();
+        let mut h = 0.0;
+        for &p in probs {
+            if p > 1e-12 {
+                h -= p * p.ln();
+            }
+        }
+        (h / max_h).clamp(0.0, 1.0)
+    }
 }
+
+/// Alias highlighting MOIRA (`FATE-O-SISTERS`) 3-6-9 decision integration.
+pub type MoiraDecisionDriver = TropicalDecisionDriver;
 
 impl DecisionDriver for TropicalDecisionDriver {
     fn evaluate_question(
@@ -339,7 +362,9 @@ impl DecisionDriver for TropicalDecisionDriver {
         let (selected_label, confidence) = sorted_probs[0].clone();
         let second_prob = sorted_probs.get(1).map(|s| s.1).unwrap_or(0.0);
         let margin = confidence - second_prob;
-        let is_uncertain = margin < self.uncertainty_threshold;
+        let entropy = Self::normalized_entropy(&probs);
+        // MOIRA DSR Gate: flag uncertainty if margin is narrow OR normalized entropy exceeds 0.666
+        let is_uncertain = margin < self.uncertainty_threshold || entropy > 0.666;
         let latency_ms = start.elapsed().as_millis() as u64;
 
         Ok(DynamicVerdict::new(
