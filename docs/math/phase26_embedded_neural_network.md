@@ -14,6 +14,17 @@ Let:
 
 ## 2. Theorem 49: Universal Approximation, Quantization Noise Bounds & Forward Invariant Stability
 
+### 2.1 Tropical Rational Form & Piecewise-Linear Polyhedral Duality
+In the tropical semiring $(\mathbb{R} \cup \{-\infty\}, \oplus, \otimes)$ with $\oplus = \max$ and $\otimes = +$:
+- Abstract Syntax Tree (AST) metrics (cyclomatic complexity, branch nesting depth, and execution spans) are intrinsically max-plus expressions: worst-case branch selection $\max(A, B)$ and sequential statement composition $A + B$.
+- A multi-layer Tropical Polyhedral AST Network (TPAN) computes a continuous piecewise-linear (CPWL) function:
+  $$f_{\text{tropical}}(\mathbf{x}) = \bigoplus_k \left( \mathbf{w}_k \otimes \mathbf{x} \right) = \max_k (\mathbf{w}_k^T \mathbf{x} + b_k)$$
+- The difference of two tropical convex forms corresponds to a **tropical rational function**:
+  $$R(\mathbf{x}) = f_1(\mathbf{x}) - f_2(\mathbf{x}) = \max_i (\mathbf{u}_i^T \mathbf{x} + a_i) - \max_j (\mathbf{v}_j^T \mathbf{x} + c_j)$$
+  Since $-\min(\mathbf{x}) = \max(-\mathbf{x})$, tropical rational networks can represent arbitrary nonconvex polyhedral decision regions with exact hyperplane boundaries.
+
+### 2.2 Formal Theorem 49 Statement
+
 **Theorem 49 (Universal Approximation, Quantization Error Bounds, and Forward Pass Invariant Stability):**  
 *Let $f: \mathcal{X} \to \mathbb{R}^m$ be an arbitrary target function in $C(\mathcal{X}, \mathbb{R}^m)$, and let $\hat{f}_\theta$ denote an $L$-layer feedforward network with Lipschitz activations $\sigma$ and spectral norm bounds $\|\mathbf{W}_l\|_2 \le \gamma_l$. Let $\tilde{f}_{\tilde{\theta}}$ denote the $b$-bit scalar quantized network executed within the pure safe Rust runtime where $\tilde{\mathbf{W}}_l = Q_b(\mathbf{W}_l)$. Then:*
 
