@@ -1,13 +1,13 @@
 # Copyright (C) 2026 ANISAYAK MITRA
 # SPDX-License-Identifier: GPL-3.0-or-later
 """
-Standalone Offline Trainer & Hugging Face Exporter for MOIRA-Decision-v1
+Standalone Offline Trainer & Hugging Face Exporter for MOIRA
 using FATE-O-SISTERS (MOIRA) on Google Colab (NVIDIA L4 / A100 / T4 GPU).
 
 Produces TWO outputs:
   1. `./moira_hf/` — Complete, independent Hugging Face repository
      (`config.json`, `model.safetensors`, `modeling_moira_decision.py`, `README.md` GPL-3.0 Model Card)
-     ready to upload directly to Hugging Face Hub (`anisayakmitra-in/moira-decision-v1`).
+     ready to upload directly to Hugging Face Hub (`anisayakmitra-in/moira`).
   2. `./moira_artifacts/model_decision.pnn` — Zero-multiplication Tropical
      Polyhedral policy for offline execution in AGENT-PANDORA (`MoiraDecisionDriver`).
 """
@@ -32,7 +32,7 @@ FATE_DIR = Path("/tmp/fate-o-sisters")
 OUTPUT_DIR = Path("./moira_artifacts")
 HF_DIR = Path("./moira_hf")
 PNN_PATH = OUTPUT_DIR / "model_decision.pnn"
-HF_REPO_ID = os.environ.get("MOIRA_HF_REPO", "anisayakmitra-in/moira-decision-v1")
+HF_REPO_ID = os.environ.get("MOIRA_HF_REPO", "anisayakmitra-in/moira")
 
 
 def run_cmd(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -331,7 +331,7 @@ tags:
   - pytorch
 ---
 
-# MOIRA-Decision-v1
+# MOIRA
 
 An independent **3-6-9 Perspective Decision Model** from the [FATE-O-SISTERS (MOIRA)](https://github.com/anisayakmitra-in/FATE-O-SISTERS) architecture, licensed under **GNU GPLv3**.
 
@@ -342,7 +342,7 @@ An independent **3-6-9 Perspective Decision Model** from the [FATE-O-SISTERS (MO
 - **3:6:9 Mixing Law:** `V_mixed = (3 * V_clotho + 6 * V_lachesis + 9 * V_atropos) / 18`
 
 ## Benchmark vs. Naive Baseline (Held-Out Adversarial Suite)
-- **MOIRA-Decision-v1 Accuracy:** `{metrics['moira_eval_acc']:.1%}` (avg decision margin: `{metrics['moira_avg_margin']:.3f}`)
+- **MOIRA Accuracy:** `{metrics['moira_eval_acc']:.1%}` (avg decision margin: `{metrics['moira_avg_margin']:.3f}`)
 - **Naive Single-Head Baseline Accuracy:** `{metrics['baseline_eval_acc']:.1%}` (avg decision margin: `{metrics['baseline_avg_margin']:.3f}`)
 - **Distilled Tropical Student (Zero-Multiplication) MSE:** `{metrics['tropical_mse']:.5f}`
 
@@ -363,7 +363,7 @@ GNU General Public License v3.0 (`GPL-3.0-or-later`). Copyright (C) 2026 ANISAYA
 
 def train_and_export_decision_models(device: torch.device) -> None:
     print("\n" + "=" * 68)
-    print("STAGE 2: Training MOIRA-Decision-v1 + Benchmarking + HF Export")
+    print("STAGE 2: Training MOIRA + Benchmarking + HF Export")
     print("=" * 68)
 
     torch.manual_seed(42)
@@ -406,7 +406,7 @@ def train_and_export_decision_models(device: torch.device) -> None:
 
     m_acc, m_margin = eval_pairwise(moira_model)
     b_acc, b_margin = eval_pairwise(baseline)
-    print(f"  MOIRA-Decision-v1  -> Held-Out Acc: {m_acc:.1%} | Avg Margin: {m_margin:.3f}")
+    print(f"  MOIRA              -> Held-Out Acc: {m_acc:.1%} | Avg Margin: {m_margin:.3f}")
     print(f"  Naive Baseline MLP -> Held-Out Acc: {b_acc:.1%} | Avg Margin: {b_margin:.3f}")
 
     with torch.no_grad():
@@ -448,7 +448,7 @@ def train_and_export_decision_models(device: torch.device) -> None:
         extract_layer(student.l2, 64, 32),
         extract_layer(student.l3, 32, 1),
     ]
-    name = "moira_decision_v1"
+    name = "moira"
     domain = "decision_policy_scoring"
     digest = compute_rust_compatible_sha256(name, domain, layers)
     pnn_payload = {"name": name, "domain": domain, "layers": layers, "sha256_digest": digest}
@@ -463,7 +463,7 @@ def main() -> None:
     device_str = "cuda" if use_cuda else "cpu"
     device = torch.device(device_str)
     gpu_name = torch.cuda.get_device_name(0) if use_cuda else "CPU"
-    print(f"Running MOIRA-Decision Trainer on: {device_str} ({gpu_name})")
+    print(f"Running MOIRA Trainer on: {device_str} ({gpu_name})")
 
     env, has_fate = setup_dependencies()
     if has_fate:
