@@ -3,6 +3,11 @@ name = "pandora-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "pandora"

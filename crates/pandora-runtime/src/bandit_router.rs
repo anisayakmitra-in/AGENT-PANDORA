@@ -1282,6 +1282,12 @@ impl TropicalComplexityPrior {
             Err(_) => 0.5,
         }
     }
+
+    /// Extracts structural AST features directly from `source` and scores its complexity in `[0.0, 1.0]`.
+    pub fn score_source(&self, source: &str) -> f64 {
+        let features = crate::tropical_nn::extract_ast_features(source);
+        self.score_complexity(&features)
+    }
 }
 
 #[cfg(test)]

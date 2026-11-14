@@ -408,4 +408,119 @@ impl TropicalNetwork {
 
         Self::new("tpan_a100_v310", "ast_polyhedral_scoring", vec![l1, l2, l3])
     }
+
+    /// Evaluates a source code string directly by extracting 16 structural AST
+    /// features and running a zero-multiplication tropical forward pass.
+    pub fn score_source(&self, source: &str) -> Result<f32, TropicalError> {
+        let features = extract_ast_features(source);
+        let out = self.forward(&features)?;
+        Ok(out.first().copied().unwrap_or(0.0))
+    }
+}
+
+/// Extracts a deterministic 16-dimensional structural AST & complexity feature
+/// vector from source code in pure safe Rust (zero external parser crates).
+pub fn extract_ast_features(source: &str) -> [f32; 16] {
+    let mut total_lines = 0usize;
+    let mut non_empty_lines = 0usize;
+    let mut comment_lines = 0usize;
+    let mut current_depth = 0usize;
+    let mut max_depth = 0usize;
+    let mut total_indent = 0usize;
+
+    let mut fn_count = 0usize;
+    let mut branch_count = 0usize;
+    let mut loop_count = 0usize;
+    let mut type_count = 0usize;
+    let mut async_count = 0usize;
+    let mut risk_count = 0usize;
+    let mut import_count = 0usize;
+    let mut test_count = 0usize;
+
+    for line in source.lines() {
+        total_lines += 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        non_empty_lines += 1;
+        total_indent += line.len().saturating_sub(line.trim_start().len());
+
+        if trimmed.starts_with("//") || trimmed.starts_with('#') || trimmed.starts_with("/*") {
+            comment_lines += 1;
+        }
+
+        for ch in trimmed.chars() {
+            match ch {
+                '{' => {
+                    current_depth += 1;
+                    if current_depth > max_depth {
+                        max_depth = current_depth;
+                    }
+                }
+                '}' => {
+                    current_depth = current_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+        }
+
+        if trimmed.contains("fn ") || trimmed.starts_with("def ") || trimmed.contains("function ") {
+            fn_count += 1;
+        }
+        if trimmed.starts_with("if ")
+            || trimmed.contains(" else ")
+            || trimmed.starts_with("match ")
+            || trimmed.starts_with("switch ")
+            || trimmed.starts_with("elif ")
+        {
+            branch_count += 1;
+        }
+        if trimmed.starts_with("for ")
+            || trimmed.starts_with("while ")
+            || trimmed.starts_with("loop ")
+        {
+            loop_count += 1;
+        }
+        if trimmed.contains("struct ")
+            || trimmed.contains("enum ")
+            || trimmed.contains("trait ")
+            || trimmed.starts_with("class ")
+        {
+            type_count += 1;
+        }
+        if trimmed.contains("async ") || trimmed.contains(".await") {
+            async_count += 1;
+        }
+        if trimmed.contains("unsafe") || trimmed.contains(".unwrap()") || trimmed.contains("panic!")
+        {
+            risk_count += 1;
+        }
+        if trimmed.starts_with("use ") || trimmed.starts_with("import ") {
+            import_count += 1;
+        }
+        if trimmed.contains("#[test]") || trimmed.starts_with("def test_") {
+            test_count += 1;
+        }
+    }
+
+    let denom = (non_empty_lines.max(1)) as f32;
+    [
+        (total_lines as f32 / 500.0).min(2.0),
+        (non_empty_lines as f32) / (total_lines.max(1) as f32),
+        (max_depth as f32 / 8.0).min(2.0),
+        (total_indent as f32 / denom / 16.0).min(2.0),
+        (fn_count as f32 / 20.0).min(2.0),
+        (branch_count as f32 / denom * 10.0).min(2.0),
+        (loop_count as f32 / denom * 10.0).min(2.0),
+        (type_count as f32 / 10.0).min(2.0),
+        (async_count as f32 / 10.0).min(2.0),
+        (risk_count as f32 / 5.0).min(2.0),
+        (comment_lines as f32) / denom,
+        (import_count as f32 / 20.0).min(2.0),
+        (test_count as f32 / 10.0).min(2.0),
+        ((branch_count + loop_count) as f32 / (fn_count.max(1) as f32) / 5.0).min(2.0),
+        ((source.len() as f32) / 20_000.0).min(2.0),
+        1.0,
+    ]
 }

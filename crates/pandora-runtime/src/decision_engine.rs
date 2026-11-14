@@ -759,7 +759,7 @@ impl SinglePassLogitEngine {
         Self {
             default_temperature: 1.0,
             uncertainty_threshold: 0.15,
-            driver: Arc::new(HeuristicDecisionDriver::new()),
+            driver: Arc::new(MoiraDecisionDriver::from_default_pandora_path()),
         }
     }
 
@@ -777,10 +777,12 @@ impl SinglePassLogitEngine {
                 "temperature must be positive and finite".into(),
             ));
         }
+        let mut driver = MoiraDecisionDriver::from_default_pandora_path();
+        driver.default_temperature = temperature;
         Ok(Self {
             default_temperature: temperature,
             uncertainty_threshold: 0.15,
-            driver: Arc::new(HeuristicDecisionDriver::with_temperature(temperature)),
+            driver: Arc::new(driver),
         })
     }
 

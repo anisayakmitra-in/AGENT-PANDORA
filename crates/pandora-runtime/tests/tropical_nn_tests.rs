@@ -139,3 +139,36 @@ fn test_train_synthetic_tpan_and_export_default_model() {
     assert_eq!(reloaded.layers.len(), 3);
     assert_eq!(reloaded.sha256_digest, model.sha256_digest);
 }
+
+#[test]
+fn test_extract_ast_features_and_score_source() {
+    let sample_code = r#"
+        use std::collections::HashMap;
+        pub async fn process(items: &[i32]) -> i32 {
+            let mut sum = 0;
+            for &x in items {
+                if x > 0 {
+                    sum += x;
+                }
+            }
+            sum
+        }
+    "#;
+
+    let features = pandora_runtime::tropical_nn::extract_ast_features(sample_code);
+    assert_eq!(features.len(), 16);
+    assert!(features[0] > 0.0); // total_lines
+    assert!(features[2] > 0.0); // max_depth
+    assert!(features[4] > 0.0); // fn_count
+    assert!(features[5] > 0.0); // branch_count
+    assert!(features[6] > 0.0); // loop_count
+    assert!(features[8] > 0.0); // async_count
+    assert_eq!(features[15], 1.0); // bias anchor
+
+    let layer = TropicalLayer::new(16, 1, vec![0.1; 16], None).unwrap();
+    let net = TropicalNetwork::new("ast_scorer", "ast", vec![layer]).unwrap();
+    let score = net
+        .score_source(sample_code)
+        .expect("score_source succeeds");
+    assert!(score.is_finite());
+}
