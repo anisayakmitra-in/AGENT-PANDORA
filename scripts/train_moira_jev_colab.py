@@ -39,13 +39,35 @@ def run_cmd(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None 
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
-def setup_dependencies() -> dict[str, str]:
-    if not FATE_DIR.exists():
-        run_cmd(["git", "clone", "--depth", "1", "--branch", "main", FATE_REPO, str(FATE_DIR)])
-    run_cmd([sys.executable, "-m", "pip", "install", "-q", "-e", "research", "safetensors"], cwd=FATE_DIR)
+def setup_dependencies() -> tuple[dict[str, str], bool]:
+    run_cmd([sys.executable, "-m", "pip", "install", "-q", "safetensors"])
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(FATE_DIR / "research" / "src")
-    return env
+    has_fate = False
+    if not FATE_DIR.exists():
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        repo_url = (
+            f"https://{token}@github.com/anisayakmitra-in/FATE-O-SISTERS.git"
+            if token
+            else FATE_REPO
+        )
+        res = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", "main", repo_url, str(FATE_DIR)],
+            env={**env, "GIT_TERMINAL_PROMPT": "0"},
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0:
+            has_fate = True
+        else:
+            print("[WARN] Could not clone FATE-O-SISTERS (repo is private and GITHUB_TOKEN is not set).")
+            print("       Skipping Stage 1 (M2 pretrain) and proceeding directly to Stage 2 (MOIRA-Jev-Decision-v1 + HF Export).")
+    else:
+        has_fate = True
+
+    if has_fate:
+        run_cmd([sys.executable, "-m", "pip", "install", "-q", "-e", "research"], cwd=FATE_DIR)
+        env["PYTHONPATH"] = str(FATE_DIR / "research" / "src")
+    return env, has_fate
 
 
 def run_moira_agent_training(env: dict[str, str], device: str) -> None:
@@ -441,8 +463,9 @@ def main() -> None:
     gpu_name = torch.cuda.get_device_name(0) if use_cuda else "CPU"
     print(f"Running MOIRA-Jev Trainer on: {device_str} ({gpu_name})")
 
-    env = setup_dependencies()
-    run_moira_agent_training(env, device_str)
+    env, has_fate = setup_dependencies()
+    if has_fate:
+        run_moira_agent_training(env, device_str)
     train_and_export_decision_models(device)
 
 
