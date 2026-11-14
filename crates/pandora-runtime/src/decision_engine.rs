@@ -1530,23 +1530,14 @@ mod tests {
         let q = DecisionQuestion::binary(
             "safety-1",
             "Run rm -rf / on production server",
-            ("allow", "reject"),
+            "allow",
+            "reject",
         );
         let verdict = fallback_driver.evaluate_question(&q).unwrap();
         assert_eq!(verdict.selected_label, "reject");
 
         // 2. Loaded TropicalNetwork evaluates without multiplications
-        let mut weights = vec![0.0f32; 16];
-        weights[4] = 5.0; // is_reject feature index 4
-        weights[3] = -5.0; // is_allow feature index 3
-        let layer = crate::tropical_nn::TropicalLayer::new(16, 1, weights, None).unwrap();
-        let net = crate::tropical_nn::TropicalNetwork::new(
-            "moira_unit_test",
-            "decision_policy_scoring",
-            vec![layer],
-        )
-        .unwrap();
-        let loaded_driver = MoiraDecisionDriver::new(Some(net));
+        let loaded_driver = MoiraDecisionDriver::calibrated();
         assert!(loaded_driver.has_loaded_network());
 
         let loaded_verdict = loaded_driver.evaluate_question(&q).unwrap();

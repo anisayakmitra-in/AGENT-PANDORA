@@ -20,14 +20,14 @@ fn test_challenge_empty_input() {
     let prior = TropicalComplexityPrior::from_default_path();
     let score = prior.score_source("");
     assert!(
-        score >= 0.0 && score <= 1.0,
+        (0.0..=1.0).contains(&score),
         "score for empty string must be in [0, 1], got {score}"
     );
 
     let feat = TaskComplexityFeatures::extract(Path::new("test.rs"), "", "empty instruction");
     assert_eq!(feat.line_count, 0);
     assert_eq!(feat.max_ast_depth, 0);
-    assert!(feat.language_complexity >= 0.0 && feat.language_complexity <= 1.0);
+    assert!((0.0..=1.0).contains(&feat.language_complexity));
 }
 
 #[test]
@@ -36,13 +36,13 @@ fn test_challenge_single_line_input() {
     let single_line = "x = 42";
     let score = prior.score_source(single_line);
     assert!(
-        score >= 0.0 && score <= 1.0,
+        (0.0..=1.0).contains(&score),
         "score for single-line string must be in [0, 1], got {score}"
     );
 
     let feat = TaskComplexityFeatures::extract(Path::new("test.py"), single_line, "single line");
     assert_eq!(feat.line_count, 1);
-    assert!(feat.language_complexity >= 0.0 && feat.language_complexity <= 1.0);
+    assert!((0.0..=1.0).contains(&feat.language_complexity));
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn test_challenge_massive_input() {
 
     let score = prior.score_source(&massive);
     assert!(
-        score >= 0.0 && score <= 1.0,
+        (0.0..=1.0).contains(&score),
         "score for massive string must be in [0, 1], got {score}"
     );
     assert!(
@@ -69,12 +69,12 @@ fn test_challenge_massive_input() {
     let feat =
         TaskComplexityFeatures::extract(Path::new("massive.rs"), &massive, "process massive file");
     assert_eq!(feat.line_count, 50_000);
-    assert!(feat.language_complexity >= 0.0 && feat.language_complexity <= 1.0);
+    assert!((0.0..=1.0).contains(&feat.language_complexity));
 
     let vec = feat.to_vector();
     for (i, v) in vec.iter().enumerate() {
         assert!(
-            *v >= 0.0 && *v <= 1.0,
+            (0.0..=1.0).contains(v),
             "feature vector element {i} must be in [0, 1], got {v}"
         );
     }
@@ -90,7 +90,7 @@ fn test_challenge_binary_garbage_and_unicode_escapes() {
 
     let score = prior.score_source(&lossy_string);
     assert!(
-        score >= 0.0 && score <= 1.0,
+        (0.0..=1.0).contains(&score),
         "score for binary garbage must be in [0, 1], got {score}"
     );
     assert!(!score.is_nan());
@@ -98,7 +98,7 @@ fn test_challenge_binary_garbage_and_unicode_escapes() {
     let weird_unicode = "\0\t\r\n\u{FFFF}\u{FEFF}\u{200B}\u{202E}fn \u{1F980}() { \u{1F916} }";
     let unicode_score = prior.score_source(weird_unicode);
     assert!(
-        unicode_score >= 0.0 && unicode_score <= 1.0,
+        (0.0..=1.0).contains(&unicode_score),
         "score for weird unicode must be in [0, 1], got {unicode_score}"
     );
     assert!(!unicode_score.is_nan());
@@ -117,7 +117,7 @@ fn test_challenge_score_source_bounded_even_with_extreme_weights() {
 
     let score_pos = prior_pos.score_complexity(&[2.0; 16]);
     assert!(
-        score_pos >= 0.0 && score_pos <= 1.0,
+        (0.0..=1.0).contains(&score_pos),
         "extreme pos score must be bounded in [0, 1], got {score_pos}"
     );
     assert!(
@@ -132,11 +132,11 @@ fn test_challenge_score_source_bounded_even_with_extreme_weights() {
 
     let score_neg = prior_neg.score_complexity(&[0.0; 16]);
     assert!(
-        score_neg >= 0.0 && score_neg <= 1.0,
+        (0.0..=1.0).contains(&score_neg),
         "extreme neg score must be bounded in [0, 1], got {score_neg}"
     );
     assert!(
-        score_neg >= 0.0 && score_neg < 1e-6,
+        (0.0..1e-6).contains(&score_neg),
         "extreme neg score should saturate near 0.0, got {score_neg}"
     );
 }
@@ -187,7 +187,7 @@ fn test_challenge_tau_adjusted_bounds() {
                 ..
             } => {
                 assert!(
-                    acceptance_threshold >= 0.20 && acceptance_threshold <= 0.85,
+                    (0.20..=0.85).contains(&acceptance_threshold),
                     "tau {acceptance_threshold} must be in [0.20, 0.85] for complexity {comp}"
                 );
             }
@@ -200,8 +200,8 @@ fn test_challenge_tau_adjusted_bounds() {
         // Direct mathematical check
         let c_clamped = comp.clamp(0.0, 1.0);
         let tau = (0.50 + 0.25 * (c_clamped - 0.50)).clamp(0.20, 0.85);
-        assert!(tau >= 0.20 && tau <= 0.85);
-        assert!(tau >= 0.375 && tau <= 0.625);
+        assert!((0.20..=0.85).contains(&tau));
+        assert!((0.375..=0.625).contains(&tau));
     }
 }
 
@@ -391,11 +391,11 @@ fn test_challenge_dynamic_routing_end_to_end_wiring() {
     let complex_comp = prior.score_source(complex_code);
 
     assert!(
-        simple_comp >= 0.0 && simple_comp <= 1.0,
+        (0.0..=1.0).contains(&simple_comp),
         "simple score bounded in [0, 1]"
     );
     assert!(
-        complex_comp >= 0.0 && complex_comp <= 1.0,
+        (0.0..=1.0).contains(&complex_comp),
         "complex score bounded in [0, 1]"
     );
 
@@ -540,7 +540,7 @@ fn test_challenge_nan_subnormal_and_inf_float_resilience() {
     let score = prior.score_complexity(&extreme_features);
     assert!(!score.is_nan(), "score must not be NaN");
     assert!(
-        score >= 0.0 && score <= 1.0,
+        (0.0..=1.0).contains(&score),
         "score must remain bounded in [0, 1], got {score}"
     );
 
@@ -549,7 +549,7 @@ fn test_challenge_nan_subnormal_and_inf_float_resilience() {
     let score_inf = prior.score_complexity(&extreme_features);
     assert!(!score_inf.is_nan(), "score with inf must not be NaN");
     assert!(
-        score_inf >= 0.0 && score_inf <= 1.0,
+        (0.0..=1.0).contains(&score_inf),
         "score with inf must remain bounded in [0, 1], got {score_inf}"
     );
 }
