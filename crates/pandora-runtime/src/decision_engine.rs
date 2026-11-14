@@ -171,6 +171,189 @@ impl DecisionDriver for HeuristicDecisionDriver {
     }
 }
 
+/// Deterministic 16-dimensional feature encoder for offline Tropical Decision scoring.
+/// Matches `encode_decision_features` in `scripts/train_moira_jev_colab.py`.
+pub fn encode_decision_features(prompt: &str, context: &str, label: &str) -> [f32; 16] {
+    let text = format!("{prompt} {context}").to_lowercase();
+    let lbl = label.to_lowercase();
+
+    const DANGER_TERMS: &[&str] = &[
+        "danger", "drop", "delete", "rm -rf", "format", "wipe", "force", "bypass",
+    ];
+    const SAFE_TERMS: &[&str] = &[
+        "read", "search", "inspect", "status", "check", "test", "list", "safe",
+    ];
+    const COMPLEX_TERMS: &[&str] = &[
+        "refactor",
+        "architect",
+        "migrate",
+        "distributed",
+        "kernel",
+        "security",
+    ];
+
+    let danger_hits = DANGER_TERMS.iter().filter(|&&t| text.contains(t)).count() as f32;
+    let safe_hits = SAFE_TERMS.iter().filter(|&&t| text.contains(t)).count() as f32;
+    let complex_hits = COMPLEX_TERMS.iter().filter(|&&t| text.contains(t)).count() as f32;
+
+    let is_allow = if matches!(
+        lbl.as_str(),
+        "allow" | "yes" | "true" | "safe" | "fast" | "proceed"
+    ) {
+        1.0
+    } else {
+        0.0
+    };
+    let is_reject = if matches!(
+        lbl.as_str(),
+        "reject" | "no" | "false" | "dangerous" | "deny" | "block"
+    ) {
+        1.0
+    } else {
+        0.0
+    };
+    let is_deep = if matches!(
+        lbl.as_str(),
+        "deep" | "careful" | "review" | "escalate" | "thorough"
+    ) {
+        1.0
+    } else {
+        0.0
+    };
+    let direct_match = if text.contains(&lbl) { 1.0 } else { 0.0 };
+
+    let length_norm = ((text.len() as f32) / 500.0).min(2.0);
+    let word_count_norm = ((text.split_whitespace().count() as f32) / 100.0).min(2.0);
+    let prod_flag = if text.contains("prod") || text.contains("main") {
+        1.0
+    } else {
+        0.0
+    };
+
+    [
+        danger_hits,
+        safe_hits,
+        complex_hits,
+        is_allow,
+        is_reject,
+        is_deep,
+        direct_match,
+        length_norm,
+        word_count_norm,
+        danger_hits * is_reject,
+        safe_hits * is_allow,
+        complex_hits * is_deep,
+        danger_hits * is_allow,
+        safe_hits * is_reject,
+        prod_flag,
+        1.0,
+    ]
+}
+
+/// Offline, zero-multiplication Tropical Polyhedral decision driver.
+///
+/// Loads a static `.pnn` policy file (e.g., `.pandora/model_decision.pnn` distilled
+/// offline from MOIRA) if present, and falls back gracefully to
+/// [`HeuristicDecisionDriver`] when no model file is present.
+#[derive(Clone, Debug)]
+pub struct TropicalDecisionDriver {
+    network: Option<crate::tropical_nn::TropicalNetwork>,
+    fallback: HeuristicDecisionDriver,
+    default_temperature: f64,
+    uncertainty_threshold: f64,
+}
+
+impl Default for TropicalDecisionDriver {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl TropicalDecisionDriver {
+    /// Creates a `TropicalDecisionDriver` from an optional pre-loaded network.
+    pub fn new(network: Option<crate::tropical_nn::TropicalNetwork>) -> Self {
+        Self {
+            network,
+            fallback: HeuristicDecisionDriver::new(),
+            default_temperature: 1.0,
+            uncertainty_threshold: 0.15,
+        }
+    }
+
+    /// Loads a static `.pnn` decision policy from disk; falls back to heuristics if absent or invalid.
+    pub fn from_pnn_path(path: &std::path::Path) -> Self {
+        let network = crate::tropical_nn::TropicalNetwork::load_from_file(path).ok();
+        Self::new(network)
+    }
+
+    /// Returns `true` if a verified `.pnn` policy network is loaded.
+    pub fn has_loaded_network(&self) -> bool {
+        self.network.is_some()
+    }
+}
+
+impl DecisionDriver for TropicalDecisionDriver {
+    fn evaluate_question(
+        &self,
+        question: &DecisionQuestion,
+    ) -> Result<DynamicVerdict, DecisionError> {
+        let Some(ref net) = self.network else {
+            return self.fallback.evaluate_question(question);
+        };
+
+        let start = Instant::now();
+        if !question.schema.is_valid() {
+            return Err(DecisionError::InvalidSchema(
+                "invalid question schema".into(),
+            ));
+        }
+
+        let labels = question.schema.labels();
+        let state_str = question
+            .state_context
+            .as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        let mut raw_logits = Vec::with_capacity(labels.len());
+        for label in &labels {
+            let features = encode_decision_features(&question.prompt, &state_str, label);
+            let out = net
+                .forward(&features)
+                .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+            let logit = out.first().copied().unwrap_or(0.0) as f64;
+            raw_logits.push(logit);
+        }
+
+        let probs = SinglePassLogitEngine::compute_softmax(&raw_logits, self.default_temperature)?;
+        let mut prob_map = BTreeMap::new();
+        let mut sorted_probs: Vec<(String, f64)> = Vec::new();
+
+        for (label, &p) in labels.iter().zip(probs.iter()) {
+            prob_map.insert(label.clone(), p);
+            sorted_probs.push((label.clone(), p));
+        }
+
+        sorted_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let (selected_label, confidence) = sorted_probs[0].clone();
+        let second_prob = sorted_probs.get(1).map(|s| s.1).unwrap_or(0.0);
+        let margin = confidence - second_prob;
+        let is_uncertain = margin < self.uncertainty_threshold;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        Ok(DynamicVerdict::new(
+            &question.id,
+            selected_label,
+            confidence,
+            prob_map,
+            margin,
+            is_uncertain,
+            latency_ms,
+        ))
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MockDecisionDriver {
     preset_verdicts: Mutex<VecDeque<Result<DynamicVerdict, DecisionError>>>,
