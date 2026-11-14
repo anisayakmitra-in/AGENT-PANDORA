@@ -387,6 +387,7 @@ fn is_flag(name: &str) -> bool {
             | "allow"
             | "approve"
             | "auto-promote"
+            | "auto-merge"
             | "check"
             | "deny"
             | "dry-run"

@@ -63,7 +63,9 @@ pub mod mcp_catalog;
 pub mod mean_field_game;
 pub mod memory_engine;
 pub mod memory_schedule;
+pub mod merge_resolver;
 pub mod merkle_dag;
+pub mod merkle_rollup;
 pub mod mesh_sync;
 pub mod mock_cdp;
 pub mod multi_agent_collab;
@@ -104,6 +106,7 @@ pub mod skill_engine;
 pub mod society_engine;
 pub mod spectral_topology;
 pub mod speculative_decoding;
+pub mod speculative_drafting;
 pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
@@ -120,6 +123,7 @@ pub mod wasserstein_drift;
 pub mod work_stealing;
 pub mod worktree_isolation;
 pub mod zk_attestation;
+pub mod zk_execution_attestation;
 
 #[cfg(test)]
 mod test_support;
@@ -151,7 +155,9 @@ pub use autopilot::{
     MultiAgentAutopilotOrchestrator, certify_patch, role_for_agent,
 };
 pub use bandit_router::{
-    BanditArm, BanditModelRouter, BanditStrategy, RoutingContext, RoutingReward, SafePrng,
+    BanditArm, BanditError, BanditModelRouter, BanditRoleArm, BanditStrategy,
+    ContextualThompsonSamplingRouter, DraftOutcome, LinTsArmState, RoleCapability, RoutingContext,
+    RoutingReward, SafePrng, SpeculativeRoutingPlan, TASK_COMPLEXITY_DIM, TaskComplexityFeatures,
 };
 pub use blaze_adapter::{
     BlazeBuildResult, BlazeCompilerAdapter, BlazeConfig, BlazeDiagnostics, DiagnosticLevel,
@@ -339,6 +345,10 @@ pub use merkle_dag::{
     DagError, DagNode, InclusionProof, MerkleDagAuditLog, MerkleProofStep, NodeDirection, TAG_DAG,
     TAG_LEAF, TAG_NODE,
 };
+pub use merkle_rollup::{
+    EpochRollupHeader, RollupDecisionEntry, RollupEpoch, RollupError, TAG_EPOCH_HEADER,
+    TAG_ROLLUP_LEAF, decode_hex_32, encode_hex,
+};
 pub use mesh_sync::{
     CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,
     MeshSyncResult, PeerIdentity, SignedCapsulePackage,
@@ -429,6 +439,12 @@ pub use spectral_topology::{
 pub use speculative_decoding::{
     DraftVerificationResult, RadixKvCache, RadixKvNode, SpeculativeEngine, TokenProbability,
 };
+pub use speculative_drafting::{
+    AstNodeKind, CertifiedDraft, DiffHunk, DiffLine, FrontierCriticEvaluation,
+    ResidualDiffComposer, SourceSpan, SpeculativeAstNode, SpeculativeDiffDraft,
+    SpeculativeDraftingEngine, SpeculativeError, UnifiedPatch, create_unified_diff,
+    extract_ast_nodes, mask_comments_and_strings,
+};
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_LIST, MAX_STORAGE_LIFECYCLE_RECEIPTS, StorageLifecycleReceipt,
     StorageLifecycleRecordResult, StorageLifecycleStore, StorageLifecycleStoreError,
@@ -481,4 +497,8 @@ pub use zk_attestation::{
     FiatShamirTranscript, FieldElement, GOLDILOCKS_GENERATOR, GOLDILOCKS_PRIME,
     GOLDILOCKS_TWO_ADICITY, Polynomial, StateAttestationProof, StateTransitionAir,
     TRANSCRIPT_DOMAIN_LABEL, ZkAttestationError, ZkError,
+};
+pub use zk_execution_attestation::{
+    DEFAULT_EXECUTION_DOMAIN_SIZE, EXECUTION_TRANSCRIPT_DOMAIN, PrivateExecutionWitness,
+    PublicExecutionInputs, ZkExecutionAir, ZkExecutionProof,
 };

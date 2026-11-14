@@ -8,7 +8,9 @@
 
 use super::{load_config, parse_options};
 use crate::output::{CliError, CommandResult, success};
-use pandora_runtime::canary_worktree::{CanaryStagePipeline, GitWorktreeManager};
+use pandora_runtime::canary_worktree::{
+    CanaryGateTelemetry, CanaryStagePipeline, GitWorktreeManager,
+};
 use pandora_runtime::multi_agent_collab::ExternalAgentKind;
 use pandora_runtime::multi_agent_consensus::{AgentPatchProposal, ProposalScoreVector};
 use serde_json::json;
@@ -19,7 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("canary requires a subcommand: 'stage', 'verify', 'list', or 'prune'")
+        CliError::usage(
+            "canary requires a subcommand: 'stage', 'verify', 'list', 'prune', or 'promote'",
+        )
     })?;
 
     match subcommand.as_str() {
@@ -27,8 +31,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "verify" => verify(&args[1..]),
         "list" => list(&args[1..]),
         "prune" | "clean" => prune(&args[1..]),
+        "promote" => promote(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown canary command '{unknown}'. Available subcommands: stage, verify, list, prune"
+            "unknown canary command '{unknown}'. Available subcommands: stage, verify, list, prune, promote"
         ))),
     }
 }
@@ -316,6 +321,132 @@ fn prune(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn promote(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "id",
+            "target",
+            "auto-merge",
+            "baseline",
+            "passes",
+            "failures",
+            "byz-f",
+            "total-nodes",
+            "approvals",
+            "quorum",
+            "min-samples",
+            "dir",
+            "workspace",
+            "config",
+        ],
+    )?;
+
+    let canary_id = parsed
+        .value("id")
+        .ok_or_else(|| CliError::usage("canary promote requires '--id <canary_id>'"))?;
+
+    let target_branch = parsed.value("target").unwrap_or("main");
+    let auto_merge = parsed.has_flag("auto-merge") || parsed.value("auto-merge") == Some("true");
+
+    let repo_root = resolve_workspace_dir(&parsed)?;
+
+    // Telemetry configuration (defaults or CLI overrides)
+    let mut telemetry = CanaryGateTelemetry::default();
+    if let Some(b) = parsed.value("baseline").and_then(|s| s.parse::<f64>().ok()) {
+        telemetry.bayesian_baseline = b;
+    }
+    if let Some(p) = parsed.value("passes").and_then(|s| s.parse::<u32>().ok()) {
+        telemetry.bayesian_passes = p;
+    }
+    if let Some(f) = parsed.value("failures").and_then(|s| s.parse::<u32>().ok()) {
+        telemetry.bayesian_failures = f;
+    }
+    if let Some(f) = parsed.value("byz-f").and_then(|s| s.parse::<usize>().ok()) {
+        telemetry.byzantine_f = f;
+    }
+    if let Some(n) = parsed
+        .value("total-nodes")
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        telemetry.byzantine_total_nodes = n;
+    }
+    if let Some(a) = parsed
+        .value("approvals")
+        .or_else(|| parsed.value("quorum"))
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        telemetry.byzantine_approvals = a;
+    }
+    if let Some(ms) = parsed
+        .value("min-samples")
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        telemetry.min_sample_size = ms;
+    }
+
+    let pipeline = CanaryStagePipeline::default().with_repo_root(&repo_root);
+
+    // If explicit telemetry options were provided, persist them to the worktree
+    let _ = pipeline.record_canary_telemetry(canary_id, &telemetry);
+
+    let receipt = pipeline
+        .promote_canary(canary_id, target_branch, auto_merge)
+        .map_err(|e| {
+            CliError::execution(
+                format!("canary promotion failed: {e}"),
+                json!({ "canary_id": canary_id, "error": e.to_string() }),
+            )
+        })?;
+
+    let json_data = json!({
+        "status": "promoted",
+        "canary_id": receipt.canary_id,
+        "target_branch": receipt.target_branch,
+        "source_branch": receipt.source_branch,
+        "merge_commit_hash": receipt.merge_commit_hash,
+        "byzantine_quorum_met": receipt.byzantine_quorum_met,
+        "byzantine_approvals": receipt.byzantine_approvals,
+        "byzantine_quorum_required": receipt.byzantine_quorum_required,
+        "bayesian_lcb95": receipt.bayesian_lcb95,
+        "bayesian_baseline": receipt.bayesian_baseline,
+        "bayesian_passes": receipt.bayesian_passes,
+        "bayesian_failures": receipt.bayesian_failures,
+        "tag_name": receipt.tag_name,
+        "attestation_digest": receipt.attestation_digest,
+        "signature_hex": receipt.signature_hex,
+        "auto_merged": receipt.auto_merged,
+        "author": receipt.author,
+        "promoted_at_unix": receipt.promoted_at_unix,
+    });
+
+    let plain = format!(
+        "Canary patch '{}' promoted successfully!\n\
+         - Target Branch:       {}\n\
+         - Merge Commit:        {}\n\
+         - Auto-Merged:         {}\n\
+         - Byzantine Quorum:    PASS ({}/{} nodes, f={})\n\
+         - Bayesian LCB95:      PASS ({:.4} > baseline {:.4})\n\
+         - Annotated Tag:       {}\n\
+         - Author Identity:     {}\n\
+         - Provenance Sig:      {}",
+        receipt.canary_id,
+        receipt.target_branch,
+        receipt.merge_commit_hash,
+        receipt.auto_merged,
+        receipt.byzantine_approvals,
+        receipt.byzantine_quorum_required,
+        telemetry.byzantine_f,
+        receipt.bayesian_lcb95,
+        receipt.bayesian_baseline,
+        receipt.tag_name,
+        receipt.author,
+        receipt.signature_hex,
+    );
+
+    Ok(success("canary promote", json_data, plain))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,6 +528,95 @@ mod tests {
                 assert!(err.message.contains("sandbox verification failed"));
             }
         }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_canary_cli_promote_requires_id() {
+        let root = temp_test_root("promote_no_id");
+        let root_str = root.to_str().unwrap().to_string();
+
+        let promote_args = vec!["promote".to_string(), "--dir".to_string(), root_str.clone()];
+        match execute(&promote_args) {
+            Ok(_) => panic!("must fail without --id"),
+            Err(err) => assert!(err.message.contains("requires '--id <canary_id>'")),
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_canary_cli_promote_success_and_byzantine_rejection() {
+        let root = temp_test_root("promote_e2e");
+        let root_str = root.to_str().unwrap().to_string();
+
+        // 1. Stage a valid canary
+        let stage_args = vec![
+            "stage".to_string(),
+            "--dir".to_string(),
+            root_str.clone(),
+            "--task".to_string(),
+            "auto_promoted_task".to_string(),
+        ];
+        let stage_res = execute(&stage_args).expect("stage should succeed");
+        let canary_id = stage_res.data["canary_id"].as_str().unwrap().to_string();
+
+        // 2. Reject promotion when Byzantine approvals insufficient (approvals 2 < 3 when f=1, N=4)
+        let reject_args = vec![
+            "promote".to_string(),
+            "--dir".to_string(),
+            root_str.clone(),
+            "--id".to_string(),
+            canary_id.clone(),
+            "--approvals".to_string(),
+            "2".to_string(),
+            "--byz-f".to_string(),
+            "1".to_string(),
+            "--total-nodes".to_string(),
+            "4".to_string(),
+        ];
+        match execute(&reject_args) {
+            Ok(_) => panic!("must reject promotion"),
+            Err(rej_err) => assert!(
+                rej_err
+                    .message
+                    .contains("Byzantine consensus quorum not met")
+            ),
+        }
+
+        // 3. Promote successfully with auto-merge
+        let promote_args = vec![
+            "promote".to_string(),
+            "--dir".to_string(),
+            root_str.clone(),
+            "--id".to_string(),
+            canary_id.clone(),
+            "--auto-merge".to_string(),
+            "--target".to_string(),
+            "main".to_string(),
+            "--approvals".to_string(),
+            "4".to_string(),
+            "--byz-f".to_string(),
+            "1".to_string(),
+            "--total-nodes".to_string(),
+            "4".to_string(),
+            "--passes".to_string(),
+            "50".to_string(),
+            "--failures".to_string(),
+            "0".to_string(),
+            "--baseline".to_string(),
+            "0.80".to_string(),
+        ];
+        let prom_res = execute(&promote_args).expect("promotion must succeed");
+        assert_eq!(prom_res.data["status"], "promoted");
+        assert_eq!(prom_res.data["canary_id"], canary_id);
+        assert_eq!(prom_res.data["auto_merged"], true);
+        assert_eq!(
+            prom_res.data["author"],
+            "ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>"
+        );
+        assert!(prom_res.data["bayesian_lcb95"].as_f64().unwrap() > 0.80);
 
         let _ = fs::remove_dir_all(&root);
     }

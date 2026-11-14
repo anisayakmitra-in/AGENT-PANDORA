@@ -1,7 +1,7 @@
 # Mathematical Foundations & Comprehensive Roadmap: AGENT-PANDORA Evolutionary Architecture
 
 **Author:** ANISAYAK MITRA <266799942+anisayakmitra-in@users.noreply.github.com>  
-**Version:** AGENT-PANDORA v3.0.11  
+**Version:** AGENT-PANDORA v3.0.12  
 **Safety Invariant:** `#![forbid(unsafe_code)]` Strictly Enforced  
 
 ---
@@ -62,8 +62,14 @@ flowchart TD
         P24["Phase 24<br/><b>Distributed Swarm Mesh</b><br/><i>Theorem 47 Byzantine Quorum & Policy Mesh</i>"]
     end
 
+    subgraph ZKRollup["Phase 25: Zero-Knowledge Attestation & Merkle Rollup"]
+        P25["Phase 25<br/><b>ZK Attestation & Rollup</b><br/><i>Theorem 48 Soundness & Merkle Compression</i>"]
+    end
+
     P23 --> P24
-    Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm --> Evolution --> DistributedMesh
+    P10 -.-> P25
+    P24 --> P25
+    Foundation --> Intelligence --> Assurance --> Frontier --> CockpitSwarm --> Evolution --> DistributedMesh --> ZKRollup
 ```
 
 Every phase is grounded in publication-grade mathematical proofs:
@@ -91,6 +97,7 @@ Every phase is grounded in publication-grade mathematical proofs:
 22. **Phase 22**: Swarm Byzantine Code Consensus metric distortion bound $\frac{2f}{M - 2f} \cdot \mathrm{diam}(\mathcal{H}) + O(\sigma/\sqrt{M})$ with invariant safety guarantee, and ConPTY multiplexer IPC non-blocking throughput with bounded starvation delay $D_{\max} \le \frac{K \cdot B_{\max}}{\mu}$ and zero deadlock.
 23. **Phase 23**: Federated Policy Gradient convergence $\min_{0 \le t < T} \|\nabla J(\boldsymbol{\theta}_t)\|_2^2 \le O(1/T) + \mathcal{E}_{\mathrm{Byz}}^2$ with coordinate-wise trimmed mean resilience bound $\mathcal{E}_{\mathrm{Byz}} \le \frac{4\sum_b w_b}{\sum_h w_h} G \sqrt{d} + \frac{\sigma \sqrt{d}}{\sqrt{\sum_h w_h}}$, and Theorem 46 Beta-conjugate dynamic reputation weighting with finite expected quarantine hitting time $\mathbb{E}[T_{\mathrm{quar}}] = O(1)$ and logarithmic cumulative Byzantine contamination $\sum_{t=1}^T w_b(t) = O(\ln T)$.
 24. **Phase 24**: Distributed Cross-Node Swarm Mesh Byzantine quorum non-equivocation $|Q_1 \cap Q_2| \ge f + 1$ under partially synchronous P2P channels with split-brain impossibility $\mathbb{P}(\text{Split-Brain Fork}) = 0$, bounded commit latency $T_{\mathrm{commit}} \le 2\Delta_{\max} + T_{\mathrm{sandbox}} + \frac{4\ln(P-1)}{\beta} = O(\Delta_{\max} + T_{\mathrm{sandbox}} + \log P)$, robust coordinate-wise metric centroid filtering $\|\mathbf{s}_k - \mathbf{c}_\alpha\|_2 \le 0.45$, linear policy gradient variance reduction $\operatorname{Var}(\hat{\mathbf{g}}) \le \frac{C(\alpha)\sigma^2 d_0}{\sum w_h}$, and cryptographic certificate unforgeability $\operatorname{Adv}_{\mathrm{forge}} \le \frac{q_s}{2^{128}} + \frac{q_h^2}{2^{257}} + \frac{q_h}{2^{256}} \le 2^{-98} + 2^{-137} + 2^{-196} \approx 3.16 \times 10^{-30} \le 10^{-29} \approx 0$.
+25. **Phase 25**: Schwartz-Zippel Zero-Knowledge execution attestation soundness ($\mathbb{P}(\text{Accept} \mid \text{Invalid}) \le \frac{2k}{p} \le 1.085 \times 10^{-15}$), polynomial blinding zero-knowledge witness secrecy ($\operatorname{SD}(\mathcal{D}(\pi_{\mathrm{real}}), \mathcal{D}(\pi_{\mathrm{sim}})) = 0$), Merkle batch rollup $O(\log M)$ inclusion proof size ($32 \lceil \log_2 M \rceil$ bytes), and asymptotic compression ratio $\mathcal{C}_R(M) = \Theta(M)$ yielding $>99.9\%$ storage reduction for $M \ge 1,000$.
 
 ---
 
@@ -653,7 +660,31 @@ $\blacksquare$
 
 ---
 
-## 25. Comprehensive Roadmap Summary Matrix (Phases 1–24)
+## 25. Phase 25: Zero-Knowledge Execution Attestation & Merkle Rollups
+
+### 25.1 Zero-Knowledge Execution Attestation, Merkle Rollup Compression & Polynomial Soundness Bounds
+
+**Theorem 48 (Zero-Knowledge Execution Attestation, Merkle Rollup Compression & Polynomial Soundness Bounds):**  
+*Let $\mathcal{A}_{\mathrm{exec}} = (\mathcal{T}, \mathcal{C}, \mathcal{P})$ denote an execution attestation system defined over finite field $\mathbb{F}_p$ with $p = 2^{64} - 2^{32} + 1$ (the Goldilocks prime), execution trace length $N \le 2^{20}$, and transition constraint polynomial $C(X) \in \mathbb{F}_p[X]$ of degree $\deg(C) \le d = 2$. Let $\mathcal{R}_M = \{e_1, \dots, e_M\}$ denote an epoch of $M$ discrete decision log entries committed to a binary Merkle tree of height $h = \lceil \log_2 M \rceil$ with domain-separated SHA-256 leaves $\ell_i = H(\text{TAG\_ROLLUP\_LEAF} \,\|\, \mathrm{serialize}(e_i))$. Then:*
+
+1. *AIR Completeness & Arithmetic Trace Consistency:* For any genuine execution trace $(\mathbf{w}_0, \dots, \mathbf{w}_{N-1}) \in \mathbb{F}_p^{N \times w}$ satisfying transition relation $\mathcal{R}_{\mathrm{transition}}$ and boundary conditions $w_{0, \mathrm{state}} = \sigma_{\mathrm{init}}$, $w_{N-1, \mathrm{state}} = \sigma_{\mathrm{final}}$, there exists a unique quotient polynomial $Q(X) \in \mathbb{F}_p[X]$ such that:
+   $$F(X) = Q(X) \cdot Z_H(X), \quad \text{where } Z_H(X) = \prod_{i=0}^{N-1} (X - \omega^i) = X^N - 1,$$
+   and the interactive verifier accepts with probability $\mathbb{P}(\mathcal{V}(\pi) = 1) = 1$.
+2. *Soundness Error & Schwartz-Zippel Bound:* For any false execution claim $(\sigma_{\mathrm{init}} \to \sigma_{\mathrm{final}}^*)$ with $\sigma_{\mathrm{final}}^* \neq \sigma_{\mathrm{final}}$, the evaluation of $F(\zeta)$ at random out-of-domain challenge $\zeta \in \mathbb{F}_p \setminus H$ vanishes with probability bounded by:
+   $$\varepsilon_{\mathrm{soundness}} = \mathbb{P}_{\zeta \leftarrow \mathbb{F}_p}[F(\zeta) = 0 \mid \exists x \in H, F(x) \neq 0] \le \frac{\deg(F)}{|\mathbb{F}_p \setminus H|} \le \frac{N + k - 1}{p - N} \le 1.085 \times 10^{-15}.$$
+3. *Zero-Knowledge Witness Secrecy:* For any polynomial blinding degree $k \ge 8$ and $R_W(X) \leftarrow \mathbb{F}_p^{<k}[X]$, the evaluation $F(\zeta)$ evaluated at out-of-domain challenge $\zeta \notin H$ is statistically independent of intermediate witness values $w_t$ for all $0 < t < N-1$, admitting a probabilistic polynomial-time simulator $\mathcal{S}(\sigma_{\mathrm{init}}, \sigma_{\mathrm{final}}, \tau_{\mathrm{exec}}, \zeta)$ that produces identical distributions:
+   $$\Delta(\mathcal{V}^*(\pi), \mathcal{S}(x)) = 0.$$
+4. *Merkle Rollup Collision Resistance & Inclusion Soundness:* Under collision resistance of SHA-256 ($\operatorname{Adv}_H^{\mathrm{coll}}(t) \le \frac{t^2}{2^{256}}$), the probability of forging an inclusion proof $\pi_{\mathrm{inc}} = (r, i, \mathbf{p})$ for an uncommitted decision $e^* \notin \mathcal{R}_M$ is bounded by:
+   $$\mathbb{P}(\text{Forge Inclusion Proof}) \le \frac{q_H^2}{2^{256}} \le 2^{-128} \approx 2.94 \times 10^{-39}.$$
+5. *Asymptotic Scalability & Verification Compression Ratio:* Across $M$ audit entries in an epoch, Merkle rollup verification reduces on-chain/in-transit payload size from $\Theta(M \cdot B)$ to $\Theta(\log M \cdot B)$, achieving compression factor:
+   $$\rho_{\mathrm{rollup}}(M) = \frac{M \cdot B}{B_{\mathrm{header}} + h \cdot B_{\mathrm{node}}} = \Theta(M),$$
+   while verifying $M$ sequential execution epochs takes $O(E \log M)$ amortized time.
+- **Reference**: Detailed proofs documented in `docs/math/phase25_zk_execution_attestation.md`.  
+$\blacksquare$
+
+---
+
+## 26. Comprehensive Roadmap Summary Matrix (Phases 1–25)
 
 | Phase | Subsystem | Core Mathematical Invariant | Asymptotic Complexity / Bound | Runtime Implementation | Verification Test Suite |
 |:---:|:---|:---|:---:|:---|:---|
@@ -681,4 +712,6 @@ $\blacksquare$
 | **22** | Interactive Cockpit TUI & Swarm Consensus | Byzantine code consensus & multiplexer IPC | $\|\mathbf{s}_{i^\star} - \boldsymbol{\mu}^\star\| \le O(\frac{f}{M}\mathrm{diam}(\mathcal{H}))$, $D_{\max} \le O(K B_{\max})$ | `cockpit_tui.rs`, `multi_agent_consensus.rs`, `pexer_ipc.rs` | `tests/multi_agent_consensus_tests.rs`, `tests/pexer_ipc_tests.rs`, `tests/cockpit_phase22_cli_tests.rs` |
 | **23** | Federated Policy & Reputation Engine | Byzantine-resilient trimmed mean & Beta-conjugate reputation decay | Ergodic convergence $O(1/T) + \mathcal{E}_{\mathrm{Byz}}^2$, Quarantine hitting time $O(1)$, Contamination $O(\ln T)$ | `federated_policy.rs` | `tests/phase23_federated_policy_tests.rs` |
 | **24** | Distributed Swarm Mesh & Consensus | Byzantine quorum non-equivocation & trimmed centroid | $\|Q_1 \cap Q_2\| \ge f+1$, $\operatorname{Var}(\hat{\mathbf{g}}) \le \frac{C(\alpha)\sigma^2 d_0}{\sum w_h}$, $\operatorname{Adv} \le 10^{-29}$ | `distributed_swarm.rs` | `tests/phase24_distributed_swarm_tests.rs` |
+| **25** | ZK Execution Attestation & Merkle Rollup | Goldilocks AIR & Merkle epoch rollup | Soundness $\varepsilon \le 1.085 \times 10^{-15}$, $\rho = \Theta(M)$, $\operatorname{Adv} \le 2^{-128}$ | `zk_execution_attestation.rs`, `merkle_rollup.rs`, `assurance_receipt.rs` | `tests/phase25_zk_execution_tests.rs`, `tests/phase25_merkle_rollup_tests.rs`, `tests/phase25_cli_zk_tests.rs` |
+
 

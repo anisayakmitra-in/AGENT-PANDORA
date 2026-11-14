@@ -448,6 +448,75 @@ impl UnifiedAssuranceReceipt {
         let expected = format!("sha256:{:x}", hasher.finalize());
         self.receipt_sha256 == expected
     }
+
+    /// Recomputes the canonical SHA-256 hash digest of this receipt across all stored certificates.
+    pub fn recompute_hash(&mut self) {
+        let mut hasher = Sha256::new();
+        hasher.update(self.run_id.as_bytes());
+        hasher.update(self.sequence_number.to_be_bytes());
+        if let Some(prev) = &self.prev_receipt_sha256 {
+            hasher.update(b"prev:");
+            hasher.update(prev.as_bytes());
+        }
+        for cert in &self.certificates {
+            hasher.update([cert.phase]);
+            hasher.update(cert.engine.as_bytes());
+            hasher.update(cert.theorems.as_bytes());
+            hasher.update([u8::from(cert.invariant_verified)]);
+            hasher.update(cert.metric_summary.as_bytes());
+        }
+        let digest = hasher.finalize();
+        self.receipt_sha256 = format!("sha256:{digest:x}");
+    }
+
+    /// Attaches a Phase 25 Zero-Knowledge Execution Attestation & Merkle Rollup certificate (Theorem 48).
+    pub fn attach_phase25_attestation(
+        &mut self,
+        epoch_root: [u8; 32],
+        decision_count: usize,
+        zk_verified: bool,
+    ) {
+        let hex_root = format!(
+            "{:02x}{:02x}{:02x}{:02x}...{:02x}{:02x}",
+            epoch_root[0],
+            epoch_root[1],
+            epoch_root[2],
+            epoch_root[3],
+            epoch_root[30],
+            epoch_root[31]
+        );
+
+        let cert = PhaseCertificate {
+            phase: 25,
+            engine: "zk_execution_attestation_and_rollups".to_string(),
+            theorems: "Theorem 48".to_string(),
+            invariant_verified: zk_verified,
+            metric_summary: format!(
+                "R_epoch={hex_root}, decisions={decision_count}, pi_ZK_verified={zk_verified}"
+            ),
+        };
+
+        self.certificates.push(cert);
+        self.all_invariants_verified = self.certificates.iter().all(|c| c.invariant_verified);
+        self.phases_certified = self
+            .certificates
+            .iter()
+            .filter(|c| c.invariant_verified)
+            .count();
+        self.recompute_hash();
+    }
+
+    /// Generates a complete mathematical assurance receipt including Phase 25 ZK attestation and Merkle rollups.
+    pub fn generate_with_phase25(
+        run_id: &str,
+        epoch_root: [u8; 32],
+        decision_count: usize,
+        zk_verified: bool,
+    ) -> Result<Self, String> {
+        let mut receipt = Self::generate(run_id)?;
+        receipt.attach_phase25_attestation(epoch_root, decision_count, zk_verified);
+        Ok(receipt)
+    }
 }
 
 #[cfg(test)]
