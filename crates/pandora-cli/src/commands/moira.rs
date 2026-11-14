@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const DEFAULT_HF_REPO: &str = "anisayakmitra-in/moira";
+const DEFAULT_HF_REPO: &str = "anisayakmitra-in/FATE-O-SISTERS";
 const DEFAULT_HF_REVISION: &str = "main";
 const DEFAULT_HF_FILENAME: &str = "model_decision.pnn";
 
@@ -24,7 +24,7 @@ subcommands:
   doctor | status [--pnn <path>] [--workspace <dir>]
       Verify integrity and runtime readiness of .pandora/model_tpan.pnn and .pandora/model_decision.pnn.
   sync [--from <repo-or-url>] [--dest <path>] [--revision <rev>] [--file <name>] [--dry-run]
-      Explicitly download and verify model_decision.pnn from Hugging Face (default: anisayakmitra-in/moira).
+      Explicitly download and verify model_decision.pnn from Hugging Face (default: anisayakmitra-in/FATE-O-SISTERS).
 ";
 
 fn cmd_label(invoked_as: &str, action: &str) -> &'static str {
