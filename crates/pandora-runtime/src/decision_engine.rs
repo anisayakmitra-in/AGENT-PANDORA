@@ -172,7 +172,7 @@ impl DecisionDriver for HeuristicDecisionDriver {
 }
 
 /// Deterministic 16-dimensional feature encoder for offline Tropical Decision scoring.
-/// Matches `encode_decision_features` in `scripts/train_moira_colab.py`.
+/// Matches `encode_decision_features` in `FATE-O-SISTERS/scripts/train_moira_colab.py`.
 pub fn encode_decision_features(prompt: &str, context: &str, label: &str) -> [f32; 16] {
     let text = format!("{prompt} {context}").to_lowercase();
     let lbl = label.to_lowercase();
