@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, and `v3.0.10`. The active release identity
-is `v3.0.10`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, and `v3.1.2`. The active release identity
+is `v3.1.2`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,18 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.1.2
+
+This release wires `TropicalComplexityPrior` into `BanditModelRouter` and `ContextualThompsonSamplingRouter` for dynamic AST complexity-driven arm selection ($\tau_{\mathrm{adjusted}} = \mathrm{clamp}(0.50 + 0.25 \times (C - 0.50), 0.20, 0.85)$) via `.pandora/model_tpan.pnn`, adds the `pandora model` and `pandora moira` CLI subcommands (`inspect`, `doctor`/`status`, and explicit offline-first `sync` from `anisayakmitra-in/moira` on Hugging Face), and introduces deterministic `DecisionBenchmarkSuite` harnesses in `pandora-harnesses` comparing `MoiraDecisionDriver` and `HeuristicDecisionDriver` on real task traces under `#![forbid(unsafe_code)]`.
+
+## v3.1.1
+
+This patch release auto-activates `MoiraDecisionDriver::from_default_pandora_path()` in `SinglePassLogitEngine` with transparent fallback to `HeuristicDecisionDriver`, adds the pure-Rust `extract_ast_features` and `score_source` helpers for 16-dimensional structural AST scoring, and resolves Cargo workspace package metadata inheritance warnings.
+
+## v3.1.0
+
+This release introduces Phase 26 Tropical Polyhedral AST Networks (TPAN) with zero-multiplication inference, integrates `MoiraDecisionDriver` with 3-6-9 Dynamic Subspace Routing (DSR) entropy gating, and relicenses the repository under `GPL-3.0-or-later`.
 
 ## v3.0.10
 

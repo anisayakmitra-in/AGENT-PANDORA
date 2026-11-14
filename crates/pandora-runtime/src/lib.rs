@@ -160,6 +160,7 @@ pub use bandit_router::{
     BanditArm, BanditError, BanditModelRouter, BanditRoleArm, BanditStrategy,
     ContextualThompsonSamplingRouter, DraftOutcome, LinTsArmState, RoleCapability, RoutingContext,
     RoutingReward, SafePrng, SpeculativeRoutingPlan, TASK_COMPLEXITY_DIM, TaskComplexityFeatures,
+    TropicalComplexityPrior,
 };
 pub use blaze_adapter::{
     BlazeBuildResult, BlazeCompilerAdapter, BlazeConfig, BlazeDiagnostics, DiagnosticLevel,
@@ -477,6 +478,9 @@ pub use tripartite_governance::{
 pub use tropical_dag::{
     KarpCycleMeanResult, KleeneStarResult, MaxPlusMatrix, NEG_INFINITY, TropicalDagEngine,
     TropicalDagScheduler, TropicalError, TropicalMatrix,
+};
+pub use tropical_nn::{
+    TropicalError as TropicalNnError, TropicalLayer, TropicalNetwork, extract_ast_features,
 };
 pub use visual_graph::{
     AsciiGridRenderer, ForceDirectedLayout, Point2D, ViewportCamera, VisualNode,

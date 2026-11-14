@@ -1,5 +1,29 @@
 # Changelog
 
+## v3.1.2
+
+### Dynamic Tropical Complexity Routing (`BanditRouter`), `pandora model` / `pandora moira` CLI & Deterministic Decision Harness Benchmarks
+- **Dynamic Tropical Complexity Routing (`crates/pandora-runtime/src/bandit_router.rs`)**:
+  - Wired `TropicalComplexityPrior` into `BanditModelRouter` (`route_for_source`, `with_complexity_prior`) and `ContextualThompsonSamplingRouter` (`select_routing_plan`, `select_routing_plan_for_source`, `TaskComplexityFeatures::extract_with_prior`), evaluating 16-dimensional structural AST features via `.pandora/model_tpan.pnn` with zero floating-point multiplications and dynamic threshold adjustment $\tau_{\mathrm{adjusted}} = \mathrm{clamp}(0.50 + 0.25 \times (C - 0.50), 0.20, 0.85)$.
+- **`pandora model` & `pandora moira` CLI Subcommands (`crates/pandora-cli/src/commands/moira.rs`)**:
+  - Added `pandora model|moira inspect`, `pandora model|moira doctor|status`, and `pandora model|moira sync` to inspect `.pnn` layer shapes and SHA-256 digests, run preflight health diagnostics, and explicitly download/verify `model_decision.pnn` from Hugging Face (`anisayakmitra-in/moira`) while preserving 100% offline-first runtime execution.
+- **Deterministic Decision Driver Benchmarks (`crates/pandora-harnesses/src/decision_benchmark.rs`, `crates/pandora-runtime/src/decision_engine.rs`)**:
+  - Added `DecisionBenchmarkSuite` (12 real-world agent task traces across tool safety, intent routing, convergence, deployment gates, and error recovery), `TropicalDecisionDriver::calibrated()`, and `benchmark_moira_vs_heuristic`, reporting latency (`mean_latency_micros`, `p95_latency_micros`, `max_latency_micros`), confidence margin, branch-selection accuracy, and cross-driver agreement.
+- **Workspace Release & Safety Invariants**:
+  - Synchronized workspace manifests, C/C++ ABI headers, TypeScript launcher, and installers to `3.1.2` under strict `#![forbid(unsafe_code)]`.
+
+## v3.1.1
+
+### MOIRA/TPAN Default Auto-Activation, Pure-Rust AST Feature Extractor & Manifest Cleanup
+- Auto-activated `MoiraDecisionDriver::from_default_pandora_path()` in `SinglePassLogitEngine::new()` and `with_temperature()` with transparent fallback to `HeuristicDecisionDriver`.
+- Added pure-Rust `extract_ast_features(source: &str) -> [f32; 16]`, `TropicalNetwork::score_source`, and `TropicalComplexityPrior::score_source`.
+- Eliminated Cargo workspace package metadata warnings in `crates/pandora-cli/Cargo.toml`.
+
+## v3.1.0
+
+### Phase 26 Tropical Polyhedral AST Networks (TPAN), MOIRA 3-6-9 DSR Gate & Standalone Decision Policy Integration (Theorems 49-50)
+- Integrated zero-multiplication `TropicalLayer` and `TropicalNetwork` (`.pnn`) inference engine, `MoiraDecisionDriver` with 3-6-9 Dynamic Subspace Routing (DSR) entropy gating, and `TropicalComplexityPrior` under `GPL-3.0-or-later` and `#![forbid(unsafe_code)]`.
+
 ## v3.0.10
 
 ### Phase 23 Federated Policy & Reputation, Live Multi-Agent Autopilot, and Remote Telemetry Dashboard (Theorems 45-46)

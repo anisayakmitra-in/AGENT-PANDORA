@@ -49,6 +49,7 @@ mod mcp;
 mod memory;
 mod migration;
 pub(crate) mod models;
+pub(crate) mod moira;
 mod operations;
 mod orchestration;
 mod package;
@@ -218,6 +219,7 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "mcp" => mcp::execute(&args[1..]),
         "memory" => memory::execute(&args[1..]),
         "models" | "inspect" => models::execute(&args[1..]),
+        "model" | "moira" => moira::execute(command, &args[1..]),
         "goal" => {
             let mut run_args = vec![
                 "--agent".to_owned(),

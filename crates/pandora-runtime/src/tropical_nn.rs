@@ -90,13 +90,13 @@ impl TropicalLayer {
                 actual: weights.len(),
             });
         }
-        if let Some(ref b) = bias {
-            if b.len() != out_features {
-                return Err(TropicalError::DimensionMismatch {
-                    expected: out_features,
-                    actual: b.len(),
-                });
-            }
+        if let Some(ref b) = bias
+            && b.len() != out_features
+        {
+            return Err(TropicalError::DimensionMismatch {
+                expected: out_features,
+                actual: b.len(),
+            });
         }
         Ok(Self {
             in_features,
@@ -124,11 +124,11 @@ impl TropicalLayer {
 
         for i in 0..self.out_features {
             let row_offset = i * self.in_features;
+            let row = &self.weights[row_offset..row_offset + self.in_features];
             let mut max_val = f32::NEG_INFINITY;
 
-            for j in 0..self.in_features {
-                let w = self.weights[row_offset + j];
-                let val = w + input[j];
+            for (&w, &x) in row.iter().zip(input.iter()) {
+                let val = w + x;
                 if val > max_val {
                     max_val = val;
                 }
@@ -161,17 +161,18 @@ impl TropicalLayer {
 
         for i in 0..self.out_features {
             let row_offset = i * self.in_features;
+            let row = &self.weights[row_offset..row_offset + self.in_features];
             let mut max_val = f32::NEG_INFINITY;
-            for j in 0..self.in_features {
-                let v = self.weights[row_offset + j] + input[j];
+            for (&w, &x) in row.iter().zip(input.iter()) {
+                let v = w + x;
                 if v > max_val {
                     max_val = v;
                 }
             }
 
             let mut sum_exp = 0.0f32;
-            for j in 0..self.in_features {
-                let v = self.weights[row_offset + j] + input[j];
+            for (&w, &x) in row.iter().zip(input.iter()) {
+                let v = w + x;
                 sum_exp += ((v - max_val) / tau).exp();
             }
 
@@ -402,9 +403,31 @@ impl TropicalNetwork {
             }
         }
 
+        // Emphasize structural AST complexity dimensions (brace depth, generics, branches, loops, error ops)
+        if in_dim >= 13 {
+            for i in 0..hidden_dim {
+                let row = i * in_dim;
+                w1[row + 9] = w1[row + 9].max(0.65); // max_brace_depth
+                w1[row + 12] = w1[row + 12].max(0.55); // generic_bracket_count
+                w1[row + 5] = w1[row + 5].max(0.50); // branch_count
+                w1[row + 6] = w1[row + 6].max(0.50); // loop_count
+                w1[row + 7] = w1[row + 7].max(0.50); // error_op_count
+            }
+        }
+
         let l1 = TropicalLayer::new(in_dim, hidden_dim, w1, Some(b1))?;
         let l2 = TropicalLayer::new(hidden_dim, 32, w2, Some(b2))?;
-        let l3 = TropicalLayer::new(32, out_dim, w3, Some(b3))?;
+        let zero_in = vec![0.0f32; in_dim];
+        let h1_zero = l1.forward(&zero_in)?;
+        let h2_zero = l2.forward(&h1_zero)?;
+        let l3_no_bias = TropicalLayer::new(32, out_dim, w3.clone(), None)?;
+        let y_zero = l3_no_bias
+            .forward(&h2_zero)?
+            .first()
+            .copied()
+            .unwrap_or(0.0);
+        let calibrated_b3 = vec![-0.30 - y_zero; out_dim];
+        let l3 = TropicalLayer::new(32, out_dim, w3, Some(calibrated_b3))?;
 
         Self::new("tpan_a100_v310", "ast_polyhedral_scoring", vec![l1, l2, l3])
     }

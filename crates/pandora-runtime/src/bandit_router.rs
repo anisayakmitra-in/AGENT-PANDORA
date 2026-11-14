@@ -1,9 +1,9 @@
+#![forbid(unsafe_code)]
+
 //! Phase 6: Contextual Thompson Sampling and UCB1 Multi-Armed Bandit Model Router.
 //!
 //! Provides mathematically optimal arm selection across heterogeneous LLM endpoints,
 //! balancing exploration and exploitation with proven regret bounds $O(\sqrt{K T \ln T})$.
-
-#![forbid(unsafe_code)]
 
 use crate::executors::ProviderCallMetrics;
 use serde::{Deserialize, Serialize};
@@ -308,6 +308,13 @@ impl RoutingContext {
             (norm_comp * (1.0 - norm_lat)).clamp(0.0, 1.0),
         ]
     }
+
+    /// Synthesizes a routing context from source code by evaluating complexity with `TropicalComplexityPrior`.
+    pub fn from_source_with_prior(source: &str, prior: &TropicalComplexityPrior) -> Self {
+        let query_length = source.len();
+        let task_complexity = prior.score_source(source);
+        Self::new(query_length, task_complexity, 0.5, 5000.0)
+    }
 }
 
 /// Reward synthesis and weights for multi-armed bandit routing.
@@ -384,6 +391,7 @@ pub struct BanditModelRouter {
     reward_calculator: RoutingReward,
     lints_states: Vec<LinTsArmState>,
     lints_v_scale: f64,
+    pub complexity_prior: TropicalComplexityPrior,
 }
 
 impl BanditModelRouter {
@@ -402,7 +410,49 @@ impl BanditModelRouter {
             reward_calculator: RoutingReward::default(),
             lints_states: Vec::new(),
             lints_v_scale: 0.2,
+            complexity_prior: TropicalComplexityPrior::from_default_path(),
         }
+    }
+
+    /// Configures the router with a specific `TropicalComplexityPrior`.
+    pub fn with_complexity_prior(mut self, prior: TropicalComplexityPrior) -> Self {
+        self.complexity_prior = prior;
+        self
+    }
+
+    /// Returns a reference to the active `TropicalComplexityPrior`.
+    pub fn complexity_prior(&self) -> &TropicalComplexityPrior {
+        &self.complexity_prior
+    }
+
+    /// Returns a mutable reference to the active `TropicalComplexityPrior`.
+    pub fn complexity_prior_mut(&mut self) -> &mut TropicalComplexityPrior {
+        &mut self.complexity_prior
+    }
+
+    /// Selects an arm for source code by scoring source complexity via the router's complexity prior.
+    pub fn route_for_source(
+        &mut self,
+        source: &str,
+        base_context: Option<&RoutingContext>,
+    ) -> Option<String> {
+        let complexity = self.complexity_prior.score_source(source);
+        let query_length = source.len();
+        let context = if let Some(base) = base_context {
+            RoutingContext::new(
+                if base.query_length > 0 {
+                    base.query_length
+                } else {
+                    query_length
+                },
+                complexity,
+                base.cache_affinity,
+                base.max_latency_ms,
+            )
+        } else {
+            RoutingContext::new(query_length, complexity, 0.5, 5000.0)
+        };
+        self.select_arm(&context)
     }
 
     /// Registers a candidate bandit arm.
@@ -717,8 +767,20 @@ impl TaskComplexityFeatures {
         }
     }
 
-    /// Automatically extracts complexity features from target source code and user instruction.
+    /// Automatically extracts complexity features from target source code and user instruction,
+    /// evaluating the source via `TropicalComplexityPrior::from_default_path()`.
     pub fn extract(target_path: &Path, source: &str, instruction: &str) -> Self {
+        let prior = TropicalComplexityPrior::from_default_path();
+        Self::extract_with_prior(target_path, source, instruction, &prior)
+    }
+
+    /// Automatically extracts complexity features using an explicit `TropicalComplexityPrior`.
+    pub fn extract_with_prior(
+        target_path: &Path,
+        source: &str,
+        instruction: &str,
+        prior: &TropicalComplexityPrior,
+    ) -> Self {
         let line_count = source.lines().count();
 
         // Approximate AST depth via maximum brace/indentation nesting
@@ -743,12 +805,22 @@ impl TaskComplexityFeatures {
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        let language_complexity = match ext {
+        let base_ext_complexity = match ext {
             "rs" | "c" | "cpp" => 0.90,
             "ts" | "tsx" | "go" => 0.65,
             "py" | "js" => 0.45,
             "json" | "yaml" | "toml" | "md" => 0.15,
             _ => 0.50,
+        };
+
+        // When tropical network is available, score the source using zero-multiplication tropical inference
+        // and blend with the language/extension prior (70% tropical AST polyhedral score, 30% base language weight).
+        // Otherwise, fall back cleanly to the static heuristic check.
+        let language_complexity = if prior.has_network() {
+            let tropical_score = prior.score_source(source);
+            (0.70 * tropical_score + 0.30 * base_ext_complexity).clamp(0.0, 1.0)
+        } else {
+            base_ext_complexity
         };
 
         let dependency_count = source
@@ -1053,6 +1125,7 @@ pub struct ContextualThompsonSamplingRouter {
     drafter_latency_baseline_ms: f64,
     critic_latency_baseline_ms: f64,
     frontier_latency_baseline_ms: f64,
+    pub complexity_prior: TropicalComplexityPrior,
 }
 
 impl ContextualThompsonSamplingRouter {
@@ -1071,7 +1144,40 @@ impl ContextualThompsonSamplingRouter {
             drafter_latency_baseline_ms: 200.0,
             critic_latency_baseline_ms: 700.0,
             frontier_latency_baseline_ms: 2200.0,
+            complexity_prior: TropicalComplexityPrior::from_default_path(),
         }
+    }
+
+    /// Configures the router with a specific `TropicalComplexityPrior`.
+    pub fn with_complexity_prior(mut self, prior: TropicalComplexityPrior) -> Self {
+        self.complexity_prior = prior;
+        self
+    }
+
+    /// Returns a reference to the active `TropicalComplexityPrior`.
+    pub fn complexity_prior(&self) -> &TropicalComplexityPrior {
+        &self.complexity_prior
+    }
+
+    /// Returns a mutable reference to the active `TropicalComplexityPrior`.
+    pub fn complexity_prior_mut(&mut self) -> &mut TropicalComplexityPrior {
+        &mut self.complexity_prior
+    }
+
+    /// Selects optimal routing plan for a source file by extracting features with the router's complexity prior.
+    pub fn select_routing_plan_for_source(
+        &mut self,
+        target_path: &Path,
+        source: &str,
+        instruction: &str,
+    ) -> SpeculativeRoutingPlan {
+        let features = TaskComplexityFeatures::extract_with_prior(
+            target_path,
+            source,
+            instruction,
+            &self.complexity_prior,
+        );
+        self.select_routing_plan(&features)
     }
 
     pub fn register_arm(&mut self, arm: BanditRoleArm) {
@@ -1151,7 +1257,12 @@ impl ContextualThompsonSamplingRouter {
         let tf = self.frontier_latency_baseline_ms;
         let break_even_threshold = (td + tc) / tf; // ~0.409
         let safety_margin = 0.091;
-        let dynamic_threshold = break_even_threshold + safety_margin; // 0.50
+        let base_threshold = break_even_threshold + safety_margin; // 0.50
+
+        // Dynamically adjust threshold via tropical complexity score C in [0.0, 1.0]:
+        // tau_adjusted = 0.50 + 0.25 * (C - 0.50)
+        let c = features.language_complexity.clamp(0.0, 1.0);
+        let dynamic_threshold = (base_threshold + 0.25 * (c - 0.50)).clamp(0.20, 0.85);
 
         // 1. Sample best Drafter
         let best_drafter = self.select_arm_for_role(RoleCapability::Drafter, &x);
@@ -1254,18 +1365,70 @@ impl Default for TropicalComplexityPrior {
 impl TropicalComplexityPrior {
     /// Loads a `.pnn` model from `.pandora/model_tpan.pnn` if present.
     pub fn from_default_path() -> Self {
-        Self::from_pnn_path(Path::new(".pandora/model_tpan.pnn"))
+        let default_path = Path::new(".pandora/model_tpan.pnn");
+        if default_path.exists() {
+            return Self::from_pnn_path(default_path);
+        }
+        let relative_candidates = [
+            "../../.pandora/model_tpan.pnn",
+            "../.pandora/model_tpan.pnn",
+        ];
+        for candidate in &relative_candidates {
+            let p = Path::new(candidate);
+            if p.exists() {
+                return Self::from_pnn_path(p);
+            }
+        }
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let p = Path::new(&manifest_dir);
+            if let Some(parent) = p.parent().and_then(|p| p.parent()) {
+                let candidate = parent.join(".pandora").join("model_tpan.pnn");
+                if candidate.exists() {
+                    return Self::from_pnn_path(&candidate);
+                }
+            }
+            if let Some(parent) = p.parent() {
+                let candidate = parent.join(".pandora").join("model_tpan.pnn");
+                if candidate.exists() {
+                    return Self::from_pnn_path(&candidate);
+                }
+            }
+        }
+        Self::from_pnn_path(default_path)
     }
 
-    /// Loads a `.pnn` model from an explicit path; falls back gracefully if absent.
+    /// Loads a `.pnn` model from an explicit path; falls back gracefully if absent or invalid.
     pub fn from_pnn_path(path: &Path) -> Self {
         let network = crate::tropical_nn::TropicalNetwork::load_from_file(path).ok();
         Self { network }
     }
 
+    /// Loads a `.pnn` model from an explicit path, returning error if absent or invalid.
+    pub fn try_from_pnn_path(path: &Path) -> Result<Self, crate::tropical_nn::TropicalError> {
+        let network = crate::tropical_nn::TropicalNetwork::load_from_file(path)?;
+        Ok(Self {
+            network: Some(network),
+        })
+    }
+
     /// Constructs from an in-memory `TropicalNetwork`.
     pub fn with_network(network: Option<crate::tropical_nn::TropicalNetwork>) -> Self {
         Self { network }
+    }
+
+    /// Returns true if a verified `.pnn` model network is actively loaded.
+    pub fn has_network(&self) -> bool {
+        self.network.is_some()
+    }
+
+    /// Returns the SHA-256 digest of the loaded network, if present.
+    pub fn digest(&self) -> Option<&str> {
+        self.network.as_ref().map(|n| n.sha256_digest.as_str())
+    }
+
+    /// Returns a reference to the loaded `TropicalNetwork`, if present.
+    pub fn network(&self) -> Option<&crate::tropical_nn::TropicalNetwork> {
+        self.network.as_ref()
     }
 
     /// Evaluates a 16-dimensional AST feature vector and squashes the tropical

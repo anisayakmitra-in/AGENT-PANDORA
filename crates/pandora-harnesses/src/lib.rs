@@ -4,6 +4,7 @@ pub mod architecture;
 pub mod catalog;
 pub mod data;
 pub mod debugging;
+pub mod decision_benchmark;
 pub mod design;
 pub mod genes;
 pub mod harness;

@@ -296,6 +296,40 @@ impl TropicalDecisionDriver {
         self.network.is_some()
     }
 
+    /// Constructs a calibrated 2-layer `TropicalNetwork` (16 -> 4 -> 1) over the
+    /// 16-dimensional decision feature space (`encode_decision_features`).
+    pub fn calibrated_network() -> crate::tropical_nn::TropicalNetwork {
+        let mut w1 = vec![-5.0f32; 16 * 4];
+        for row in 0..4 {
+            let offset = row * 16;
+            w1[offset + 6] = 2.5; // direct_match
+            w1[offset + 9] = 2.5; // danger_hits * is_reject
+            w1[offset + 10] = 2.5; // safe_hits * is_allow
+            w1[offset + 11] = 2.5; // complex_hits * is_deep
+        }
+        let l1 = crate::tropical_nn::TropicalLayer::new(16, 4, w1, Some(vec![0.0; 4]))
+            .expect("valid calibrated layer 1");
+        let l2 = crate::tropical_nn::TropicalLayer::new(4, 1, vec![0.0; 4], Some(vec![0.0]))
+            .expect("valid calibrated layer 2");
+        crate::tropical_nn::TropicalNetwork::new(
+            "moira_calibrated_decision_v312",
+            "decision_policy_scoring",
+            vec![l1, l2],
+        )
+        .expect("valid calibrated tropical decision network")
+    }
+
+    /// Creates a `TropicalDecisionDriver` initialized with [`Self::calibrated_network`]
+    /// and a sharp decision temperature (`0.25`) for high-margin branch selection.
+    pub fn calibrated() -> Self {
+        Self {
+            network: Some(Self::calibrated_network()),
+            fallback: HeuristicDecisionDriver::new(),
+            default_temperature: 0.25,
+            uncertainty_threshold: 0.15,
+        }
+    }
+
     /// Computes normalized Shannon entropy in `[0.0, 1.0]` for MOIRA's DSR gate.
     fn normalized_entropy(probs: &[f64]) -> f64 {
         if probs.len() <= 1 {
@@ -314,6 +348,20 @@ impl TropicalDecisionDriver {
 
 /// Alias highlighting MOIRA (`FATE-O-SISTERS`) 3-6-9 decision integration.
 pub type MoiraDecisionDriver = TropicalDecisionDriver;
+
+/// Runs the deterministic `pandora-harnesses` decision benchmark suite comparing
+/// `HeuristicDecisionDriver` and `MoiraDecisionDriver` on real task traces.
+pub fn benchmark_moira_vs_heuristic(
+    moira: &MoiraDecisionDriver,
+    heuristic: &HeuristicDecisionDriver,
+) -> Result<pandora_harnesses::decision_benchmark::ComparativeBenchmarkReport, DecisionError> {
+    let suite =
+        pandora_harnesses::decision_benchmark::DecisionBenchmarkSuite::default_real_task_traces();
+    suite.compare_drivers(
+        |q| heuristic.evaluate_question(q),
+        |q| moira.evaluate_question(q),
+    )
+}
 
 impl DecisionDriver for TropicalDecisionDriver {
     fn evaluate_question(
