@@ -3241,7 +3241,19 @@ mod tests {
         let workspace = root.join("workspace");
         let config = root.join("config.json");
         fs::create_dir_all(&workspace).unwrap();
-        fs::write(&config, b"{}").unwrap();
+        let cfg = serde_json::json!({
+            "format_version": 1,
+            "active_provider": "mock",
+            "providers": {
+                "mock": {
+                    "protocol": "open_ai_compatible",
+                    "base_url": "http://127.0.0.1:11434",
+                    "model": "mock-v1",
+                    "api_key_env": "PATH"
+                }
+            }
+        });
+        fs::write(&config, serde_json::to_vec(&cfg).unwrap()).unwrap();
 
         struct TestLatsRunControl;
 
@@ -3277,7 +3289,11 @@ mod tests {
             Ok(_) => panic!("controlled stop should return Err"),
             Err(e) => e,
         };
-        assert_eq!(err.code, "agent_controlled_stop");
+        assert_eq!(
+            err.code, "agent_controlled_stop",
+            "err: {} ({:?})",
+            err.message, err.details
+        );
         assert_eq!(err.details["agent"], true);
         assert_eq!(err.details["strategy"], "lats");
 
