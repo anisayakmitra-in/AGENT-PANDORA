@@ -1107,7 +1107,31 @@ pub(super) fn execute_agent_core(
         let rollouts = options.lats_rollouts.unwrap_or(10);
         let depth = options.lats_depth.unwrap_or(4);
         let puct_c = options.puct_c.unwrap_or(1.4);
-        let escalation_threshold = options.escalation_threshold.unwrap_or(0.15);
+        let ws = config.workspace_dir();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let decision_path = if ws.join(".pandora/model_decision.pnn").exists() {
+            ws.join(".pandora/model_decision.pnn")
+        } else if cwd.join(".pandora/model_decision.pnn").exists() {
+            cwd.join(".pandora/model_decision.pnn")
+        } else {
+            ws.join(".pandora/model_decision.pnn")
+        };
+        let tropical_driver = if decision_path.exists() {
+            let driver = pandora_runtime::decision_engine::TropicalDecisionDriver::from_pnn_path(
+                &decision_path,
+            );
+            if driver.has_loaded_network() {
+                driver
+            } else {
+                pandora_runtime::decision_engine::TropicalDecisionDriver::calibrated()
+            }
+        } else {
+            pandora_runtime::decision_engine::TropicalDecisionDriver::calibrated()
+        };
+        let escalation_threshold = options
+            .escalation_threshold
+            .unwrap_or_else(|| tropical_driver.uncertainty_threshold());
+        let tropical_driver = std::sync::Arc::new(tropical_driver);
         let budget = pandora_runtime::StrategyBudget::new(
             depth,
             rollouts,
@@ -1117,19 +1141,23 @@ pub(super) fn execute_agent_core(
             10_000_000,
         )
         .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
-        let decision_engine = pandora_runtime::SinglePassLogitEngine::new();
-        let lats_engine = pandora_runtime::LatsEngine::new(budget, decision_engine)
-            .with_puct(puct_c)
-            .with_escalation_threshold(escalation_threshold);
+        let lats_engine =
+            pandora_runtime::LatsEngine::new_with_tropical(budget, tropical_driver.clone())
+                .with_puct(puct_c)
+                .with_escalation_threshold(escalation_threshold);
         let actions = [0usize, 1, 2];
-        let priors = [0.45, 0.35, 0.20];
-        let escalated = lats_engine.should_escalate(0.10);
+        let labels = ["allow", "require_confirm", "reject"];
+        let priors = tropical_driver
+            .evaluate_action_priors(options.task, "", &labels)
+            .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        let mut sorted = priors.clone();
+        sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let margin = sorted.first().copied().unwrap_or(0.0) - sorted.get(1).copied().unwrap_or(0.0);
+        let entropy =
+            pandora_runtime::decision_engine::TropicalDecisionDriver::normalized_entropy(&priors);
+        let escalated = lats_engine.should_escalate_with_entropy(margin, entropy);
         let search_result = lats_engine
-            .search(0u32, &actions, &priors, |_state, action| match action {
-                0 => 0.85,
-                1 => 0.95,
-                _ => 0.70,
-            })
+            .search_with_tropical(options.task, &actions, &labels)
             .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
         (Some(search_result.metrics), escalated)
     } else {
@@ -1314,6 +1342,14 @@ pub(super) fn execute_agent_core(
                     "agent": true,
                     "session_id": session.id(),
                     "strategy": options.strategy.unwrap_or("react"),
+                    "lats_metrics": lats_metrics.as_ref().map(|m| json!({
+                        "rollouts": m.rollouts,
+                        "max_depth_reached": m.max_depth_reached,
+                        "nodes_created": m.nodes_created,
+                        "best_action": m.best_action,
+                        "best_value": m.best_value,
+                        "escalated": lats_escalated,
+                    })),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
@@ -1370,6 +1406,15 @@ pub(super) fn execute_agent_core(
                 details: json!({
                     "agent": true,
                     "session_id": session.id(),
+                    "strategy": options.strategy.unwrap_or("react"),
+                    "lats_metrics": lats_metrics.as_ref().map(|m| json!({
+                        "rollouts": m.rollouts,
+                        "max_depth_reached": m.max_depth_reached,
+                        "nodes_created": m.nodes_created,
+                        "best_action": m.best_action,
+                        "best_value": m.best_value,
+                        "escalated": lats_escalated,
+                    })),
                     "resume": {
                         "session_id": session.id(),
                         "next": "rerun pandora run --agent with --session <session_id> to continue this persisted transcript"
@@ -2745,6 +2790,505 @@ mod tests {
         let selected = select_provider(&config, "coding", EfficiencyObjective::LowestLatency)
             .expect("provider selection should succeed");
         assert_eq!(selected.as_deref(), Some("fast"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn expect_err(result: Result<CommandResult, CliError>) -> CliError {
+        match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected Err, got Ok"),
+        }
+    }
+
+    #[test]
+    fn test_lats_strategy_missing_strategy_rejections() {
+        let cases = [
+            (
+                vec!["--lats-rollouts", "10", "task"],
+                "--lats-rollouts requires --strategy lats",
+            ),
+            (
+                vec!["--lats-depth", "4", "task"],
+                "--lats-depth requires --strategy lats",
+            ),
+            (
+                vec!["--puct-c", "1.4", "task"],
+                "--puct-c requires --strategy lats",
+            ),
+            (
+                vec!["--escalation-threshold", "0.15", "task"],
+                "--escalation-threshold requires --strategy lats",
+            ),
+            (
+                vec!["--strategy", "react", "--lats-rollouts", "10", "task"],
+                "--lats-rollouts requires --strategy lats",
+            ),
+            (
+                vec!["--strategy", "reflexion", "--lats-depth", "4", "task"],
+                "--lats-depth requires --strategy lats",
+            ),
+            (
+                vec!["--strategy", "react", "--puct-c", "1.4", "task"],
+                "--puct-c requires --strategy lats",
+            ),
+            (
+                vec![
+                    "--strategy",
+                    "react",
+                    "--escalation-threshold",
+                    "0.15",
+                    "task",
+                ],
+                "--escalation-threshold requires --strategy lats",
+            ),
+        ];
+
+        for (args, expected_msg) in cases {
+            let string_args: Vec<String> = args.into_iter().map(|s| s.to_string()).collect();
+            let err = expect_err(execute(&string_args));
+            assert_eq!(err.code, "usage_error");
+            assert!(
+                err.message.contains(expected_msg),
+                "expected '{}' in error message '{}'",
+                expected_msg,
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_lats_strategy_unknown_strategy_rejection() {
+        let args = vec![
+            "--strategy".to_string(),
+            "mcts".to_string(),
+            "task".to_string(),
+        ];
+        let err = expect_err(execute(&args));
+        assert_eq!(err.code, "usage_error");
+        assert!(
+            err.message
+                .contains("unknown strategy 'mcts', expected 'react', 'reflexion', or 'lats'")
+        );
+    }
+
+    #[test]
+    fn test_lats_rollouts_validation_bounds() {
+        let cases = [
+            ("0", "--lats-rollouts must be an integer between 1 and 100"),
+            (
+                "101",
+                "--lats-rollouts must be an integer between 1 and 100",
+            ),
+            ("-5", "--lats-rollouts must be an integer between 1 and 100"),
+            (
+                "abc",
+                "--lats-rollouts must be an integer between 1 and 100",
+            ),
+            (
+                "1.5",
+                "--lats-rollouts must be an integer between 1 and 100",
+            ),
+        ];
+
+        for (val, expected_msg) in cases {
+            let args = vec![
+                "--strategy".to_string(),
+                "lats".to_string(),
+                "--lats-rollouts".to_string(),
+                val.to_string(),
+                "task".to_string(),
+            ];
+            let err = expect_err(execute(&args));
+            assert_eq!(err.code, "usage_error");
+            assert!(
+                err.message.contains(expected_msg),
+                "for rollouts '{}', expected '{}', got '{}'",
+                val,
+                expected_msg,
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_lats_depth_validation_bounds() {
+        let cases = [
+            ("0", "--lats-depth must be an integer between 1 and 16"),
+            ("17", "--lats-depth must be an integer between 1 and 16"),
+            ("-1", "--lats-depth must be an integer between 1 and 16"),
+            ("deep", "--lats-depth must be an integer between 1 and 16"),
+            ("4.2", "--lats-depth must be an integer between 1 and 16"),
+        ];
+
+        for (val, expected_msg) in cases {
+            let args = vec![
+                "--strategy".to_string(),
+                "lats".to_string(),
+                "--lats-depth".to_string(),
+                val.to_string(),
+                "task".to_string(),
+            ];
+            let err = expect_err(execute(&args));
+            assert_eq!(err.code, "usage_error");
+            assert!(
+                err.message.contains(expected_msg),
+                "for depth '{}', expected '{}', got '{}'",
+                val,
+                expected_msg,
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_lats_puct_c_validation_bounds() {
+        let cases = [
+            ("0.0", "--puct-c must be a positive float"),
+            ("-1.5", "--puct-c must be a positive float"),
+            ("NaN", "--puct-c must be a positive float"),
+            ("inf", "--puct-c must be a positive float"),
+            ("fast", "--puct-c must be a positive float"),
+        ];
+
+        for (val, expected_msg) in cases {
+            let args = vec![
+                "--strategy".to_string(),
+                "lats".to_string(),
+                "--puct-c".to_string(),
+                val.to_string(),
+                "task".to_string(),
+            ];
+            let err = expect_err(execute(&args));
+            assert_eq!(err.code, "usage_error");
+            assert!(
+                err.message.contains(expected_msg),
+                "for puct-c '{}', expected '{}', got '{}'",
+                val,
+                expected_msg,
+                err.message
+            );
+
+            let inline_args = vec![
+                "--strategy=lats".to_string(),
+                format!("--puct-c={val}"),
+                "task".to_string(),
+            ];
+            let inline_err = expect_err(execute(&inline_args));
+            assert_eq!(inline_err.code, "usage_error");
+            assert!(
+                inline_err.message.contains(expected_msg),
+                "for inline puct-c '{}', expected '{}', got '{}'",
+                val,
+                expected_msg,
+                inline_err.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_lats_escalation_threshold_validation_bounds() {
+        let cases = [
+            (
+                "-0.01",
+                "--escalation-threshold must be a float between 0.0 and 1.0",
+            ),
+            (
+                "1.01",
+                "--escalation-threshold must be a float between 0.0 and 1.0",
+            ),
+            (
+                "NaN",
+                "--escalation-threshold must be a float between 0.0 and 1.0",
+            ),
+            (
+                "threshold",
+                "--escalation-threshold must be a float between 0.0 and 1.0",
+            ),
+        ];
+
+        for (val, expected_msg) in cases {
+            let args = vec![
+                "--strategy".to_string(),
+                "lats".to_string(),
+                "--escalation-threshold".to_string(),
+                val.to_string(),
+                "task".to_string(),
+            ];
+            let err = expect_err(execute(&args));
+            assert_eq!(err.code, "usage_error");
+            assert!(
+                err.message.contains(expected_msg),
+                "for escalation-threshold '{}', expected '{}', got '{}'",
+                val,
+                expected_msg,
+                err.message
+            );
+
+            let inline_args = vec![
+                "--strategy=lats".to_string(),
+                format!("--escalation-threshold={val}"),
+                "task".to_string(),
+            ];
+            let inline_err = expect_err(execute(&inline_args));
+            assert_eq!(inline_err.code, "usage_error");
+            assert!(
+                inline_err.message.contains(expected_msg),
+                "for inline escalation-threshold '{}', expected '{}', got '{}'",
+                val,
+                expected_msg,
+                inline_err.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_lats_incompatible_flags() {
+        let cases = [
+            (
+                vec!["--strategy", "lats", "--plan", "task"],
+                "--agent/--strategy cannot be combined with --plan, --harness, --gene, or feedback options",
+            ),
+            (
+                vec!["--strategy", "lats", "--harness", "coding", "task"],
+                "--agent/--strategy cannot be combined with --plan, --harness, --gene, or feedback options",
+            ),
+            (
+                vec!["--strategy", "lats", "--gene", "wasm-test", "task"],
+                "--agent/--strategy cannot be combined with --plan, --harness, --gene, or feedback options",
+            ),
+            (
+                vec!["--strategy", "lats", "--expected-output", "exp", "task"],
+                "--agent/--strategy cannot be combined with --plan, --harness, --gene, or feedback options",
+            ),
+            (
+                vec!["--strategy", "lats", "--retryable", "task"],
+                "--agent/--strategy cannot be combined with --plan, --harness, --gene, or feedback options",
+            ),
+        ];
+
+        for (args, expected_msg) in cases {
+            let string_args: Vec<String> = args.into_iter().map(|s| s.to_string()).collect();
+            let err = expect_err(execute(&string_args));
+            assert_eq!(err.code, "usage_error");
+            assert!(
+                err.message.contains(expected_msg),
+                "expected '{}', got '{}'",
+                expected_msg,
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_lats_valid_options_parsing() {
+        let valid_sets: Vec<Vec<&str>> = vec![
+            vec![
+                "--strategy",
+                "lats",
+                "--lats-rollouts",
+                "1",
+                "--lats-depth",
+                "1",
+                "--puct-c",
+                "0.1",
+                "--escalation-threshold",
+                "0.0",
+            ],
+            vec![
+                "--strategy",
+                "lats",
+                "--lats-rollouts",
+                "50",
+                "--lats-depth",
+                "8",
+                "--puct-c",
+                "1.414",
+                "--escalation-threshold",
+                "0.25",
+            ],
+            vec![
+                "--strategy",
+                "lats",
+                "--lats-rollouts",
+                "100",
+                "--lats-depth",
+                "16",
+                "--puct-c",
+                "10.0",
+                "--escalation-threshold",
+                "1.0",
+            ],
+            vec![
+                "--strategy=lats",
+                "--lats-rollouts=20",
+                "--lats-depth=6",
+                "--puct-c=1.5",
+                "--escalation-threshold=0.3",
+            ],
+        ];
+
+        for args in valid_sets {
+            let string_args: Vec<String> = args.into_iter().map(|s| s.to_string()).collect();
+            let err = expect_err(execute(&string_args));
+            assert_eq!(err.code, "usage_error");
+            assert_eq!(err.message, "run requires exactly one task");
+        }
+    }
+
+    #[test]
+    fn test_lats_json_envelope_and_metrics_structure() {
+        let metrics = pandora_runtime::LatsSearchMetrics {
+            rollouts: 10,
+            max_depth_reached: 4,
+            nodes_created: 31,
+            best_action: Some(1),
+            best_value: 0.95,
+        };
+        let cmd_res = success(
+            "run",
+            json!({
+                "agent": true,
+                "session_id": "session-test-lats-001",
+                "status": "completed",
+                "strategy": "lats",
+                "lats_metrics": {
+                    "rollouts": metrics.rollouts,
+                    "max_depth_reached": metrics.max_depth_reached,
+                    "nodes_created": metrics.nodes_created,
+                    "best_action": metrics.best_action,
+                    "best_value": metrics.best_value,
+                    "escalated": false,
+                },
+                "turns": 1,
+                "tool_calls": 0,
+            }),
+            "Completed agent task in session-test-lats-001 [strategy: lats, rollouts: 10, depth: 4, best_value: 0.95]".to_string(),
+        );
+
+        let env = crate::output::envelope(cmd_res);
+        assert_eq!(env["command"], "run");
+        assert_eq!(env["version"], "0.1");
+        assert_eq!(env["agent"], true);
+        assert_eq!(env["strategy"], "lats");
+        assert_eq!(env["status"], "completed");
+
+        let lats = &env["lats_metrics"];
+        assert_eq!(lats["rollouts"], 10);
+        assert_eq!(lats["max_depth_reached"], 4);
+        assert_eq!(lats["nodes_created"], 31);
+        assert_eq!(lats["best_action"], 1);
+        assert_eq!(lats["best_value"], 0.95);
+        assert_eq!(lats["escalated"], false);
+
+        let non_lats_res = success(
+            "run",
+            json!({
+                "agent": true,
+                "session_id": "session-test-react-002",
+                "status": "completed",
+                "strategy": "react",
+                "lats_metrics": Value::Null,
+            }),
+            "Completed agent task in session-test-react-002".to_string(),
+        );
+        let non_lats_env = crate::output::envelope(non_lats_res);
+        assert_eq!(non_lats_env["strategy"], "react");
+        assert!(non_lats_env["lats_metrics"].is_null());
+    }
+
+    #[test]
+    fn test_lats_human_summary_formatting() {
+        let session_id = "session-lats-abc";
+        let lats_metrics = Some(pandora_runtime::LatsSearchMetrics {
+            rollouts: 25,
+            max_depth_reached: 8,
+            nodes_created: 75,
+            best_action: Some(0),
+            best_value: 0.8,
+        });
+
+        let summary_lats = format!(
+            "Completed agent task in {} [strategy: lats, rollouts: {}, depth: {}, best_value: {:.2}]",
+            session_id,
+            lats_metrics.as_ref().map(|m| m.rollouts).unwrap_or(0),
+            lats_metrics
+                .as_ref()
+                .map(|m| m.max_depth_reached)
+                .unwrap_or(0),
+            lats_metrics.as_ref().map(|m| m.best_value).unwrap_or(0.0),
+        );
+        assert_eq!(
+            summary_lats,
+            "Completed agent task in session-lats-abc [strategy: lats, rollouts: 25, depth: 8, best_value: 0.80]"
+        );
+
+        let non_lats_summary = format!("Completed agent task in {}", session_id);
+        assert_eq!(non_lats_summary, "Completed agent task in session-lats-abc");
+    }
+
+    #[test]
+    fn test_lats_mcts_execution_in_agent_core_with_control() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora-cli-lats-agent-core-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data = root.join("data");
+        let workspace = root.join("workspace");
+        let config = root.join("config.json");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(&config, b"{}").unwrap();
+
+        struct TestLatsRunControl;
+
+        impl AgentRunControl for TestLatsRunControl {
+            fn checkpoint(&self, _checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+                Err(AgentControlStop::CancellationStateUnavailable)
+            }
+        }
+
+        let control = TestLatsRunControl;
+        let args = vec![
+            "--config".to_owned(),
+            config.to_string_lossy().into_owned(),
+            "--data-dir".to_owned(),
+            data.to_string_lossy().into_owned(),
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+            "--strategy".to_owned(),
+            "lats".to_owned(),
+            "--lats-rollouts".to_owned(),
+            "12".to_owned(),
+            "--lats-depth".to_owned(),
+            "5".to_owned(),
+            "--puct-c".to_owned(),
+            "1.5".to_owned(),
+            "--escalation-threshold".to_owned(),
+            "0.25".to_owned(),
+            "inspect and classify tool safety".to_owned(),
+        ];
+
+        let result = execute_with_control(&args, Some(&control));
+        let err = match result {
+            Ok(_) => panic!("controlled stop should return Err"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code, "agent_controlled_stop");
+        assert_eq!(err.details["agent"], true);
+        assert_eq!(err.details["strategy"], "lats");
+
+        let lats_metrics = &err.details["lats_metrics"];
+        assert!(!lats_metrics.is_null());
+        assert_eq!(lats_metrics["rollouts"], 12);
+        assert!(lats_metrics["max_depth_reached"].as_u64().unwrap() <= 5);
+        assert!(lats_metrics["nodes_created"].as_u64().unwrap() >= 1);
+        assert!(lats_metrics["best_action"].is_number());
+        assert!(lats_metrics["best_value"].is_number());
+        assert!(lats_metrics["escalated"].is_boolean());
 
         let _ = fs::remove_dir_all(root);
     }

@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.1.3
+
+### Tropical MCTS Search, Fast-Path Reflex Tool Safety Gating, `--strategy lats` CLI & Tropical Semantic Projections
+- **System 2 LATS MCTS with Sub-Microsecond Tropical Inference (`crates/pandora-runtime/src/lats_engine.rs`, `crates/pandora-runtime/src/decision_engine.rs`)**:
+  - Wired zero-multiplication `TropicalDecisionDriver` / `MoiraDecisionDriver` directly into `LatsEngine` (`LatsMctsEngine`, `with_tropical_driver`, `new_with_tropical`, `search_with_tropical`, `evaluate_action_priors`, `evaluate_leaf_value`), eliminating LLM calls during tree expansion via PUCT selection $U(s, a) = Q(s, a) + c_{\text{puct}} \cdot P(a|s) \cdot \frac{\sqrt{\sum_b N(s, b)}}{1 + N(s, a)}$.
+- **Fast-Path Reflex Tool Safety Gating (`crates/pandora-runtime/src/parliament.rs`, `crates/pandora-runtime/src/reference_monitor.rs`)**:
+  - Integrated sub-millisecond `SinglePassLogitEngine` reflex gating into `Parliament` (`evaluate_tool_safety_reflex`, `evaluate_tool_safety`, `decide_tool_safety`) and `ReferenceMonitor`, automatically escalating to System 2 MCTS via `should_escalate` / `should_escalate_with_entropy` when confidence margin drops below `uncertainty_threshold` or normalized entropy exceeds `0.666`.
+- **`pandora run --strategy lats` CLI Ergonomics (`crates/pandora-cli/src/commands/run.rs`, `crates/pandora-cli/src/commands/mod.rs`)**:
+  - Added `--strategy lats`, `--lats-rollouts <1-100>`, `--lats-depth <1-16>`, `--puct-c <float>`, and `--escalation-threshold <float>`, reporting `lats_metrics` in JSON envelopes and human-readable summaries.
+- **Tropical Semantic Projections for Memory & ContextVFS (`crates/pandora-runtime/src/semantic_indexer.rs`, `crates/pandora-runtime/src/hnsw.rs`, `crates/pandora-runtime/src/context_vfs.rs`, `crates/pandora-runtime/src/arch_simd.rs`)**:
+  - Introduced `TropicalVector`, `TropicalProjector`, `TropicalHybridRanker`, and `SemanticIndexer` using zero-multiplication max-plus projections ($\max_i(x_i + w_i)$) and safe 8-lane unrolled `simd_tropical_max_plus_128`.
+  - Wired `HnswVectorType::Tropical = 4` and `HnswVector::Tropical` into `hnsw.rs` (PVHN v1 binary persistence with fallback for `F32`/`Quantized`) and hybrid BM25 + tropical search (`search_tropical`, `search_tropical_with_options`, `build_hnsw_index_tropical`, `pandora memory vfs tropical-search`) across L0–L4 memory records and virtual `pandora://` files.
+- **Release Predecessor & Workspace Parity**:
+  - Updated `scripts/release_predecessor.py` (`UNPUBLISHED_TAGS = {"v3.0.1", "v3.1.0", "v3.1.1"}`) so `v3.1.2` is selected as the published predecessor, and synchronized all workspace manifests, C/C++ ABI headers, TypeScript launcher, and installers to `3.1.3` under `#![forbid(unsafe_code)]`.
+
 ## v3.1.2
 
 ### Dynamic Tropical Complexity Routing (`BanditRouter`), `pandora model` / `pandora moira` CLI & Deterministic Decision Harness Benchmarks

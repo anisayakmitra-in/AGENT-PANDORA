@@ -97,6 +97,7 @@ pub mod rollout_reducer;
 pub mod run_loop;
 pub mod secret_vault;
 pub mod self_healing;
+pub mod semantic_indexer;
 pub mod semantic_memory;
 pub mod service;
 pub mod service_token;
@@ -147,7 +148,8 @@ pub use arch_simd::{
     CpuFeatures, DimensionBenchmarkStats, SimdBenchmarkResult, benchmark_simd_vs_scalar,
     compute_sample_stats, run_statistical_microbenchmarks, scalar_dot_product_128,
     scalar_dot_product_slice, simd_dot_product_128, simd_dot_product_f32_i8, simd_dot_product_i8,
-    simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128, student_t_critical_value_95,
+    simd_dot_product_slice, simd_hash64_seed, simd_norm_sq_128, simd_tropical_max_plus_128,
+    student_t_critical_value_95,
 };
 pub use artifact_catalog::{ArtifactActivation, ArtifactCatalog, ArtifactCatalogError};
 pub use assurance_receipt::{PhaseCertificate, UnifiedAssuranceReceipt};
@@ -218,7 +220,9 @@ pub use curator::{CuratorEngine, CuratorError};
 pub use decision_engine::{
     CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError, DpoPair,
     FineTuningSample, GoldenEvaluationCase, GoldenSuiteDefinition, GoldenTargetRef,
-    HeuristicDecisionDriver, MockDecisionDriver, OllamaDecisionDriver, SinglePassLogitEngine,
+    HeuristicDecisionDriver, MockDecisionDriver, MoiraDecisionDriver, OllamaDecisionDriver,
+    SinglePassLogitEngine, TropicalDecisionDriver, normalized_entropy,
+    should_escalate as decision_should_escalate,
 };
 pub use device_trust::{
     DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
@@ -303,6 +307,7 @@ pub use hnsw::{
     DEFAULT_HNSW_EF_CONSTRUCTION, DEFAULT_HNSW_EF_SEARCH, DEFAULT_HNSW_M, DEFAULT_HNSW_M_MAX_0,
     HnswConfig, HnswError, HnswIndex, HnswNode, HnswSearchResult, HnswVector, HnswVectorType,
     PVHN_HEADER_SIZE, PVHN_MAGIC, PVHN_TRAILER_SIZE, PVHN_VERSION, cosine_distance,
+    tropical_distance,
 };
 pub use hooks::{HookPoint, HookSelector, HooksLoadError, LifecycleHook, LifecycleHooks};
 pub use human_review::{
@@ -316,8 +321,8 @@ pub use identity::{
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
 pub use kanban_engine::{KanbanEngine, KanbanError};
 pub use lats_engine::{
-    LatsEngine, LatsError, LatsNode, LatsSearchMetrics, LatsSearchResult, convergence_choice,
-    cosine_similarity, should_escalate,
+    LatsEngine, LatsError, LatsMctsEngine, LatsNode, LatsSearchMetrics, LatsSearchResult,
+    convergence_choice, cosine_similarity, should_escalate, should_escalate_with_entropy,
 };
 pub use lsp_engine::{LspClientConfig, LspEngine, LspError, LspSession};
 pub use martingale_gate::{
@@ -390,7 +395,7 @@ pub use package_store::{
     PackageTransparencyEvent, PackageTransparencyEventKind, PackageTransparencyOutcome,
     PublisherTrustRootRecord,
 };
-pub use parliament::Parliament;
+pub use parliament::{Parliament, ToolSafetyGateVerdict, ToolSafetyReflexVerdict};
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
 pub use privacy_budget::{
     DistributedPrivacyTracker, GaussianMechanism, LaplaceMechanism, PrivacyAccountantError,
@@ -419,6 +424,10 @@ pub use secret_vault::{
     SecretVault, SecretVaultEntry, SecretVaultError, StoredMcpAuth, VaultSecret,
 };
 pub use self_healing::{SelfHealingEngine, SelfHealingError};
+pub use semantic_indexer::{
+    DEFAULT_HYBRID_ALPHA, DEFAULT_TROPICAL_GAMMA, SemanticIndexer, TROPICAL_DIMENSION,
+    TropicalHybridRanker, TropicalProjector, TropicalSemanticProjector, TropicalVector,
+};
 pub use semantic_memory::{
     BM25_B, BM25_K1, DENSE_DIMENSION, DenseFeatureHasher, HybridRankItem, HybridRrfRanker,
     LessonRecord, QuantizedVector, RRF_K, SparseBm25Index, extract_term_frequencies, tokenize,

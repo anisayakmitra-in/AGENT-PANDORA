@@ -331,9 +331,12 @@ impl TropicalDecisionDriver {
     }
 
     /// Computes normalized Shannon entropy in `[0.0, 1.0]` for MOIRA's DSR gate.
-    fn normalized_entropy(probs: &[f64]) -> f64 {
+    pub fn normalized_entropy(probs: &[f64]) -> f64 {
         if probs.len() <= 1 {
             return 0.0;
+        }
+        if probs.iter().any(|p| !p.is_finite()) {
+            return 1.0;
         }
         let max_h = (probs.len() as f64).ln();
         let mut h = 0.0;
@@ -343,6 +346,147 @@ impl TropicalDecisionDriver {
             }
         }
         (h / max_h).clamp(0.0, 1.0)
+    }
+
+    /// Returns a reference to the active `TropicalNetwork`, if loaded.
+    pub fn network(&self) -> Option<&crate::tropical_nn::TropicalNetwork> {
+        self.network.as_ref()
+    }
+
+    /// Returns the default decision temperature.
+    pub fn default_temperature(&self) -> f64 {
+        self.default_temperature
+    }
+
+    /// Returns the uncertainty margin threshold.
+    pub fn uncertainty_threshold(&self) -> f64 {
+        self.uncertainty_threshold
+    }
+
+    /// Evaluates raw tropical logits across candidate labels for a prompt and context with zero multiplications.
+    pub fn forward_logits<L: AsRef<str>>(
+        &self,
+        prompt: &str,
+        context: &str,
+        action_labels: &[L],
+    ) -> Result<Vec<f64>, DecisionError> {
+        if action_labels.is_empty() {
+            return Err(DecisionError::EmptyCandidates);
+        }
+        if let Some(ref net) = self.network {
+            let mut raw_logits = Vec::with_capacity(action_labels.len());
+            for label in action_labels {
+                let features = encode_decision_features(prompt, context, label.as_ref());
+                let out = net
+                    .forward(&features)
+                    .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+                let logit = out.first().copied().unwrap_or(0.0) as f64;
+                raw_logits.push(logit);
+            }
+            Ok(raw_logits)
+        } else {
+            let labels: Vec<String> = action_labels
+                .iter()
+                .map(|l| l.as_ref().to_string())
+                .collect();
+            let q = DecisionQuestion::choice("priors-eval", prompt, labels);
+            let verdict = self.fallback.evaluate_question(&q)?;
+            let mut raw_logits = Vec::with_capacity(action_labels.len());
+            for label in action_labels {
+                let p = verdict
+                    .probabilities
+                    .get(label.as_ref())
+                    .copied()
+                    .unwrap_or(0.0);
+                raw_logits.push(p.max(1e-9).ln());
+            }
+            Ok(raw_logits)
+        }
+    }
+
+    /// Evaluates prior policy probabilities P(a|s) for candidate action labels
+    /// using zero-multiplication tropical max-plus inference and calibrated softmax.
+    pub fn evaluate_action_priors<L: AsRef<str>>(
+        &self,
+        prompt: &str,
+        context: &str,
+        action_labels: &[L],
+    ) -> Result<Vec<f64>, DecisionError> {
+        let raw_logits = self.forward_logits(prompt, context, action_labels)?;
+        SinglePassLogitEngine::compute_softmax(&raw_logits, self.default_temperature)
+    }
+
+    /// Computes calibrated softmax priors P(a|s) using sub-microsecond tropical inference (alias for `evaluate_action_priors`).
+    pub fn compute_priors<L: AsRef<str>>(
+        &self,
+        prompt: &str,
+        context: &str,
+        action_labels: &[L],
+    ) -> Result<Vec<f64>, DecisionError> {
+        self.evaluate_action_priors(prompt, context, action_labels)
+    }
+
+    /// Computes bounded leaf value estimation Q(s, a) in [0.0, 1.0] from tropical forward pass.
+    pub fn evaluate_leaf_value(&self, prompt: &str, context: &str, action_label: &str) -> f64 {
+        if let Some(ref net) = self.network {
+            let features = encode_decision_features(prompt, context, action_label);
+            if let Ok(out) = net.forward(&features) {
+                let logit = out.first().copied().unwrap_or(0.0) as f64;
+                let penalty = (features[12] + features[13]) as f64;
+                let calibrated = logit + penalty;
+                let val = 1.0 / (1.0 + (-calibrated).exp());
+                if val.is_finite() {
+                    val.clamp(0.0, 1.0)
+                } else {
+                    0.5
+                }
+            } else {
+                0.5
+            }
+        } else {
+            let q = DecisionQuestion::binary("leaf-eval", prompt, action_label, "other");
+            if let Ok(verdict) = self.fallback.evaluate_question(&q) {
+                if verdict.selected_label == action_label {
+                    verdict.confidence.clamp(0.0, 1.0)
+                } else {
+                    (1.0 - verdict.confidence).clamp(0.0, 1.0)
+                }
+            } else {
+                0.5
+            }
+        }
+    }
+
+    /// Result-returning variant of `evaluate_leaf_value`.
+    pub fn try_evaluate_leaf_value(
+        &self,
+        prompt: &str,
+        context: &str,
+        action_label: &str,
+    ) -> Result<f64, DecisionError> {
+        if let Some(ref net) = self.network {
+            let features = encode_decision_features(prompt, context, action_label);
+            let out = net
+                .forward(&features)
+                .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+            let logit = out.first().copied().unwrap_or(0.0) as f64;
+            let penalty = (features[12] + features[13]) as f64;
+            let calibrated = logit + penalty;
+            let val = 1.0 / (1.0 + (-calibrated).exp());
+            Ok(if val.is_finite() {
+                val.clamp(0.0, 1.0)
+            } else {
+                0.5
+            })
+        } else {
+            let q = DecisionQuestion::binary("leaf-eval", prompt, action_label, "other");
+            let verdict = self.fallback.evaluate_question(&q)?;
+            if verdict.selected_label == action_label {
+                Ok(verdict.confidence.clamp(0.0, 1.0))
+            } else {
+                Ok((1.0 - verdict.confidence).clamp(0.0, 1.0))
+            }
+        }
     }
 }
 
@@ -796,6 +940,32 @@ pub struct SinglePassLogitEngine {
 
 pub type DecisionEngine = SinglePassLogitEngine;
 
+/// Determines if a decision should escalate from System 1 (reflex) to System 2 (MCTS tree search).
+///
+/// Returns `true` if decision confidence margin falls below uncertainty threshold
+/// OR normalized Shannon entropy exceeds 0.666 (or if values are non-finite).
+pub fn should_escalate(margin: f64, uncertainty_threshold: f64, normalized_entropy: f64) -> bool {
+    !margin.is_finite()
+        || !uncertainty_threshold.is_finite()
+        || !normalized_entropy.is_finite()
+        || margin < uncertainty_threshold
+        || normalized_entropy > 0.666
+}
+
+/// System 1 -> System 2 escalation gate with normalized Shannon entropy (Requirement R2).
+pub fn should_escalate_with_entropy(
+    margin: f64,
+    uncertainty_threshold: f64,
+    normalized_entropy: f64,
+) -> bool {
+    should_escalate(margin, uncertainty_threshold, normalized_entropy)
+}
+
+/// Module-level helper computing normalized Shannon entropy in `[0.0, 1.0]`.
+pub fn normalized_entropy(probs: &[f64]) -> f64 {
+    TropicalDecisionDriver::normalized_entropy(probs)
+}
+
 impl Default for SinglePassLogitEngine {
     fn default() -> Self {
         Self::new()
@@ -835,11 +1005,48 @@ impl SinglePassLogitEngine {
     }
 
     /// System 1 -> System 2 escalation gate. Returns `true` when the given
-    /// verdict's margin is below this engine's uncertainty threshold, i.e. the
-    /// fast reflex path is unsafe and the caller should hand off to
-    /// [`LatsEngine::search`].
+    /// verdict's margin is below this engine's uncertainty threshold OR
+    /// normalized Shannon entropy exceeds 0.666, indicating that the fast reflex
+    /// path is unsafe and the caller should escalate to [`crate::lats_engine::LatsEngine::search`].
     pub fn should_escalate(&self, verdict: &pandora_types::DynamicVerdict) -> bool {
-        crate::lats_engine::should_escalate(verdict.margin, self.uncertainty_threshold)
+        if verdict.is_uncertain {
+            return true;
+        }
+        let entropy = if verdict.probabilities.is_empty() {
+            0.0
+        } else {
+            let probs: Vec<f64> = verdict.probabilities.values().copied().collect();
+            TropicalDecisionDriver::normalized_entropy(&probs)
+        };
+        should_escalate(verdict.margin, self.uncertainty_threshold, entropy)
+    }
+
+    /// Escalation check based on margin alone against uncertainty threshold.
+    pub fn should_escalate_margin(&self, margin: f64) -> bool {
+        crate::lats_engine::should_escalate(margin, self.uncertainty_threshold)
+    }
+
+    /// Escalation check with explicit normalized entropy.
+    pub fn should_escalate_with_entropy(&self, margin: f64, normalized_entropy: f64) -> bool {
+        should_escalate(margin, self.uncertainty_threshold, normalized_entropy)
+    }
+
+    /// Escalation gate for typed [`pandora_types::DecisionVerdict<ToolSafetyChoice>`].
+    pub fn should_escalate_tool_safety(
+        &self,
+        verdict: &pandora_types::DecisionVerdict<ToolSafetyChoice>,
+    ) -> bool {
+        let probs: Vec<f64> = verdict
+            .distribution
+            .candidates
+            .iter()
+            .map(|c| c.probability)
+            .collect();
+        let mut sorted = probs.clone();
+        sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let margin = sorted.first().copied().unwrap_or(0.0) - sorted.get(1).copied().unwrap_or(0.0);
+        let entropy = TropicalDecisionDriver::normalized_entropy(&probs);
+        should_escalate(margin, self.uncertainty_threshold, entropy)
     }
 
     pub fn from_config(config: &DecisionDriverConfig) -> Result<Self, DecisionError> {
@@ -1200,10 +1407,20 @@ impl SinglePassLogitEngine {
             || tool_name_lower.contains("command")
             || tool_name_lower.contains("run");
 
+        let is_ambiguous = (args_str.contains("force")
+            || args_str.contains("bypass")
+            || args_str.contains("override")
+            || tool_name_lower.contains("ambiguous")
+            || tool_name_lower.contains("eval"))
+            && !is_destructive;
+
         let candidates = ToolSafetyChoice::variants();
         let logits = if is_destructive {
             // Strong bias toward Reject
             vec![-4.0, 1.0, 8.0]
+        } else if is_ambiguous {
+            // Ambiguous/uncertain: close margins and high entropy, triggers escalation
+            vec![2.0, 2.1, 1.9]
         } else if is_mutating {
             // Require explicit confirmation
             vec![0.5, 7.0, -1.0]

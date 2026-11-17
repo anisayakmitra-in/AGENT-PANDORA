@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::arch_simd::{simd_dot_product_128, simd_dot_product_f32_i8, simd_dot_product_i8};
+use crate::semantic_indexer::TropicalVector;
 use crate::semantic_memory::{DENSE_DIMENSION, QuantizedVector};
 
 pub const PVHN_MAGIC: &[u8; 4] = b"PVHN";
@@ -38,6 +39,7 @@ pub enum HnswVectorType {
     Float32 = 1,
     QuantizedInt8 = 2,
     Mixed = 3,
+    Tropical = 4,
 }
 
 /// Errors occurring during HNSW operations, validation, or PVHN I/O.
@@ -138,12 +140,14 @@ impl HnswConfig {
     }
 }
 
-/// Dual vector representation supporting uncompressed `[f32; 128]` and Int8 `QuantizedVector`.
+/// Multi-representation vector supporting uncompressed `[f32; 128]`, Int8 `QuantizedVector`,
+/// and Max-Plus `TropicalVector`.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum HnswVector {
     F32([f32; 128]),
     Quantized(QuantizedVector),
+    Tropical(TropicalVector),
 }
 
 impl HnswVector {
@@ -152,6 +156,7 @@ impl HnswVector {
         match self {
             Self::F32(v) => *v,
             Self::Quantized(q) => q.dequantize(),
+            Self::Tropical(t) => t.0,
         }
     }
 
@@ -160,11 +165,25 @@ impl HnswVector {
         match self {
             Self::F32(v) => QuantizedVector::quantize(v),
             Self::Quantized(q) => *q,
+            Self::Tropical(t) => QuantizedVector::quantize(&t.0),
+        }
+    }
+
+    /// Converts into a `TropicalVector` using zero-multiplication max-plus fallback when needed.
+    pub fn to_tropical(&self) -> TropicalVector {
+        match self {
+            Self::Tropical(t) => *t,
+            Self::F32(v) => TropicalVector::from_dense_fallback(v),
+            Self::Quantized(q) => TropicalVector::from_quantized_fallback(q),
         }
     }
 
     pub fn is_quantized(&self) -> bool {
         matches!(self, Self::Quantized(_))
+    }
+
+    pub fn is_tropical(&self) -> bool {
+        matches!(self, Self::Tropical(_))
     }
 }
 
@@ -180,9 +199,16 @@ impl From<QuantizedVector> for HnswVector {
     }
 }
 
-/// Computes the Cosine Distance $D(\mathbf{u}, \mathbf{v}) = 1.0 - \text{sim}(\mathbf{u}, \mathbf{v})$.
+impl From<TropicalVector> for HnswVector {
+    fn from(t: TropicalVector) -> Self {
+        Self::Tropical(t)
+    }
+}
+
+/// Computes the HNSW distance $D(\mathbf{u}, \mathbf{v}) = 1.0 - \text{sim}(\mathbf{u}, \mathbf{v})$.
 ///
-/// Bounded and clamped to `[0.0, 2.0]`. Utilizes safe SIMD dot products from `crate::arch_simd`.
+/// For `Tropical` vectors, computes zero-multiplication max-plus distance with automatic
+/// fallback for mixed `F32` / `Quantized` pairs. Bounded and clamped to `[0.0, 2.0]`.
 pub fn cosine_distance(a: &HnswVector, b: &HnswVector) -> f32 {
     if a == b {
         return 0.0;
@@ -208,7 +234,29 @@ pub fn cosine_distance(a: &HnswVector, b: &HnswVector) -> f32 {
             let sim = simd_dot_product_f32_i8(vb, &qa.data, qa.scale);
             (1.0 - sim).clamp(0.0, 2.0)
         }
+        (HnswVector::Tropical(ta), HnswVector::Tropical(tb)) => ta.distance(tb),
+        (HnswVector::Tropical(ta), HnswVector::F32(vb)) => {
+            ta.distance(&TropicalVector::from_dense_fallback(vb))
+        }
+        (HnswVector::F32(va), HnswVector::Tropical(tb)) => {
+            TropicalVector::from_dense_fallback(va).distance(tb)
+        }
+        (HnswVector::Tropical(ta), HnswVector::Quantized(qb)) => {
+            ta.distance(&TropicalVector::from_quantized_fallback(qb))
+        }
+        (HnswVector::Quantized(qa), HnswVector::Tropical(tb)) => {
+            TropicalVector::from_quantized_fallback(qa).distance(tb)
+        }
     }
+}
+
+/// Computes tropical max-plus distance between two `HnswVector` instances, converting legacy
+/// `F32` and `Quantized` representations to `TropicalVector` via fallback when needed.
+pub fn tropical_distance(a: &HnswVector, b: &HnswVector) -> f32 {
+    if a == b {
+        return 0.0;
+    }
+    a.to_tropical().distance(&b.to_tropical())
 }
 
 /// Item returned from an HNSW similarity search query.
@@ -790,14 +838,19 @@ impl HnswIndex {
         } else {
             let mut has_f32 = false;
             let mut has_q = false;
+            let mut has_trop = false;
             for n in &self.nodes {
                 match n.vector {
                     HnswVector::F32(_) => has_f32 = true,
                     HnswVector::Quantized(_) => has_q = true,
+                    HnswVector::Tropical(_) => has_trop = true,
                 }
             }
-            if has_f32 && has_q {
+            let kinds = (has_f32 as u8) + (has_q as u8) + (has_trop as u8);
+            if kinds > 1 {
                 HnswVectorType::Mixed as u8
+            } else if has_trop {
+                HnswVectorType::Tropical as u8
             } else if has_f32 {
                 HnswVectorType::Float32 as u8
             } else {
@@ -848,6 +901,12 @@ impl HnswIndex {
                     buf.extend_from_slice(&q.scale.to_le_bytes());
                     for &byte in &q.data {
                         buf.push(byte as u8);
+                    }
+                }
+                HnswVector::Tropical(t) => {
+                    buf.push(4u8);
+                    for &elem in &t.0 {
+                        buf.extend_from_slice(&elem.to_le_bytes());
                     }
                 }
             }
@@ -996,6 +1055,18 @@ impl HnswIndex {
                         offset += 1;
                     }
                     vectors.push(HnswVector::Quantized(QuantizedVector { scale, data }));
+                }
+                3 | 4 => {
+                    if offset + 512 > payload_len {
+                        return Err(HnswError::TruncatedData);
+                    }
+                    let mut data = [0.0f32; 128];
+                    for item in &mut data {
+                        let f_bytes = &bytes[offset..offset + 4];
+                        *item = f32::from_le_bytes(f_bytes.try_into().unwrap());
+                        offset += 4;
+                    }
+                    vectors.push(HnswVector::Tropical(TropicalVector(data)));
                 }
                 other => {
                     return Err(HnswError::InvalidData(format!(

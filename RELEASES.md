@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, and `v3.1.2`. The active release identity
-is `v3.1.2`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, and `v3.1.3`. The active release identity
+is `v3.1.3`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.1.3
+
+This release connects `TropicalDecisionDriver` / `MoiraDecisionDriver` directly into System 2 LATS Monte Carlo Tree Search with PUCT selection, integrates fast-path reflex tool safety gating with entropy/margin escalation (`normalized_entropy > 0.666`) into `Parliament` and `ReferenceMonitor`, exposes `--strategy lats` (`--lats-rollouts`, `--lats-depth`, `--puct-c`, `--escalation-threshold`) on `pandora run`, introduces zero-multiplication max-plus `TropicalVector` semantic projections and hybrid BM25 + tropical ranking across `semantic_indexer.rs`, `hnsw.rs` (`HnswVectorType::Tropical = 4`), and `context_vfs.rs` (L0–L4 and `pandora memory vfs tropical-search`), and updates `scripts/release_predecessor.py` to treat `v3.1.0` and `v3.1.1` as unpublished so `v3.1.2` is selected as the published predecessor under `#![forbid(unsafe_code)]`.
 
 ## v3.1.2
 

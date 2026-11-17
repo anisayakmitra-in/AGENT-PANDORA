@@ -354,7 +354,7 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
             } else {
                 index += 1;
                 args.get(index)
-                    .filter(|value| !value.starts_with('-'))
+                    .filter(|value| !value.starts_with('-') || value.parse::<f64>().is_ok())
                     .cloned()
                     .ok_or_else(|| CliError::usage(format!("option '--{name}' needs a value")))?
             };
@@ -425,6 +425,7 @@ fn is_flag(name: &str) -> bool {
             | "no-cache"
             | "quantized"
             | "simulate"
+            | "tropical"
     )
 }
 

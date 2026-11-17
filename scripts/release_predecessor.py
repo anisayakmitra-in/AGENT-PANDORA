@@ -10,7 +10,7 @@ _RELEASE_TAG = re.compile(
     r"(?:-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$"
 )
 _STAGE_ORDER = {"alpha": 0, "beta": 1, "rc": 2, None: 3}
-UNPUBLISHED_TAGS = {"v3.0.1"}
+UNPUBLISHED_TAGS = {"v3.0.1", "v3.1.0", "v3.1.1"}
 
 
 class ReleasePredecessorError(ValueError):

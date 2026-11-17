@@ -421,9 +421,10 @@ fn test_tier1_r4_workspace_version_and_documentation() {
 
     // Verify Cargo.toml version format
     let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("reads root Cargo.toml");
+    let expected_version = env!("CARGO_PKG_VERSION");
     assert!(
-        cargo_toml.contains("version = \"3.1.2\""),
-        "version 3.1.2 present in Cargo.toml"
+        cargo_toml.contains(&format!("version = \"{expected_version}\"")),
+        "version {expected_version} present in Cargo.toml"
     );
 
     // Verify CHANGELOG.md exists and documents v3.1.2

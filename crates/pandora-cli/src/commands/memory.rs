@@ -765,6 +765,7 @@ fn vfs(args: &[String]) -> Result<CommandResult, CliError> {
         "ls" => vfs_ls(&args[1..]),
         "cat" => vfs_cat(&args[1..]),
         "search" => vfs_search(&args[1..]),
+        "tropical-search" => vfs_tropical_search(&args[1..]),
         "index" => vfs_index(&args[1..]),
         "stats" => vfs_stats(&args[1..]),
         "hnsw-build" => vfs_hnsw_build(&args[1..]),
@@ -908,6 +909,7 @@ fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
             "intent",
             "reindex",
             "no-cache",
+            "tropical",
         ],
     )?;
     let query = if !parsed.positionals.is_empty() {
@@ -976,9 +978,13 @@ fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
         options = options.with_intent(intent);
     }
 
-    let search_results = vfs
-        .search_with_options(&query, &options)
-        .map_err(|e| CliError::execution(e.to_string(), json!({"query": query})))?;
+    let search_results = if parsed.has_flag("tropical") {
+        vfs.search_tropical_with_options(&query, &options)
+            .map_err(|e| CliError::execution(e.to_string(), json!({"query": query})))?
+    } else {
+        vfs.search_with_options(&query, &options)
+            .map_err(|e| CliError::execution(e.to_string(), json!({"query": query})))?
+    };
 
     let count = search_results.len();
     let results_json: Vec<serde_json::Value> = search_results
@@ -1005,6 +1011,16 @@ fn vfs_search(args: &[String]) -> Result<CommandResult, CliError> {
     });
 
     Ok(success("memory vfs search", payload, human))
+}
+
+fn vfs_tropical_search(args: &[String]) -> Result<CommandResult, CliError> {
+    let mut forwarded = args.to_vec();
+    if !forwarded.iter().any(|a| a == "--tropical") {
+        forwarded.insert(0, "--tropical".to_owned());
+    }
+    let mut res = vfs_search(&forwarded)?;
+    res.command = "memory vfs tropical-search";
+    Ok(res)
 }
 
 fn vfs_index(args: &[String]) -> Result<CommandResult, CliError> {

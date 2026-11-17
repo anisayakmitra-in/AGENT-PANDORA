@@ -121,6 +121,33 @@ pub fn simd_dot_product_128(a: &[f32; 128], b: &[f32; 128]) -> f32 {
     (sum0 + sum1) + (sum2 + sum3) + (sum4 + sum5) + (sum6 + sum7)
 }
 
+/// Computes tropical max-plus projection $\max_{i=0}^{127} (a_i + b_i)$ of two 128-dimensional vectors
+/// using 8-lane unrolled registers with zero multiplications under `#![forbid(unsafe_code)]`.
+pub fn simd_tropical_max_plus_128(a: &[f32; 128], b: &[f32; 128]) -> f32 {
+    let mut m0 = f32::NEG_INFINITY;
+    let mut m1 = f32::NEG_INFINITY;
+    let mut m2 = f32::NEG_INFINITY;
+    let mut m3 = f32::NEG_INFINITY;
+    let mut m4 = f32::NEG_INFINITY;
+    let mut m5 = f32::NEG_INFINITY;
+    let mut m6 = f32::NEG_INFINITY;
+    let mut m7 = f32::NEG_INFINITY;
+
+    for i in 0..16 {
+        let base = i * 8;
+        m0 = m0.max(a[base] + b[base]);
+        m1 = m1.max(a[base + 1] + b[base + 1]);
+        m2 = m2.max(a[base + 2] + b[base + 2]);
+        m3 = m3.max(a[base + 3] + b[base + 3]);
+        m4 = m4.max(a[base + 4] + b[base + 4]);
+        m5 = m5.max(a[base + 5] + b[base + 5]);
+        m6 = m6.max(a[base + 6] + b[base + 6]);
+        m7 = m7.max(a[base + 7] + b[base + 7]);
+    }
+
+    m0.max(m1).max(m2).max(m3).max(m4).max(m5).max(m6).max(m7)
+}
+
 /// Computes asymmetric dot product between an f32 query vector and an i8 quantized document vector,
 /// unrolled across 8 independent accumulators under `#![forbid(unsafe_code)]`.
 ///

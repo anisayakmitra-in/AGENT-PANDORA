@@ -2,6 +2,7 @@ pub use crate::hnsw::HnswIndexStats;
 use crate::hnsw::{
     HnswConfig, HnswError, HnswIndex, HnswVector, PVHN_HEADER_SIZE, PVHN_TRAILER_SIZE,
 };
+use crate::semantic_indexer::{TropicalHybridRanker, TropicalProjector, TropicalVector};
 pub use crate::semantic_memory::{ContextSearchOptions, HybridSearchResult, SearchResultItem};
 use crate::semantic_memory::{
     DenseFeatureHasher, HybridRrfRanker, QuantizedVector, SparseBm25Index,
@@ -111,12 +112,20 @@ pub fn compute_doc_fingerprint(doc: &VfsDoc) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Differential index tuple containing BM25 postings, tropical vectors, and legacy quantized vectors.
+pub type TropicalDifferentialIndex = (
+    SparseBm25Index,
+    Vec<(usize, TropicalVector)>,
+    Vec<(usize, QuantizedVector)>,
+);
+
 /// Incremental diff cache entry representing an indexed buffer in ContextVfs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CachedBufferEntry {
     pub uri: ContextUri,
     pub fingerprint: [u8; 32],
     pub vector: QuantizedVector,
+    pub tropical_vector: TropicalVector,
     pub doc_length: usize,
     pub term_frequencies: Vec<(String, u32)>,
 }
@@ -897,12 +906,14 @@ impl ContextVfs {
                 let doc_len = *index.bm25.doc_lengths().get(&idx).unwrap_or(&0);
                 let mut tfs = doc_term_freqs.remove(&idx).unwrap_or_default();
                 tfs.sort_by(|a, b| a.0.cmp(&b.0));
+                let tropical_vec = TropicalProjector::project(&doc.content);
                 cache.insert(
                     doc.uri.as_str().to_string(),
                     CachedBufferEntry {
                         uri: doc.uri.clone(),
                         fingerprint: fp,
                         vector: vec,
+                        tropical_vector: tropical_vec,
                         doc_length: doc_len,
                         term_frequencies: tfs,
                     },
@@ -955,6 +966,7 @@ impl ContextVfs {
                 let (doc_len, term_freqs) = extract_term_frequencies(&doc.content);
                 let f32_vec = hasher.vectorize(&doc.content);
                 let qv = QuantizedVector::quantize(&f32_vec);
+                let tropical_vec = TropicalProjector::project(&doc.content);
 
                 bm25.add_document_terms(idx, doc_len, &term_freqs);
                 doc_vectors.push((idx, qv));
@@ -965,6 +977,7 @@ impl ContextVfs {
                         uri: doc.uri.clone(),
                         fingerprint: fp,
                         vector: qv,
+                        tropical_vector: tropical_vec,
                         doc_length: doc_len,
                         term_frequencies: term_freqs,
                     },
@@ -973,6 +986,27 @@ impl ContextVfs {
         }
 
         Ok((bm25, doc_vectors))
+    }
+
+    /// Executes incremental differential indexing including zero-multiplication tropical projections.
+    pub fn build_index_differential_tropical(
+        &self,
+        docs: &[VfsDoc],
+    ) -> Result<TropicalDifferentialIndex, VfsError> {
+        let (bm25, doc_vectors) = self.build_index_differential(docs)?;
+        let cache = self
+            .diff_cache
+            .read()
+            .map_err(|_| VfsError::BackendError("poisoned diff_cache lock".into()))?;
+        let mut tropical_vectors = Vec::with_capacity(docs.len());
+        for (idx, doc) in docs.iter().enumerate() {
+            let tv = cache
+                .get(doc.uri.as_str())
+                .map(|entry| entry.tropical_vector)
+                .unwrap_or_else(|| TropicalProjector::project(&doc.content));
+            tropical_vectors.push((idx, tv));
+        }
+        Ok((bm25, tropical_vectors, doc_vectors))
     }
 
     /// Collects all mounted virtual documents across constitutional rules,
@@ -1330,7 +1364,15 @@ impl ContextVfs {
             };
 
             if let Some(hnsw_idx) = maybe_hnsw {
-                let q_hnsw = HnswVector::Quantized(QuantizedVector::quantize(&query_vec));
+                let uses_tropical = hnsw_idx
+                    .nodes()
+                    .first()
+                    .is_some_and(|n| n.vector.is_tropical());
+                let q_hnsw = if uses_tropical {
+                    HnswVector::Tropical(TropicalProjector::project(query))
+                } else {
+                    HnswVector::Quantized(QuantizedVector::quantize(&query_vec))
+                };
                 let ef = (options.limit * 2).max(64);
                 let top_k = (options.limit * 5).max(32).min(index_docs.len());
                 let hnsw_res = hnsw_idx.search(&q_hnsw, top_k, ef);
@@ -1384,6 +1426,117 @@ impl ContextVfs {
         }
 
         Ok(results)
+    }
+
+    /// Executes hybrid BM25 + Tropical Max-Plus semantic projection search across all mounted
+    /// L0–L4 memory records and virtual `pandora://` files, with fallback to legacy dense embeddings.
+    pub fn search_tropical(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResultItem>, VfsError> {
+        let options = ContextSearchOptions::new(limit);
+        self.search_tropical_with_options(query, &options)
+    }
+
+    /// Executes hybrid BM25 + Tropical Max-Plus semantic projection search with tier and intent filters.
+    pub fn search_tropical_with_options(
+        &self,
+        query: &str,
+        options: &ContextSearchOptions,
+    ) -> Result<Vec<SearchResultItem>, VfsError> {
+        if query.trim().is_empty() || options.limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let docs = self.collect_all_documents()?;
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (bm25, tropical_vectors, dense_vectors) =
+            self.build_index_differential_tropical(&docs)?;
+        let sparse_scores = bm25.score(query);
+        let query_trop = TropicalProjector::project(query);
+        let tropical_scores = TropicalProjector::score_docs(&query_trop, &tropical_vectors);
+
+        let dense_fallback = if tropical_scores.is_empty() {
+            let hasher = DenseFeatureHasher::new();
+            let query_dense = hasher.vectorize(query);
+            hasher.score_quantized_docs(&query_dense, &dense_vectors)
+        } else {
+            Vec::new()
+        };
+
+        let ranker = TropicalHybridRanker::new();
+        let fused = ranker.fuse_with_fallback(&sparse_scores, &tropical_scores, &dense_fallback);
+
+        let mut results = Vec::new();
+        for item in fused {
+            if item.hybrid_score < options.min_score {
+                continue;
+            }
+            if item.doc_id >= docs.len() {
+                continue;
+            }
+            let doc = &docs[item.doc_id];
+
+            if let Some(target_tier) = options.tier
+                && doc.tier != Some(target_tier)
+            {
+                continue;
+            }
+            if let Some(target_intent) = options.intent
+                && doc.intent != Some(target_intent)
+            {
+                continue;
+            }
+
+            let snippet = generate_snippet(&doc.content, query);
+            results.push(SearchResultItem {
+                uri: doc.uri.clone(),
+                title: doc.title.clone(),
+                snippet,
+                sparse_score: item.sparse_score,
+                dense_score: item.dense_score,
+                hybrid_score: item.hybrid_score,
+                tier: doc.tier,
+                intent: doc.intent,
+            });
+            if results.len() >= options.limit {
+                break;
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Constructs an HNSW graph index using zero-multiplication `TropicalVector` projections
+    /// across all mounted ContextVfs documents.
+    pub fn build_hnsw_index_tropical(
+        &self,
+        config: Option<HnswConfig>,
+    ) -> Result<HnswIndexStats, VfsError> {
+        let docs = self.collect_all_documents()?;
+        let (_bm25, tropical_vectors, _dense_vectors) =
+            self.build_index_differential_tropical(&docs)?;
+
+        let cfg = config.unwrap_or_default();
+        let mut index = HnswIndex::new(cfg);
+        let corpus_hash = compute_corpus_hash(&docs);
+        index.set_corpus_hash(corpus_hash);
+
+        for (doc_id, tv) in tropical_vectors {
+            index.insert(doc_id, HnswVector::Tropical(tv));
+        }
+
+        let stats = index.stats();
+        let arc_idx = Arc::new(index);
+        if let Ok(mut guard) = self.cached_hnsw_index.write() {
+            *guard = Some(arc_idx);
+        }
+
+        Ok(stats)
     }
 
     /// Constructs an HNSW graph index from all mounted ContextVfs documents.
@@ -1532,10 +1685,18 @@ impl ContextVfs {
 
         let index = self.load_or_build_hnsw_index()?;
 
-        let hasher = DenseFeatureHasher::new();
-        let query_f32 = hasher.vectorize(query);
-        let query_qv = QuantizedVector::quantize(&query_f32);
-        let query_vector = HnswVector::Quantized(query_qv);
+        let uses_tropical = index
+            .nodes()
+            .first()
+            .is_some_and(|n| n.vector.is_tropical());
+        let query_vector = if uses_tropical {
+            HnswVector::Tropical(TropicalProjector::project(query))
+        } else {
+            let hasher = DenseFeatureHasher::new();
+            let query_f32 = hasher.vectorize(query);
+            let query_qv = QuantizedVector::quantize(&query_f32);
+            HnswVector::Quantized(query_qv)
+        };
 
         let hnsw_results = index.search(&query_vector, limit, ef_search);
 
