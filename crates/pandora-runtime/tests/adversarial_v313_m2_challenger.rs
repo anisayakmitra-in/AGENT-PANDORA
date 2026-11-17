@@ -603,11 +603,15 @@ fn test_stress_reference_monitor_blocks_destructive_tools() {
     }
 
     // Attempting to consume an unissued permit must return UnknownPermit
+    let fake_nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()).saturating_add(1))
+        .unwrap_or(1);
     let fake_permit = EffectPermit::issue(
         PermitId::new("permit-fake").unwrap(),
         &request,
         1,
-        999,
+        fake_nonce,
         now,
         Timestamp::from_unix_seconds(now.as_unix_seconds() + 60),
     );
