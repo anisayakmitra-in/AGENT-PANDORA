@@ -432,9 +432,59 @@ pub struct AgentRunSummary {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LatsTurnTelemetry {
+    pub turn: u32,
+    pub tool_name: String,
+    pub escalated: bool,
+    pub rollouts: u32,
+    pub max_depth_reached: u32,
+    pub nodes_created: u64,
+    pub best_action: Option<usize>,
+    best_value_bits: u64,
+}
+
+impl LatsTurnTelemetry {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        turn: u32,
+        tool_name: impl Into<String>,
+        escalated: bool,
+        rollouts: u32,
+        max_depth_reached: u32,
+        nodes_created: u64,
+        best_action: Option<usize>,
+        best_value: f64,
+    ) -> Self {
+        Self {
+            turn,
+            tool_name: tool_name.into(),
+            escalated,
+            rollouts,
+            max_depth_reached,
+            nodes_created,
+            best_action,
+            best_value_bits: best_value.to_bits(),
+        }
+    }
+
+    pub fn best_value(&self) -> f64 {
+        f64::from_bits(self.best_value_bits)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LatsLoopConfig {
+    pub budget: crate::strategies::StrategyBudget,
+    pub puct_c: f64,
+    pub escalation_threshold: f64,
+    pub tropical_driver: Arc<crate::decision_engine::TropicalDecisionDriver>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct AgentRunEvidence {
     provider_metrics: Vec<ProviderCallMetrics>,
     context_receipt: Box<ContextReceipt>,
+    lats_telemetry: Vec<LatsTurnTelemetry>,
 }
 
 impl AgentRunSummary {
@@ -468,6 +518,10 @@ impl AgentRunSummary {
 
     pub fn context_receipt(&self) -> &ContextReceipt {
         self.evidence.context_receipt.as_ref()
+    }
+
+    pub fn lats_telemetry(&self) -> &[LatsTurnTelemetry] {
+        &self.evidence.lats_telemetry
     }
 
     pub fn messages(&self) -> &[ChatMessage] {
@@ -559,6 +613,7 @@ pub struct AgentLoop {
     max_tool_calls: u32,
     tools: ToolEngine,
     context: ContextEngine,
+    lats_config: Option<LatsLoopConfig>,
 }
 
 impl AgentLoop {
@@ -575,7 +630,17 @@ impl AgentLoop {
             max_tool_calls,
             tools: ToolEngine::with_builtins(),
             context: ContextEngine::new(),
+            lats_config: None,
         })
+    }
+
+    pub fn with_lats(mut self, config: LatsLoopConfig) -> Self {
+        self.lats_config = Some(config);
+        self
+    }
+
+    pub fn lats_config(&self) -> Option<&LatsLoopConfig> {
+        self.lats_config.as_ref()
     }
 
     pub fn with_context_cache(mut self, path: impl AsRef<Path>) -> Result<Self, AgentLoopError> {
@@ -870,6 +935,7 @@ impl AgentLoop {
         let mut runs = Vec::new();
         let mut provider_receipts = Vec::new();
         let mut provider_metrics = Vec::new();
+        let mut lats_telemetry = Vec::new();
         let mut turns = 0;
         let mut tool_calls: u32 = 0;
         let mut convergence = ConvergenceTracker::new();
@@ -889,6 +955,7 @@ impl AgentLoop {
                     &provider_receipts,
                     &provider_metrics,
                     &context_receipt,
+                    &lats_telemetry,
                     &messages,
                     persistent_context.as_ref(),
                     context_insert_index,
@@ -934,6 +1001,7 @@ impl AgentLoop {
                             &provider_receipts,
                             &provider_metrics,
                             &context_receipt,
+                            &lats_telemetry,
                             &messages,
                             persistent_context.as_ref(),
                             context_insert_index,
@@ -953,6 +1021,7 @@ impl AgentLoop {
                                 evidence: Arc::new(AgentRunEvidence {
                                     provider_metrics,
                                     context_receipt: Box::new(context_receipt.clone()),
+                                    lats_telemetry: lats_telemetry.clone(),
                                 }),
                                 messages: persisted_messages(
                                     &messages,
@@ -977,6 +1046,7 @@ impl AgentLoop {
                 &provider_receipts,
                 &provider_metrics,
                 &context_receipt,
+                &lats_telemetry,
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
@@ -1009,6 +1079,7 @@ impl AgentLoop {
                 &provider_receipts,
                 &provider_metrics,
                 &context_receipt,
+                &lats_telemetry,
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
@@ -1039,6 +1110,7 @@ impl AgentLoop {
                 &provider_receipts,
                 &provider_metrics,
                 &context_receipt,
+                &lats_telemetry,
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
@@ -1101,6 +1173,7 @@ impl AgentLoop {
                                     evidence: Arc::new(AgentRunEvidence {
                                         provider_metrics,
                                         context_receipt: Box::new(context_receipt.clone()),
+                                        lats_telemetry: lats_telemetry.clone(),
                                     }),
                                     messages: persisted_messages(
                                         &messages,
@@ -1124,6 +1197,7 @@ impl AgentLoop {
                     evidence: Arc::new(AgentRunEvidence {
                         provider_metrics,
                         context_receipt: Box::new(context_receipt.clone()),
+                        lats_telemetry: lats_telemetry.clone(),
                     }),
                     messages: persisted_messages(
                         &messages,
@@ -1153,20 +1227,111 @@ impl AgentLoop {
                     &provider_receipts,
                     &provider_metrics,
                     &context_receipt,
+                    &lats_telemetry,
                     &messages,
                     persistent_context.as_ref(),
                     context_insert_index,
                 )?;
-                match self.execute_tool(
-                    call,
-                    controller,
-                    &session,
-                    now,
-                    &mut runs,
-                    None,
-                    trusted_harness.as_ref(),
-                    &mut convergence,
-                )? {
+                let lats_denied = if let Some(lats) = &self.lats_config {
+                    let decision_engine =
+                        Arc::new(crate::decision_engine::SinglePassLogitEngine::with_driver(
+                            Arc::clone(&lats.tropical_driver)
+                                as Arc<dyn crate::decision_engine::DecisionDriver>,
+                        ));
+                    let lats_engine = crate::lats_engine::LatsEngine::new_with_tropical(
+                        lats.budget,
+                        Arc::clone(&lats.tropical_driver),
+                    )
+                    .with_puct(lats.puct_c)
+                    .with_escalation_threshold(lats.escalation_threshold);
+                    let parliament = crate::parliament::Parliament::new(1)
+                        .with_decision_engine(decision_engine)
+                        .with_lats_engine(Arc::new(lats_engine.clone()))
+                        .with_uncertainty_threshold(lats.escalation_threshold);
+                    if let Ok(gate) = parliament.evaluate_tool_safety(call.name(), call.arguments())
+                    {
+                        if gate.is_escalated() {
+                            let actions = [0usize, 1, 2];
+                            let labels = ["allow", "require_confirm", "reject"];
+                            let prompt = format!(
+                                "tool safety turn {turn}: {} {}",
+                                call.name(),
+                                call.arguments()
+                            );
+                            if let Ok(search) = lats_engine.search_with_tropical_prompt(
+                                &prompt,
+                                format!("turn:{turn}:{}", call.name()),
+                                &actions,
+                                &labels,
+                            ) {
+                                let denied = search.best_action == Some(2);
+                                lats_telemetry.push(LatsTurnTelemetry::new(
+                                    turn,
+                                    call.name(),
+                                    true,
+                                    search.metrics.rollouts,
+                                    search.metrics.max_depth_reached,
+                                    search.metrics.nodes_created,
+                                    search.best_action,
+                                    search.metrics.best_value,
+                                ));
+                                denied
+                            } else {
+                                false
+                            }
+                        } else {
+                            let (best_action, best_value, denied) = match gate {
+                                crate::parliament::ToolSafetyGateVerdict::Allow {
+                                    confidence,
+                                    ..
+                                } => (Some(0), confidence, false),
+                                crate::parliament::ToolSafetyGateVerdict::RequireConfirm {
+                                    confidence,
+                                    ..
+                                } => (Some(1), confidence, false),
+                                crate::parliament::ToolSafetyGateVerdict::Reject {
+                                    confidence,
+                                    ..
+                                } => (Some(2), confidence, true),
+                                crate::parliament::ToolSafetyGateVerdict::EscalateToSystem2 {
+                                    ..
+                                } => (None, 0.0, false),
+                            };
+                            lats_telemetry.push(LatsTurnTelemetry::new(
+                                turn,
+                                call.name(),
+                                false,
+                                0,
+                                0,
+                                1,
+                                best_action,
+                                best_value,
+                            ));
+                            denied
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                let tool_outcome = if lats_denied {
+                    ToolExecution::Output(
+                        "tool denied by System 2 LATS MCTS safety gate".to_owned(),
+                    )
+                } else {
+                    self.execute_tool(
+                        call,
+                        controller,
+                        &session,
+                        now,
+                        &mut runs,
+                        None,
+                        trusted_harness.as_ref(),
+                        &mut convergence,
+                    )?
+                };
+                match tool_outcome {
                     ToolExecution::Output(result) => {
                         let is_mod =
                             call.name() == "workspace.patch" || call.name() == "workspace.replace";
@@ -1198,6 +1363,7 @@ impl AgentLoop {
                             &provider_receipts,
                             &provider_metrics,
                             &context_receipt,
+                            &lats_telemetry,
                             &messages,
                             persistent_context.as_ref(),
                             context_insert_index,
@@ -1217,6 +1383,7 @@ impl AgentLoop {
                                 evidence: Arc::new(AgentRunEvidence {
                                     provider_metrics,
                                     context_receipt: Box::new(context_receipt.clone()),
+                                    lats_telemetry: lats_telemetry.clone(),
                                 }),
                                 messages: persisted_messages(
                                     &messages,
@@ -1822,6 +1989,7 @@ fn check_control(
     provider_receipts: &[pandora_types::EffectReceipt],
     provider_metrics: &[ProviderCallMetrics],
     context_receipt: &ContextReceipt,
+    lats_telemetry: &[LatsTurnTelemetry],
     messages: &[ChatMessage],
     persistent_context: Option<&ChatMessage>,
     context_insert_index: usize,
@@ -1843,6 +2011,7 @@ fn check_control(
                 evidence: Arc::new(AgentRunEvidence {
                     provider_metrics: provider_metrics.to_vec(),
                     context_receipt: Box::new(context_receipt.clone()),
+                    lats_telemetry: lats_telemetry.to_vec(),
                 }),
                 messages: persisted_messages(messages, persistent_context, context_insert_index),
             }),

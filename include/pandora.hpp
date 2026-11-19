@@ -34,6 +34,19 @@ struct Envelope {
     std::string raw_json;
 };
 
+struct LatsOptions {
+    uint32_t rollouts{10};
+    uint32_t depth{4};
+    double puct_c{1.4};
+    double escalation_threshold{0.15};
+};
+
+struct TropicalSearchOptions {
+    uint32_t limit{5};
+    std::string tier{};
+    std::string intent{};
+};
+
 class Client {
 public:
     explicit Client(std::string launcher_path = "pandora")
@@ -116,6 +129,74 @@ public:
         const std::array<float, kDenseDimension>& b
     ) const noexcept {
         return pandora_simd_dot_product_128_scalar(a.data(), b.data());
+    }
+
+    [[nodiscard]] float TropicalMaxPlus(
+        const std::array<float, kDenseDimension>& a,
+        const std::array<float, kDenseDimension>& b
+    ) const noexcept {
+        return pandora_tropical_max_plus_128(a.data(), b.data());
+    }
+
+    [[nodiscard]] std::vector<std::string> BuildLatsArgs(
+        const std::string& task,
+        const LatsOptions& options = {}
+    ) const {
+        pandora_lats_options_t c_opts{
+            .rollouts = options.rollouts,
+            .depth = options.depth,
+            .puct_c = options.puct_c,
+            .escalation_threshold = options.escalation_threshold,
+        };
+        std::array<const char*, 16> argv{};
+        std::array<char, 256> scratch{};
+        size_t argc = 0;
+        if (pandora_build_lats_args(
+                task.c_str(),
+                &c_opts,
+                argv.data(),
+                argv.size(),
+                &argc,
+                scratch.data(),
+                scratch.size()) != 0) {
+            throw Exception("Failed to build LATS CLI arguments");
+        }
+        std::vector<std::string> out;
+        out.reserve(argc);
+        for (size_t i = 0; i < argc; ++i) {
+            out.emplace_back(argv[i]);
+        }
+        return out;
+    }
+
+    [[nodiscard]] std::vector<std::string> BuildTropicalSearchArgs(
+        const std::string& query,
+        const TropicalSearchOptions& options = {}
+    ) const {
+        pandora_tropical_search_options_t c_opts{
+            .limit = options.limit,
+            .tier = options.tier.empty() ? nullptr : options.tier.c_str(),
+            .intent = options.intent.empty() ? nullptr : options.intent.c_str(),
+        };
+        std::array<const char*, 16> argv{};
+        std::array<char, 128> scratch{};
+        size_t argc = 0;
+        if (pandora_build_tropical_search_args(
+                query.c_str(),
+                &c_opts,
+                argv.data(),
+                argv.size(),
+                &argc,
+                scratch.data(),
+                scratch.size()) != 0) {
+            throw Exception("Failed to build tropical-search CLI arguments");
+        }
+        std::vector<std::string> out;
+        out.reserve(argc);
+        for (size_t i = 0; i < argc; ++i) {
+            out.emplace_back(argv[i]);
+        }
+        return out;
     }
 
     [[nodiscard]] bool HasAvx2() const noexcept {

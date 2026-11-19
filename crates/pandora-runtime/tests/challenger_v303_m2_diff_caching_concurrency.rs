@@ -574,7 +574,11 @@ fn test_empirical_v1_backward_compatibility_and_transparent_upgrade() {
 
     // 5. Verify upgraded Version 2 index stats
     let stats_v2 = read_index_stats(&index_file, Some(&vfs)).expect("read stats v2");
-    assert_eq!(stats_v2.version, 2, "index must be upgraded to version 2");
+    assert_eq!(
+        stats_v2.version,
+        pandora_runtime::VFS_INDEX_VERSION,
+        "index must be upgraded to active PVFS version"
+    );
     assert_eq!(stats_v2.doc_count as usize, doc_count);
     assert_eq!(
         stats_v2.vector_bytes,
@@ -589,13 +593,13 @@ fn test_empirical_v1_backward_compatibility_and_transparent_upgrade() {
     assert!(stats_v2.checksum_valid);
     assert!(stats_v2.is_fresh);
 
-    // Exact file size reduction
-    let v2_bytes = std::fs::read(&index_file).expect("read v2 bytes");
-    let file_diff = v1_bytes.len() - v2_bytes.len();
-    assert_eq!(
-        file_diff,
-        doc_count * (512 - 132),
-        "file reduction must be exactly doc_count * 380 bytes"
+    // Upgraded V3 index persists both 132-byte quantized and 512-byte tropical vectors
+    let v3_bytes = std::fs::read(&index_file).expect("read upgraded index bytes");
+    assert!(
+        v3_bytes.len() > v1_bytes.len(),
+        "V3 index ({} bytes) must exceed V1 ({} bytes) due to persisted 512B tropical vectors",
+        v3_bytes.len(),
+        v1_bytes.len()
     );
 
     // Subsequent search produces identical top result
@@ -983,7 +987,7 @@ fn test_empirical_corrupt_binary_index_fuzzing_no_panics() {
     }
 
     // 3. Corrupt Version (e.g. 0, 3, 4, 9999)
-    let bad_versions = [0u32, 3u32, 4u32, 9999u32];
+    let bad_versions = [0u32, 4u32, 99u32, 9999u32];
     for ver in bad_versions {
         let mut tampered = valid_bytes.clone();
         tampered[4..8].copy_from_slice(&ver.to_le_bytes());

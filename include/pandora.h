@@ -1,6 +1,6 @@
 /**
  * @file pandora.h
- * @brief Stable C ABI Header for AGENT-PANDORA v3.0.10.
+ * @brief Stable C ABI Header for AGENT-PANDORA v3.1.3.
  *
  * Provides universal C FFI exports, JSON-RPC envelope structures,
  * and hardware SIMD vector operations.
@@ -90,6 +90,82 @@ bool pandora_cpuid_has_avx2(void);
  * Checks whether the host CPU supports ARM64 NEON instructions.
  */
 bool pandora_cpu_has_neon(void);
+
+/* -------------------------------------------------------------------------
+ * Additive Phase 4 ABI Helpers (strictly backward-compatible with v3.1.3)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Options for constructing `pandora run --strategy lats` CLI argument vectors.
+ * Pass 0 / 0.0 for optional numeric fields to omit the flag and use CLI defaults (negative or non-finite floats return -1).
+ */
+typedef struct pandora_lats_options {
+    uint32_t rollouts;
+    uint32_t depth;
+    double puct_c;
+    double escalation_threshold;
+} pandora_lats_options_t;
+
+/**
+ * Options for constructing `pandora memory vfs tropical-search` CLI argument vectors.
+ * Pass 0 or NULL to omit optional flags.
+ */
+typedef struct pandora_tropical_search_options {
+    uint32_t limit;
+    const char* tier;
+    const char* intent;
+} pandora_tropical_search_options_t;
+
+/**
+ * Builds a `--json` CLI argv vector for `pandora run --strategy lats`.
+ *
+ * @param task Non-empty task prompt string.
+ * @param options Optional LATS strategy parameters (NULL uses CLI defaults).
+ * @param out_argv Caller-allocated array receiving pointers into static literals / `scratch`.
+ * @param max_args Capacity of `out_argv`.
+ * @param out_argc Receives the number of populated arguments.
+ * @param scratch Caller-allocated buffer for formatted numeric option strings.
+ * @param scratch_len Capacity of `scratch` in bytes.
+ * @return 0 on success, -1 on invalid/NULL inputs, -2 if buffers are too small.
+ */
+int pandora_build_lats_args(
+    const char* task,
+    const pandora_lats_options_t* options,
+    const char** out_argv,
+    size_t max_args,
+    size_t* out_argc,
+    char* scratch,
+    size_t scratch_len
+);
+
+/**
+ * Builds a `--json` CLI argv vector for `pandora memory vfs tropical-search`.
+ *
+ * @param query Non-empty search query string.
+ * @param options Optional tropical search filters (NULL uses CLI defaults).
+ * @param out_argv Caller-allocated array receiving pointers into static literals / `scratch`.
+ * @param max_args Capacity of `out_argv`.
+ * @param out_argc Receives the number of populated arguments.
+ * @param scratch Caller-allocated buffer for formatted numeric option strings.
+ * @param scratch_len Capacity of `scratch` in bytes.
+ * @return 0 on success, -1 on invalid/NULL inputs, -2 if buffers are too small.
+ */
+int pandora_build_tropical_search_args(
+    const char* query,
+    const pandora_tropical_search_options_t* options,
+    const char** out_argv,
+    size_t max_args,
+    size_t* out_argc,
+    char* scratch,
+    size_t scratch_len
+);
+
+/**
+ * Zero-multiplication 128-dimensional Tropical Max-Plus inner product:
+ *   max_{i=0..127} (a[i] + b[i])
+ * Returns 0.0f if either pointer is NULL, and skips NaN coordinates.
+ */
+float pandora_tropical_max_plus_128(const float* a, const float* b);
 
 #ifdef __cplusplus
 }

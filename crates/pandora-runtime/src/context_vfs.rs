@@ -26,7 +26,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const VFS_INDEX_MAGIC: &[u8; 4] = b"PVFS";
 pub const VFS_INDEX_VERSION_V1: u32 = 1;
 pub const VFS_INDEX_VERSION_V2: u32 = 2;
-pub const VFS_INDEX_VERSION: u32 = VFS_INDEX_VERSION_V2;
+pub const VFS_INDEX_VERSION_V3: u32 = 3;
+pub const VFS_INDEX_VERSION: u32 = VFS_INDEX_VERSION_V3;
 pub const VFS_INDEX_HEADER_SIZE: usize = 68;
 pub const VFS_INDEX_TRAILER_SIZE: usize = 32;
 pub const VFS_DENSE_DIMENSION: u32 = 128;
@@ -143,6 +144,7 @@ pub struct DeserializedVfsIndex {
     pub corpus_hash: [u8; 32],
     pub docs: Vec<VfsDoc>,
     pub doc_vectors: Vec<(usize, QuantizedVector)>,
+    pub tropical_vectors: Vec<(usize, TropicalVector)>,
     pub bm25: SparseBm25Index,
 }
 
@@ -906,7 +908,11 @@ impl ContextVfs {
                 let doc_len = *index.bm25.doc_lengths().get(&idx).unwrap_or(&0);
                 let mut tfs = doc_term_freqs.remove(&idx).unwrap_or_default();
                 tfs.sort_by(|a, b| a.0.cmp(&b.0));
-                let tropical_vec = TropicalProjector::project(&doc.content);
+                let tropical_vec = index
+                    .tropical_vectors
+                    .get(idx)
+                    .map(|(_, tv)| *tv)
+                    .unwrap_or_else(|| TropicalProjector::project(&doc.content));
                 cache.insert(
                     doc.uri.as_str().to_string(),
                     CachedBufferEntry {
@@ -1175,7 +1181,8 @@ impl ContextVfs {
     /// atomically to disk at the specified path using differential indexing.
     pub fn save_index_to_disk(&self, index_path: &Path) -> Result<(), VfsError> {
         let docs = self.collect_all_documents()?;
-        let (bm25, doc_vectors) = self.build_index_differential(&docs)?;
+        let (bm25, tropical_vectors, doc_vectors) =
+            self.build_index_differential_tropical(&docs)?;
 
         let corpus_hash = compute_corpus_hash(&docs);
         let created_at_unix = SystemTime::now()
@@ -1183,7 +1190,14 @@ impl ContextVfs {
             .unwrap_or_default()
             .as_secs();
 
-        let bytes = serialize_vfs_index(&docs, &bm25, &doc_vectors, corpus_hash, created_at_unix)?;
+        let bytes = serialize_vfs_index_v3(
+            &docs,
+            &bm25,
+            &doc_vectors,
+            &tropical_vectors,
+            corpus_hash,
+            created_at_unix,
+        )?;
 
         if let Some(parent) = index_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -1216,6 +1230,7 @@ impl ContextVfs {
             corpus_hash,
             docs,
             doc_vectors,
+            tropical_vectors,
             bm25,
         };
         if let Ok(mut cache) = self.cached_index.write() {
@@ -1651,8 +1666,8 @@ impl ContextVfs {
             }
         }
 
-        // 3. Stale or missing: build and save
-        self.build_hnsw_index(None)?;
+        // 3. Stale or missing: build tropical HNSW index and save
+        self.build_hnsw_index_tropical(None)?;
         let _ = self.save_hnsw_index(Some(&index_path))?;
 
         if let Ok(guard) = self.cached_hnsw_index.read() {
@@ -1836,11 +1851,52 @@ pub fn serialize_vfs_index(
     corpus_hash: [u8; 32],
     created_at_unix: u64,
 ) -> Result<Vec<u8>, VfsError> {
+    serialize_vfs_index_with_version(
+        VFS_INDEX_VERSION_V2,
+        docs,
+        bm25,
+        doc_vectors,
+        &[],
+        corpus_hash,
+        created_at_unix,
+    )
+}
+
+/// Serializes documents, BM25 postings, Int8 quantized vectors, and 128-d `TropicalVector`
+/// projections into the `PVFS` Version 3 binary layout with SHA-256 integrity trailer.
+pub fn serialize_vfs_index_v3(
+    docs: &[VfsDoc],
+    bm25: &SparseBm25Index,
+    doc_vectors: &[(usize, QuantizedVector)],
+    tropical_vectors: &[(usize, TropicalVector)],
+    corpus_hash: [u8; 32],
+    created_at_unix: u64,
+) -> Result<Vec<u8>, VfsError> {
+    serialize_vfs_index_with_version(
+        VFS_INDEX_VERSION_V3,
+        docs,
+        bm25,
+        doc_vectors,
+        tropical_vectors,
+        corpus_hash,
+        created_at_unix,
+    )
+}
+
+fn serialize_vfs_index_with_version(
+    version: u32,
+    docs: &[VfsDoc],
+    bm25: &SparseBm25Index,
+    doc_vectors: &[(usize, QuantizedVector)],
+    tropical_vectors: &[(usize, TropicalVector)],
+    corpus_hash: [u8; 32],
+    created_at_unix: u64,
+) -> Result<Vec<u8>, VfsError> {
     let mut buffer = Vec::new();
 
-    // 1. Header (68 bytes) - Version 2
+    // 1. Header (68 bytes)
     buffer.extend_from_slice(VFS_INDEX_MAGIC);
-    buffer.extend_from_slice(&VFS_INDEX_VERSION.to_le_bytes());
+    buffer.extend_from_slice(&version.to_le_bytes());
     buffer.extend_from_slice(&created_at_unix.to_le_bytes());
     let doc_count = docs.len() as u32;
     buffer.extend_from_slice(&doc_count.to_le_bytes());
@@ -1929,7 +1985,18 @@ pub fn serialize_vfs_index(
         }
     }
 
-    // 4. Trailer (32 bytes): SHA-256 checksum over byte 0..end of postings table
+    // 3b. Version 3 Tropical Vector Table (512 bytes per doc)
+    if version == VFS_INDEX_VERSION_V3 {
+        for (idx, doc) in docs.iter().enumerate() {
+            let tv = tropical_vectors
+                .get(idx)
+                .map(|(_, v)| *v)
+                .unwrap_or_else(|| TropicalProjector::project(&doc.content));
+            buffer.extend_from_slice(&tv.to_bytes());
+        }
+    }
+
+    // 4. Trailer (32 bytes): SHA-256 checksum over byte 0..end of payload
     let checksum = Sha256::digest(&buffer);
     buffer.extend_from_slice(&checksum);
 
@@ -1937,7 +2004,7 @@ pub fn serialize_vfs_index(
 }
 
 /// Deserializes a binary VFS index from byte slice, validating the 32-byte SHA-256 trailer checksum.
-/// Supports both Version 1 (512 bytes per doc) and Version 2 (132 bytes per doc).
+/// Supports Version 1 (512 bytes per doc), Version 2 (132 bytes per doc), and Version 3 (Quantized + Tropical).
 pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsError> {
     if bytes.len() < VFS_INDEX_HEADER_SIZE + VFS_INDEX_TRAILER_SIZE {
         return Err(VfsError::BackendError(
@@ -1967,7 +2034,10 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
 
     let version = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
     cursor += 4;
-    if version != VFS_INDEX_VERSION_V1 && version != VFS_INDEX_VERSION_V2 {
+    if version != VFS_INDEX_VERSION_V1
+        && version != VFS_INDEX_VERSION_V2
+        && version != VFS_INDEX_VERSION_V3
+    {
         return Err(VfsError::BackendError(format!(
             "unsupported index version: {version}"
         )));
@@ -2166,6 +2236,28 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
         postings.insert(term, term_postings);
     }
 
+    let tropical_vectors = if version == VFS_INDEX_VERSION_V3 {
+        let mut tvecs = Vec::with_capacity(doc_count as usize);
+        const TROP_BYTES: usize = crate::semantic_indexer::TROPICAL_DIMENSION * 4;
+        for doc_id in 0..(doc_count as usize) {
+            if cursor + TROP_BYTES > payload_len {
+                return Err(VfsError::BackendError(
+                    "unexpected EOF reading tropical vector (v3)".into(),
+                ));
+            }
+            let tv = TropicalVector::from_bytes(&bytes[cursor..cursor + TROP_BYTES])
+                .map_err(VfsError::BackendError)?;
+            cursor += TROP_BYTES;
+            tvecs.push((doc_id, tv));
+        }
+        tvecs
+    } else {
+        doc_vectors
+            .iter()
+            .map(|(doc_id, qv)| (*doc_id, TropicalVector::from_quantized_fallback(qv)))
+            .collect()
+    };
+
     if cursor != payload_len {
         return Err(VfsError::BackendError(format!(
             "index parsing incomplete: cursor at {cursor}, expected {payload_len}"
@@ -2190,6 +2282,7 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
         corpus_hash,
         docs,
         doc_vectors,
+        tropical_vectors,
         bm25,
     })
 }
@@ -2247,15 +2340,16 @@ pub fn read_index_stats(
         checksum_valid
     };
 
-    let (vector_bytes, vector_bytes_saved) = if version == VFS_INDEX_VERSION_V2 {
-        let actual = (doc_count as u64) * (VFS_QUANTIZED_VECTOR_SIZE as u64);
-        let baseline = (doc_count as u64) * (dense_dimension as u64 * 4);
-        let saved = baseline.saturating_sub(actual);
-        (actual, saved)
-    } else {
-        let actual = (doc_count as u64) * (dense_dimension as u64 * 4);
-        (actual, 0)
-    };
+    let (vector_bytes, vector_bytes_saved) =
+        if version == VFS_INDEX_VERSION_V2 || version == VFS_INDEX_VERSION_V3 {
+            let actual = (doc_count as u64) * (VFS_QUANTIZED_VECTOR_SIZE as u64);
+            let baseline = (doc_count as u64) * (dense_dimension as u64 * 4);
+            let saved = baseline.saturating_sub(actual);
+            (actual, saved)
+        } else {
+            let actual = (doc_count as u64) * (dense_dimension as u64 * 4);
+            (actual, 0)
+        };
 
     let (cache_hits, cache_misses) = if let Some(vfs) = vfs {
         vfs.diff_cache_stats()
@@ -2703,7 +2797,7 @@ mod tests {
         assert!(stats.checksum_valid);
         assert!(stats.is_fresh);
         assert_eq!(stats.dense_dimension, 128);
-        assert_eq!(stats.version, 2);
+        assert_eq!(stats.version, VFS_INDEX_VERSION);
         assert!(stats.vector_bytes > 0);
         assert!(stats.vector_bytes_saved > 0);
 
@@ -2992,7 +3086,7 @@ mod tests {
         vfs.save_index_to_disk(&index_path).unwrap();
 
         let stats = read_index_stats(&index_path, Some(&vfs)).unwrap();
-        assert_eq!(stats.version, 2);
+        assert_eq!(stats.version, VFS_INDEX_VERSION);
         assert_eq!(stats.doc_count as usize, doc_count);
 
         // Exact coordinate reduction: 128 bytes vs 512 bytes = 75.00%
@@ -3326,6 +3420,124 @@ mod tests {
 
         let stats = vfs.hnsw_index_stats().unwrap();
         assert_eq!(stats.node_count, vfs.collect_all_documents().unwrap().len());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_pvfs_v3_roundtrip_and_tropical_vector_fidelity() {
+        let vfs = ContextVfs::new();
+        for i in 0..5 {
+            vfs.add_memory_record(make_test_record(
+                &format!("pvfs-v3-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!("Tropical semiring max-plus algebra persistence record {i}"),
+            ));
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_pvfs_v3_roundtrip_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+        vfs.save_index_to_disk(&index_path).unwrap();
+
+        let bytes = std::fs::read(&index_path).unwrap();
+        let deser = deserialize_vfs_index(&bytes).unwrap();
+        assert_eq!(deser.version, VFS_INDEX_VERSION_V3);
+        let docs = vfs.collect_all_documents().unwrap();
+        assert_eq!(deser.doc_vectors.len(), docs.len());
+        assert_eq!(deser.tropical_vectors.len(), docs.len());
+
+        // Verify persisted 512B TropicalVectors match TropicalProjector::project bit-for-bit
+        // (proving direct v3 persistence rather than lazy from_quantized_fallback).
+        for (doc_idx, doc) in docs.iter().enumerate() {
+            let expected_tv = TropicalProjector::project(&doc.content);
+            let (_, actual_tv) = deser.tropical_vectors[doc_idx];
+            assert_eq!(
+                actual_tv.to_bytes(),
+                expected_tv.to_bytes(),
+                "doc {doc_idx} tropical vector must roundtrip losslessly without fallback"
+            );
+        }
+
+        // Hydrate a fresh ContextVfs from the v3 index and confirm zero cold-start misses
+        let vfs2 = ContextVfs::new();
+        for i in 0..5 {
+            vfs2.add_memory_record(make_test_record(
+                &format!("pvfs-v3-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!("Tropical semiring max-plus algebra persistence record {i}"),
+            ));
+        }
+        vfs2.populate_diff_cache_from_index(&deser);
+        vfs2.reset_diff_cache_stats();
+        vfs2.save_index_to_disk(&index_path).unwrap();
+        let (hits, misses) = vfs2.diff_cache_stats();
+        assert_eq!(hits as usize, docs.len());
+        assert_eq!(misses, 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_or_build_hnsw_index_defaults_to_tropical() {
+        let vfs = ContextVfs::new();
+        vfs.add_memory_record(make_test_record(
+            "trop-hnsw-rust",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Rust borrow checker ownership lifetimes and memory safety invariants",
+        ));
+        vfs.add_memory_record(make_test_record(
+            "trop-hnsw-mcts",
+            MemoryTier::L2,
+            MemoryIntent::Procedure,
+            "Tropical semiring PUCT Monte Carlo tree search rollout pruning",
+        ));
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_hnsw_trop_default_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let hnsw_path = temp_dir.join("vfs_hnsw.idx");
+        vfs.set_hnsw_index_path(&hnsw_path);
+
+        let built = vfs.load_or_build_hnsw_index().unwrap();
+        assert!(!built.is_empty());
+        assert!(
+            built.nodes().iter().all(|n| n.vector.is_tropical()),
+            "load_or_build_hnsw_index must default to Tropical vectors on fresh build"
+        );
+        assert!(hnsw_path.is_file());
+
+        // Cold reload from PVHN disk file preserves Tropical vector representation
+        let disk_bytes = std::fs::read(&hnsw_path).unwrap();
+        let reloaded = HnswIndex::from_pvhn_bytes(&disk_bytes).unwrap();
+        assert_eq!(reloaded.len(), built.len());
+        assert!(
+            reloaded.nodes().iter().all(|n| n.vector.is_tropical()),
+            "reloaded PVHN index must preserve Tropical vectors"
+        );
+
+        let hits = vfs
+            .search_hnsw("Tropical semiring PUCT rollout", 2, 32)
+            .unwrap();
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].title, "trop-hnsw-mcts");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

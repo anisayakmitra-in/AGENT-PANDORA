@@ -1098,7 +1098,7 @@ pub(super) fn execute_agent_core(
             provider.manifest().id().as_str(),
         )
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
-    let loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
+    let mut loop_engine = AgentLoop::new(options.max_turns, options.max_tool_calls)
         .and_then(|engine| engine.with_context_cache(config.data_dir().join("context-cache.json")))
         .map_err(|error| CliError::internal(error.to_string(), json!({})))?;
     let active_lease = acquire_agent_lease(config, session, options.max_tool_calls)?;
@@ -1141,6 +1141,12 @@ pub(super) fn execute_agent_core(
             10_000_000,
         )
         .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
+        loop_engine = loop_engine.with_lats(pandora_runtime::LatsLoopConfig {
+            budget,
+            puct_c,
+            escalation_threshold,
+            tropical_driver: std::sync::Arc::clone(&tropical_driver),
+        });
         let lats_engine =
             pandora_runtime::LatsEngine::new_with_tropical(budget, tropical_driver.clone())
                 .with_puct(puct_c)
@@ -1240,6 +1246,13 @@ pub(super) fn execute_agent_core(
                     memory_evidence_recorded += 1;
                 }
             }
+            let lats_json = aggregate_lats_metrics_json(
+                lats_metrics.as_ref(),
+                lats_escalated,
+                summary.lats_telemetry(),
+            );
+            let (total_rollouts, max_depth, best_val) =
+                aggregate_lats_summary(lats_metrics.as_ref(), summary.lats_telemetry());
             Ok(success(
                 "run",
                 json!({
@@ -1247,14 +1260,7 @@ pub(super) fn execute_agent_core(
                     "session_id": session.id(),
                     "status": "completed",
                     "strategy": options.strategy.unwrap_or("react"),
-                    "lats_metrics": lats_metrics.as_ref().map(|m| json!({
-                        "rollouts": m.rollouts,
-                        "max_depth_reached": m.max_depth_reached,
-                        "nodes_created": m.nodes_created,
-                        "best_action": m.best_action,
-                        "best_value": m.best_value,
-                        "escalated": lats_escalated,
-                    })),
+                    "lats_metrics": lats_json,
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
@@ -1288,12 +1294,9 @@ pub(super) fn execute_agent_core(
                     format!(
                         "Completed agent task in {} [strategy: lats, rollouts: {}, depth: {}, best_value: {:.2}]",
                         session.id(),
-                        lats_metrics.as_ref().map(|m| m.rollouts).unwrap_or(0),
-                        lats_metrics
-                            .as_ref()
-                            .map(|m| m.max_depth_reached)
-                            .unwrap_or(0),
-                        lats_metrics.as_ref().map(|m| m.best_value).unwrap_or(0.0),
+                        total_rollouts,
+                        max_depth,
+                        best_val,
                     )
                 } else {
                     format!("Completed agent task in {}", session.id())
@@ -1342,14 +1345,11 @@ pub(super) fn execute_agent_core(
                     "agent": true,
                     "session_id": session.id(),
                     "strategy": options.strategy.unwrap_or("react"),
-                    "lats_metrics": lats_metrics.as_ref().map(|m| json!({
-                        "rollouts": m.rollouts,
-                        "max_depth_reached": m.max_depth_reached,
-                        "nodes_created": m.nodes_created,
-                        "best_action": m.best_action,
-                        "best_value": m.best_value,
-                        "escalated": lats_escalated,
-                    })),
+                    "lats_metrics": aggregate_lats_metrics_json(
+                        lats_metrics.as_ref(),
+                        lats_escalated,
+                        summary.lats_telemetry(),
+                    ),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
                     "turn_budget": options.max_turns,
@@ -1407,14 +1407,11 @@ pub(super) fn execute_agent_core(
                     "agent": true,
                     "session_id": session.id(),
                     "strategy": options.strategy.unwrap_or("react"),
-                    "lats_metrics": lats_metrics.as_ref().map(|m| json!({
-                        "rollouts": m.rollouts,
-                        "max_depth_reached": m.max_depth_reached,
-                        "nodes_created": m.nodes_created,
-                        "best_action": m.best_action,
-                        "best_value": m.best_value,
-                        "escalated": lats_escalated,
-                    })),
+                    "lats_metrics": aggregate_lats_metrics_json(
+                        lats_metrics.as_ref(),
+                        lats_escalated,
+                        summary.lats_telemetry(),
+                    ),
                     "resume": {
                         "session_id": session.id(),
                         "next": "rerun pandora run --agent with --session <session_id> to continue this persisted transcript"
@@ -1503,6 +1500,84 @@ fn effect_receipts_json(receipts: &[pandora_types::EffectReceipt]) -> Value {
             })
             .collect::<Vec<_>>()
     )
+}
+
+fn aggregate_lats_summary(
+    pre_loop: Option<&pandora_runtime::LatsSearchMetrics>,
+    telemetry: &[pandora_runtime::LatsTurnTelemetry],
+) -> (u32, u32, f64) {
+    let turn_rollouts: u32 = telemetry
+        .iter()
+        .fold(0u32, |acc, t| acc.saturating_add(t.rollouts));
+    let total_rollouts = pre_loop
+        .map(|m| m.rollouts)
+        .unwrap_or(0)
+        .saturating_add(turn_rollouts);
+    let max_depth = telemetry
+        .iter()
+        .map(|t| t.max_depth_reached)
+        .fold(pre_loop.map(|m| m.max_depth_reached).unwrap_or(0), u32::max);
+    let best_value = pre_loop.map(|m| m.best_value).unwrap_or_else(|| {
+        telemetry
+            .iter()
+            .map(|t| t.best_value())
+            .filter(|v| v.is_finite())
+            .fold(0.0f64, f64::max)
+    });
+    (total_rollouts, max_depth, best_value)
+}
+
+fn aggregate_lats_metrics_json(
+    pre_loop: Option<&pandora_runtime::LatsSearchMetrics>,
+    pre_escalated: bool,
+    telemetry: &[pandora_runtime::LatsTurnTelemetry],
+) -> Value {
+    if pre_loop.is_none() && telemetry.is_empty() {
+        return Value::Null;
+    }
+    let (rollouts, max_depth_reached, best_value) = aggregate_lats_summary(pre_loop, telemetry);
+    let turn_rollouts: u32 = telemetry
+        .iter()
+        .fold(0u32, |acc, t| acc.saturating_add(t.rollouts));
+    let turn_escalations = telemetry.iter().filter(|t| t.escalated).count();
+    let nodes_created = pre_loop
+        .map(|m| m.nodes_created)
+        .unwrap_or(0)
+        .saturating_add(
+            telemetry
+                .iter()
+                .fold(0u64, |acc, t| acc.saturating_add(t.nodes_created)),
+        );
+    let best_action = pre_loop
+        .and_then(|m| m.best_action)
+        .or_else(|| telemetry.last().and_then(|t| t.best_action));
+    let escalated = pre_escalated || telemetry.iter().any(|t| t.escalated);
+    let turns_json: Vec<Value> = telemetry
+        .iter()
+        .map(|t| {
+            json!({
+                "turn": t.turn,
+                "tool_name": t.tool_name,
+                "escalated": t.escalated,
+                "rollouts": t.rollouts,
+                "max_depth_reached": t.max_depth_reached,
+                "nodes_created": t.nodes_created,
+                "best_action": t.best_action,
+                "best_value": t.best_value(),
+            })
+        })
+        .collect();
+    json!({
+        "rollouts": rollouts,
+        "max_depth_reached": max_depth_reached,
+        "nodes_created": nodes_created,
+        "best_action": best_action,
+        "best_value": best_value,
+        "escalated": escalated,
+        "turn_rollouts": turn_rollouts,
+        "turn_escalations": turn_escalations,
+        "turns": turns_json,
+    })
 }
 
 const PLANNER_TEMPLATE_TARGET: &str = "planner.system";
@@ -3307,5 +3382,52 @@ mod tests {
         assert!(lats_metrics["escalated"].is_boolean());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_aggregate_lats_metrics_includes_turn_telemetry() {
+        assert!(aggregate_lats_metrics_json(None, false, &[]).is_null());
+
+        let pre = pandora_runtime::LatsSearchMetrics {
+            rollouts: 10,
+            max_depth_reached: 2,
+            nodes_created: 15,
+            best_action: Some(0),
+            best_value: 0.91,
+        };
+        let telemetry = vec![
+            pandora_runtime::LatsTurnTelemetry::new(
+                1,
+                "workspace.read",
+                false,
+                0,
+                0,
+                1,
+                Some(0),
+                0.99,
+            ),
+            pandora_runtime::LatsTurnTelemetry::new(
+                2,
+                "workspace.patch",
+                true,
+                6,
+                4,
+                12,
+                Some(2),
+                0.94,
+            ),
+        ];
+
+        let agg = aggregate_lats_metrics_json(Some(&pre), false, &telemetry);
+        assert_eq!(agg["rollouts"], 16);
+        assert_eq!(agg["turn_rollouts"], 6);
+        assert_eq!(agg["turn_escalations"], 1);
+        assert_eq!(agg["max_depth_reached"], 4);
+        assert_eq!(agg["nodes_created"], 28);
+        assert_eq!(agg["best_action"], 0);
+        assert_eq!(agg["best_value"], 0.91);
+        assert_eq!(agg["escalated"], true);
+        assert_eq!(agg["turns"].as_array().unwrap().len(), 2);
+        assert_eq!(agg["turns"][1]["tool_name"], "workspace.patch");
     }
 }

@@ -1990,3 +1990,336 @@ fn agent_loop_executes_verification_visual_tool() {
         "tool output should contain visual verification report with screenshot artifact"
     );
 }
+
+#[test]
+fn lats_per_turn_escalation_denies_unsafe_tool_and_records_telemetry() {
+    let fixture = Fixture::new();
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new(
+            "completed with lats safety gate",
+            vec![],
+            TokenUsage::new(3, 2),
+        ),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-ambiguous-danger",
+                    "workspace.patch",
+                    serde_json::json!({
+                        "path": "README.md",
+                        "content": "compromised\n",
+                        "force": true,
+                        "wipe": true,
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(4, 2),
+        ),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-safe-read",
+                    "workspace.read",
+                    serde_json::json!({"path": "README.md"}),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(4, 2),
+        ),
+    ]);
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+    let budget = crate::strategies::StrategyBudget::new(3, 6, 100_000, 5, 60, 10_000_000).unwrap();
+    let lats_cfg = LatsLoopConfig {
+        budget,
+        puct_c: 1.4,
+        escalation_threshold: 0.15,
+        tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+    };
+
+    let summary = AgentLoop::new(5, 5)
+        .unwrap()
+        .with_lats(lats_cfg)
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Read README then attempt patch",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    assert_eq!(summary.final_text(), "completed with lats safety gate");
+    assert_eq!(summary.lats_telemetry().len(), 2);
+
+    let t1 = &summary.lats_telemetry()[0];
+    assert_eq!(t1.turn, 1);
+    assert_eq!(t1.tool_name, "workspace.read");
+    assert!(!t1.escalated);
+    assert_eq!(t1.rollouts, 0);
+    assert_eq!(t1.best_action, Some(0));
+
+    let t2 = &summary.lats_telemetry()[1];
+    assert_eq!(t2.turn, 2);
+    assert_eq!(t2.tool_name, "workspace.patch");
+    assert!(t2.escalated);
+    assert_eq!(t2.rollouts, 6);
+    assert_eq!(t2.best_action, Some(2));
+    assert!(
+        summary.messages().iter().any(|m| m
+            .content()
+            .contains("tool denied by System 2 LATS MCTS safety gate")),
+        "MCTS rejection message must be fed back to model history"
+    );
+    // README.md must remain untouched because MCTS blocked the patch before execute_tool
+    let readme = fs::read_to_string(fixture.path.join("README.md")).unwrap();
+    assert!(!readme.contains("compromised"));
+}
+
+#[test]
+fn lats_high_threshold_escalates_safe_tool_and_preserves_telemetry_on_controlled_stop() {
+    struct StopAfterEffect;
+    impl AgentRunControl for StopAfterEffect {
+        fn checkpoint(&self, checkpoint: AgentCheckpoint<'_>) -> Result<(), AgentControlStop> {
+            if checkpoint.kind() == AgentCheckpointKind::AfterEffect {
+                Err(AgentControlStop::FenceLost)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    let fixture = Fixture::new();
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new("unreachable", vec![], TokenUsage::default()),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-read",
+                    "workspace.read",
+                    serde_json::json!({"path": "README.md"}),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(4, 2),
+        ),
+    ]);
+    let controller = ExecutionController::new(fixture.root.clone());
+    let budget = crate::strategies::StrategyBudget::new(3, 5, 100_000, 5, 60, 10_000_000).unwrap();
+    let lats_cfg = LatsLoopConfig {
+        budget,
+        puct_c: 1.4,
+        escalation_threshold: 0.9999,
+        tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+    };
+    let control = StopAfterEffect;
+
+    let err = AgentLoop::new(4, 4)
+        .unwrap()
+        .with_lats(lats_cfg)
+        .run_with_request(
+            &provider,
+            &controller,
+            AgentRunRequest::new(
+                fixture.session(),
+                Vec::new(),
+                "Read README with strict threshold",
+                Timestamp::from_unix_seconds(10),
+            )
+            .with_control(&control),
+        )
+        .unwrap_err();
+
+    match err {
+        AgentLoopError::ControlledStop { summary, .. } => {
+            assert_eq!(summary.lats_telemetry().len(), 1);
+            let t1 = &summary.lats_telemetry()[0];
+            assert!(
+                t1.escalated,
+                "escalation_threshold=0.9999 must escalate even safe read tool"
+            );
+            assert_eq!(t1.rollouts, 5);
+            assert!(t1.nodes_created >= 1);
+        }
+        other => panic!("expected ControlledStop, got {other:?}"),
+    }
+}
+
+#[test]
+fn lats_non_escalated_reject_denies_destructive_tool_and_records_telemetry() {
+    let fixture = Fixture::new();
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new(
+            "completed after non-escalated reject",
+            vec![],
+            TokenUsage::new(3, 2),
+        ),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-destructive",
+                    "workspace.patch",
+                    serde_json::json!({
+                        "path": "README.md",
+                        "content": "rm -rf / PWNED\n",
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(4, 2),
+        ),
+    ]);
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+    let budget = crate::strategies::StrategyBudget::new(3, 6, 100_000, 5, 60, 10_000_000).unwrap();
+    let lats_cfg = LatsLoopConfig {
+        budget,
+        puct_c: 1.4,
+        escalation_threshold: 0.15,
+        tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+    };
+
+    let summary = AgentLoop::new(5, 5)
+        .unwrap()
+        .with_lats(lats_cfg)
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Attempt destructive patch",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap();
+
+    assert_eq!(summary.final_text(), "completed after non-escalated reject");
+    assert!(
+        summary.runs().is_empty(),
+        "non-escalated LATS Reject must block before execute_tool"
+    );
+    assert_eq!(summary.lats_telemetry().len(), 1);
+    let t1 = &summary.lats_telemetry()[0];
+    assert_eq!(t1.turn, 1);
+    assert_eq!(t1.tool_name, "workspace.patch");
+    assert!(!t1.escalated);
+    assert_eq!(t1.rollouts, 0);
+    assert_eq!(t1.nodes_created, 1);
+    assert_eq!(t1.best_action, Some(2));
+    assert!(t1.best_value() > 0.99);
+    assert!(
+        summary
+            .messages()
+            .iter()
+            .any(|m| m.content().contains("tool denied")),
+        "denial message must be recorded in conversation history"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.path.join("README.md")).unwrap(),
+        "fixture\n"
+    );
+}
+
+#[test]
+fn lats_non_escalated_allow_and_require_confirm_defer_to_policy_context() {
+    let fixture = Fixture::new();
+    let provider = SequenceProvider::new(vec![
+        ModelResponse::new("unreachable", vec![], TokenUsage::default()),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-replace",
+                    "workspace.replace",
+                    serde_json::json!({
+                        "path": "README.md",
+                        "target": "fixture",
+                        "replacement": "updated",
+                    }),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(4, 2),
+        ),
+        ModelResponse::new(
+            "",
+            vec![
+                ToolCall::new(
+                    "call-read",
+                    "workspace.read",
+                    serde_json::json!({"path": "README.md"}),
+                )
+                .unwrap(),
+            ],
+            TokenUsage::new(4, 2),
+        ),
+    ]);
+    let policy = PolicyContext::new(
+        1,
+        [
+            Capability::FilesystemRead,
+            Capability::FilesystemWrite,
+            Capability::ProviderInvoke,
+        ],
+        [Operation::Write],
+    );
+    let controller = ExecutionController::with_policy(fixture.root.clone(), policy);
+    let budget = crate::strategies::StrategyBudget::new(3, 6, 100_000, 5, 60, 10_000_000).unwrap();
+    let lats_cfg = LatsLoopConfig {
+        budget,
+        puct_c: 1.4,
+        escalation_threshold: 0.15,
+        tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+    };
+
+    let err = AgentLoop::new(5, 5)
+        .unwrap()
+        .with_lats(lats_cfg)
+        .run(
+            &provider,
+            &controller,
+            fixture.session(),
+            "Read README then request replacement",
+            Timestamp::from_unix_seconds(10),
+        )
+        .unwrap_err();
+
+    match err {
+        AgentLoopError::ApprovalRequired { summary, .. } => {
+            assert_eq!(summary.runs().len(), 2);
+            assert_eq!(summary.lats_telemetry().len(), 2);
+            let t1 = &summary.lats_telemetry()[0];
+            assert_eq!(t1.tool_name, "workspace.read");
+            assert!(!t1.escalated);
+            assert_eq!(t1.best_action, Some(0));
+            let t2 = &summary.lats_telemetry()[1];
+            assert_eq!(t2.tool_name, "workspace.replace");
+            assert!(!t2.escalated);
+            assert_eq!(t2.best_action, Some(1));
+            assert_eq!(
+                fs::read_to_string(fixture.path.join("README.md")).unwrap(),
+                "fixture\n"
+            );
+        }
+        other => panic!("expected ApprovalRequired, got {other:?}"),
+    }
+}

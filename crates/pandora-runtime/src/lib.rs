@@ -138,8 +138,8 @@ pub use adversarial_bandit::{
 };
 pub use agent_loop::{
     AgentApprovalContext, AgentCheckpoint, AgentCheckpointKind, AgentControlStop, AgentLoop,
-    AgentLoopError, AgentRunControl, AgentRunRequest, AgentRunSummary, MAX_AGENT_TOOL_CALLS,
-    MAX_AGENT_TURNS, SubagentRunControl,
+    AgentLoopError, AgentRunControl, AgentRunRequest, AgentRunSummary, LatsLoopConfig,
+    LatsTurnTelemetry, MAX_AGENT_TOOL_CALLS, MAX_AGENT_TURNS, SubagentRunControl,
 };
 pub use approvals::{
     ApprovalError, ApprovalRequest, ApprovalStatus, ApprovalStore, PendingApproval,
@@ -209,8 +209,9 @@ pub use context_recovery::{ContextRecovery, RecoveryDecision, RecoveryInput, Rec
 pub use context_vfs::{
     CachedBufferEntry, ContextSearchOptions, ContextVfs, DeserializedVfsIndex, HybridSearchResult,
     SearchResultItem, VFS_INDEX_VERSION, VFS_INDEX_VERSION_V1, VFS_INDEX_VERSION_V2,
-    VFS_QUANTIZED_VECTOR_SIZE, VfsDoc, VfsError, VfsIndexStats, compute_corpus_hash,
-    compute_doc_fingerprint, deserialize_vfs_index, read_index_stats, serialize_vfs_index,
+    VFS_INDEX_VERSION_V3, VFS_QUANTIZED_VECTOR_SIZE, VfsDoc, VfsError, VfsIndexStats,
+    compute_corpus_hash, compute_doc_fingerprint, deserialize_vfs_index, read_index_stats,
+    serialize_vfs_index, serialize_vfs_index_v3,
 };
 pub use cron_engine::{
     CronEngine, CronError, CronExecutionResult, CronJob, CronJobStatus, CronSchedule,

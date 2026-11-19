@@ -81,6 +81,45 @@ int main(void) {
     bool avx2 = pandora_cpuid_has_avx2();
     printf("  -> Verified CPUID AVX2 detection: %s\n", avx2 ? "supported" : "not supported");
 
+    // 8. Phase 4 additive C ABI wrappers (LATS args, tropical-search args, tropical max-plus)
+    const char* argv[16] = {0};
+    size_t argc = 0;
+    char scratch[256] = {0};
+    pandora_lats_options_t lats_opts = {12, 4, 1.45, 0.20};
+    assert(pandora_build_lats_args(NULL, &lats_opts, argv, 16, &argc, scratch, sizeof(scratch)) == -1);
+    assert(pandora_build_lats_args("task", &lats_opts, argv, 4, &argc, scratch, sizeof(scratch)) == -2);
+    assert(pandora_build_lats_args("Analyze MCTS", &lats_opts, argv, 16, &argc, scratch, sizeof(scratch)) == 0);
+    assert(argc == 13);
+    assert(strcmp(argv[0], "run") == 0);
+    assert(strcmp(argv[2], "lats") == 0);
+    assert(strcmp(argv[4], "12") == 0);
+    assert(strcmp(argv[6], "4") == 0);
+    assert(strcmp(argv[11], "Analyze MCTS") == 0);
+    assert(strcmp(argv[12], "--json") == 0);
+
+    pandora_tropical_search_options_t ts_opts = {7, "L1", "coding"};
+    assert(pandora_build_tropical_search_args("", &ts_opts, argv, 16, &argc, scratch, sizeof(scratch)) == -1);
+    assert(pandora_build_tropical_search_args("semiring", &ts_opts, argv, 16, &argc, scratch, sizeof(scratch)) == 0);
+    assert(argc == 11);
+    assert(strcmp(argv[2], "tropical-search") == 0);
+    assert(strcmp(argv[3], "semiring") == 0);
+    assert(strcmp(argv[5], "7") == 0);
+    assert(strcmp(argv[7], "L1") == 0);
+    assert(strcmp(argv[9], "coding") == 0);
+    assert(strcmp(argv[10], "--json") == 0);
+
+    assert(pandora_tropical_max_plus_128(NULL, b) == 0.0f);
+    assert(pandora_tropical_max_plus_128(a, NULL) == 0.0f);
+    for (int i = 0; i < 128; i++) {
+        a[i] = -2.0f;
+        b[i] = -2.0f;
+    }
+    a[17] = 1.5f;
+    b[17] = 2.25f;
+    float mp = pandora_tropical_max_plus_128(a, b);
+    assert(fabsf(mp - 3.75f) < 1e-5f);
+    printf("  -> Verified Phase 4 LATS/tropical-search argv builders and 128-d max-plus: %f\n", mp);
+
     printf("ALL ADVERSARIAL C ABI TESTS PASSED CLEANLY.\n");
     return 0;
 }

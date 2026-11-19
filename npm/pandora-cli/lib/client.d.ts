@@ -10,6 +10,48 @@ export interface PandoraError {
     details: JsonObject;
 }
 export type PandoraEnvelope<T extends JsonObject = JsonObject> = PandoraSuccess<T> | PandoraError;
+export interface LatsTurnTelemetry {
+    turn: number;
+    tool_name: string;
+    escalated: boolean;
+    rollouts: number;
+    max_depth_reached: number;
+    nodes_created: number;
+    best_action: number | null;
+    best_value: number;
+}
+export interface LatsMetrics {
+    rollouts: number;
+    max_depth_reached: number;
+    nodes_created: number;
+    best_action: number | null;
+    best_value: number;
+    escalated: boolean;
+    turn_rollouts?: number;
+    turn_escalations?: number;
+    turns?: LatsTurnTelemetry[];
+}
+export interface RunLatsOptions extends PandoraRunOptions {
+    rollouts?: number;
+    depth?: number;
+    puctC?: number;
+    escalationThreshold?: number;
+}
+export interface TropicalSearchOptions extends PandoraRunOptions {
+    limit?: number;
+    tier?: string;
+    intent?: string;
+}
+export interface TropicalSearchResult {
+    uri: string;
+    title: string;
+    snippet: string;
+    sparse_score: number;
+    dense_score: number;
+    hybrid_score: number;
+    tier: string | null;
+    intent: string | null;
+}
 export interface PandoraRunOptions {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
@@ -39,4 +81,13 @@ export declare class PandoraClient {
     branchList(overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
     prCreate(taskId: string, title: string, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
     semanticSearch(query: string, limit?: number, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult>;
+    memoryVfsTropicalSearch(query: string, options?: TropicalSearchOptions): Promise<PandoraRunResult<{
+        query: string;
+        results: TropicalSearchResult[];
+        count: number;
+    }>>;
+    runWithLats(task: string, options?: RunLatsOptions): Promise<PandoraRunResult<{
+        strategy: string;
+        lats_metrics?: LatsMetrics | null;
+    }>>;
 }

@@ -171,5 +171,34 @@ class PandoraClient {
     async semanticSearch(query, limit = 5, overrideOptions) {
         return this.run(["memory", "vfs", "search", query, "--limit", String(limit)], overrideOptions);
     }
+    async memoryVfsTropicalSearch(query, options = {}) {
+        const { limit = 5, tier, intent, ...runOptions } = options;
+        const args = ["memory", "vfs", "tropical-search", query, "--limit", String(limit)];
+        if (tier !== undefined) {
+            args.push("--tier", tier);
+        }
+        if (intent !== undefined) {
+            args.push("--intent", intent);
+        }
+        return this.run(args, runOptions);
+    }
+    async runWithLats(task, options = {}) {
+        const { rollouts, depth, puctC, escalationThreshold, ...runOptions } = options;
+        const args = ["run", "--strategy", "lats"];
+        if (rollouts !== undefined) {
+            args.push("--lats-rollouts", String(rollouts));
+        }
+        if (depth !== undefined) {
+            args.push("--lats-depth", String(depth));
+        }
+        if (puctC !== undefined) {
+            args.push("--puct-c", String(puctC));
+        }
+        if (escalationThreshold !== undefined) {
+            args.push("--escalation-threshold", String(escalationThreshold));
+        }
+        args.push(task);
+        return this.run(args, runOptions);
+    }
 }
 exports.PandoraClient = PandoraClient;

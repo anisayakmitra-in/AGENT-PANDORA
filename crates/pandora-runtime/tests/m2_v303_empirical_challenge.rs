@@ -958,7 +958,7 @@ fn test_challenge_v1_v2_backward_compatibility_and_diff_cache() {
 
     // Verify index stats
     let stats = read_index_stats(&index_path, Some(&vfs)).unwrap();
-    assert_eq!(stats.version, 2);
+    assert_eq!(stats.version, pandora_runtime::VFS_INDEX_VERSION);
     assert_eq!(stats.vector_bytes as usize, doc_count * 132);
     assert_eq!(stats.vector_bytes_saved as usize, doc_count * 380);
 
@@ -986,11 +986,12 @@ fn test_challenge_v1_v2_backward_compatibility_and_diff_cache() {
     );
     assert_eq!(hits3 as usize, doc_count - 1);
 
-    // Deserialize index from disk and verify backward compatibility
+    // Deserialize index from disk and verify backward compatibility and v3 tropical persistence
     let bytes = std::fs::read(&index_path).unwrap();
     let deser = deserialize_vfs_index(&bytes).unwrap();
-    assert_eq!(deser.version, 2);
+    assert_eq!(deser.version, pandora_runtime::VFS_INDEX_VERSION);
     assert_eq!(deser.doc_vectors.len(), doc_count);
+    assert_eq!(deser.tropical_vectors.len(), doc_count);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

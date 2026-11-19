@@ -363,6 +363,142 @@ impl TropicalDecisionDriver {
         self.uncertainty_threshold
     }
 
+    /// Synthesizes a `DpoPair` from a System 2 MCTS override of an uncertain reflex decision.
+    pub fn emit_dpo_pair_from_escalation(
+        id: impl Into<String>,
+        prompt: impl Into<String>,
+        chosen_mcts_action: impl Into<String>,
+        rejected_reflex_action: impl Into<String>,
+        margin: f64,
+    ) -> DpoPair {
+        DpoPair {
+            id: id.into(),
+            prompt: prompt.into(),
+            chosen: chosen_mcts_action.into(),
+            rejected: rejected_reflex_action.into(),
+            margin,
+        }
+    }
+
+    /// Calibrates a `TropicalNetwork` using bounded tropical subgradient margin updates
+    /// over `DpoPair` preferences: for each pair $(\mathbf{x}^+, \mathbf{x}^-)$ with margin
+    /// $\Delta = f(\mathbf{x}^+)_0 - f(\mathbf{x}^-)_0 < 1.0$, reinforces the winning output-layer
+    /// coordinate $j^+$ by $+\eta$ and suppresses $j^-$ by $-\eta$ (clamped to $[-8.0, 8.0]$),
+    /// then recomputes the SHA-256 weight digest.
+    pub fn calibrate_network_from_pairs(
+        network: &crate::tropical_nn::TropicalNetwork,
+        pairs: &[DpoPair],
+        step_size: f32,
+    ) -> Result<crate::tropical_nn::TropicalNetwork, DecisionError> {
+        if !step_size.is_finite() {
+            return Err(DecisionError::DriverError(
+                "calibration step_size must be finite".to_owned(),
+            ));
+        }
+        let eta = step_size.clamp(0.001, 0.25);
+        let mut layers = network.layers.clone();
+        if layers.is_empty() {
+            return Err(DecisionError::DriverError(
+                "cannot calibrate an empty TropicalNetwork".to_owned(),
+            ));
+        }
+
+        let last_idx = layers.len() - 1;
+        let argmax_j = |h: &[f32], weights: &[f32], in_dim: usize| -> usize {
+            let mut best_j = 0;
+            let mut best_val = f32::NEG_INFINITY;
+            for j in 0..in_dim.min(h.len()) {
+                let v = weights[j] + h[j];
+                if v > best_val {
+                    best_val = v;
+                    best_j = j;
+                }
+            }
+            best_j
+        };
+
+        for pair in pairs {
+            let x_pos = encode_decision_features(&pair.prompt, "", &pair.chosen);
+            let x_neg = encode_decision_features(&pair.prompt, "", &pair.rejected);
+
+            let mut prev_pos = x_pos.to_vec();
+            let mut prev_neg = x_neg.to_vec();
+            for layer in &layers[..last_idx.saturating_sub(1)] {
+                prev_pos = layer
+                    .forward(&prev_pos)
+                    .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+                prev_neg = layer
+                    .forward(&prev_neg)
+                    .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+            }
+
+            let (h_pos, h_neg) = if last_idx >= 1 {
+                (
+                    layers[last_idx - 1]
+                        .forward(&prev_pos)
+                        .map_err(|e| DecisionError::DriverError(e.to_string()))?,
+                    layers[last_idx - 1]
+                        .forward(&prev_neg)
+                        .map_err(|e| DecisionError::DriverError(e.to_string()))?,
+                )
+            } else {
+                (prev_pos.clone(), prev_neg.clone())
+            };
+
+            let y_pos = layers[last_idx]
+                .forward(&h_pos)
+                .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+            let y_neg = layers[last_idx]
+                .forward(&h_neg)
+                .map_err(|e| DecisionError::DriverError(e.to_string()))?;
+
+            let margin =
+                y_pos.first().copied().unwrap_or(0.0) - y_neg.first().copied().unwrap_or(0.0);
+            if margin >= 1.0 {
+                continue;
+            }
+
+            let j_pos = {
+                let out_layer = &layers[last_idx];
+                argmax_j(&h_pos, &out_layer.weights, out_layer.in_features)
+            };
+            let j_neg = {
+                let out_layer = &layers[last_idx];
+                argmax_j(&h_neg, &out_layer.weights, out_layer.in_features)
+            };
+            if j_pos != j_neg {
+                let out_layer = &mut layers[last_idx];
+                out_layer.weights[j_pos] = (out_layer.weights[j_pos] + eta).clamp(-8.0, 8.0);
+                out_layer.weights[j_neg] = (out_layer.weights[j_neg] - eta).clamp(-8.0, 8.0);
+            } else if last_idx >= 1 {
+                let hidden_layer = &mut layers[last_idx - 1];
+                let in_dim = hidden_layer.in_features;
+                if j_pos < hidden_layer.out_features {
+                    let row_start = j_pos * in_dim;
+                    let row_end = row_start + in_dim;
+                    if row_end <= hidden_layer.weights.len() {
+                        let row_weights = &hidden_layer.weights[row_start..row_end];
+                        let k_pos = argmax_j(&prev_pos, row_weights, in_dim);
+                        let k_neg = argmax_j(&prev_neg, row_weights, in_dim);
+                        if k_pos != k_neg {
+                            hidden_layer.weights[row_start + k_pos] =
+                                (hidden_layer.weights[row_start + k_pos] + eta).clamp(-8.0, 8.0);
+                            hidden_layer.weights[row_start + k_neg] =
+                                (hidden_layer.weights[row_start + k_neg] - eta).clamp(-8.0, 8.0);
+                        }
+                    }
+                }
+            }
+        }
+
+        crate::tropical_nn::TropicalNetwork::new(
+            network.name.clone(),
+            network.domain.clone(),
+            layers,
+        )
+        .map_err(|e| DecisionError::DriverError(e.to_string()))
+    }
+
     /// Evaluates raw tropical logits across candidate labels for a prompt and context with zero multiplications.
     pub fn forward_logits<L: AsRef<str>>(
         &self,
@@ -1776,5 +1912,158 @@ mod tests {
         let engine = SinglePassLogitEngine::from_config(&config).unwrap();
         assert_eq!(engine.default_temperature(), 0.9);
         assert_eq!(engine.uncertainty_threshold(), 0.15);
+    }
+
+    #[test]
+    fn emit_dpo_pair_from_escalation_records_fields() {
+        let pair = TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+            "dpo-esc-42",
+            "run_command rm -rf /",
+            "reject",
+            "allow",
+            0.042,
+        );
+        assert_eq!(pair.id, "dpo-esc-42");
+        assert_eq!(pair.prompt, "run_command rm -rf /");
+        assert_eq!(pair.chosen, "reject");
+        assert_eq!(pair.rejected, "allow");
+        assert!((pair.margin - 0.042).abs() < 1e-12);
+    }
+
+    #[test]
+    fn calibrate_network_from_pairs_rejects_non_finite_step_size() {
+        let net = TropicalDecisionDriver::calibrated_network();
+        let pairs = vec![TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+            "dpo-nan",
+            "read Cargo.toml",
+            "allow",
+            "reject",
+            0.1,
+        )];
+        assert!(
+            TropicalDecisionDriver::calibrate_network_from_pairs(&net, &pairs, f32::NAN).is_err()
+        );
+        assert!(
+            TropicalDecisionDriver::calibrate_network_from_pairs(&net, &pairs, f32::INFINITY)
+                .is_err()
+        );
+        assert!(
+            TropicalDecisionDriver::calibrate_network_from_pairs(&net, &pairs, f32::NEG_INFINITY)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn calibrate_network_from_pairs_updates_weights_clamps_skips_hinge_and_recomputes_sha256() {
+        // 1. Asymmetric 16 -> 2 -> 1 network: row 0 favors is_allow (idx 3) + safe*allow (idx 10),
+        //    row 1 favors is_reject (idx 4)
+        let mut w1 = vec![-5.0f32; 16 * 2];
+        w1[3] = 1.0;
+        w1[10] = 1.0;
+        w1[16 + 4] = 1.0;
+        let l1 = crate::tropical_nn::TropicalLayer::new(16, 2, w1, Some(vec![0.0, 0.0])).unwrap();
+        let l2 =
+            crate::tropical_nn::TropicalLayer::new(2, 1, vec![0.0, 0.0], Some(vec![0.0])).unwrap();
+        let asym_net = crate::tropical_nn::TropicalNetwork::new(
+            "asym_test",
+            "decision_policy_scoring",
+            vec![l1, l2],
+        )
+        .unwrap();
+
+        // Neutral prompt yields h_pos = [2.0, -5.0], h_neg = [1.0, 2.0], so initial margin = 0.0 < 1.0
+        // and j_pos = 0 != j_neg = 1.
+        let pair = TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+            "dpo-asym-1",
+            "view README.md",
+            "allow",
+            "reject",
+            0.05,
+        );
+        let calibrated = TropicalDecisionDriver::calibrate_network_from_pairs(
+            &asym_net,
+            std::slice::from_ref(&pair),
+            0.25,
+        )
+        .unwrap();
+        assert_eq!(calibrated.layers[1].weights, vec![0.25, -0.25]);
+        assert_eq!(calibrated.sha256_digest, calibrated.compute_digest());
+        assert_ne!(calibrated.sha256_digest, asym_net.sha256_digest);
+
+        // Save and reload via TropicalNetwork::load_from_file to verify integrity check
+        let tmp_pnn = std::env::temp_dir().join(format!(
+            "pandora_calib_sha_{}_{}.pnn",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        calibrated.save_to_file(&tmp_pnn).unwrap();
+        let reloaded = crate::tropical_nn::TropicalNetwork::load_from_file(&tmp_pnn).unwrap();
+        assert_eq!(reloaded.sha256_digest, calibrated.sha256_digest);
+        let _ = std::fs::remove_file(&tmp_pnn);
+
+        // 2. Hinge skip: "read inspect status" yields safe_hits=3 -> margin >= 1.0,
+        //    so calibration leaves weights untouched.
+        let high_margin_pair = TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+            "dpo-hinge-skip",
+            "read inspect status",
+            "allow",
+            "reject",
+            0.9,
+        );
+        let skipped = TropicalDecisionDriver::calibrate_network_from_pairs(
+            &calibrated,
+            &[high_margin_pair],
+            0.25,
+        )
+        .unwrap();
+        assert_eq!(skipped.layers[1].weights, calibrated.layers[1].weights);
+
+        // 3. Weight clamp [-8.0, 8.0] on asymmetric layer
+        let mut w1_clamp = vec![-25.0f32; 16 * 2];
+        w1_clamp[9] = -19.5; // danger_hits=5 => phi[9]=12.5 for reject => h_pos[0]=-7.0, h_neg[0]=-19.5
+        w1_clamp[16 + 3] = 8.0; // is_allow=1 for allow => h_pos[1]=8.0, h_neg[1]=9.0
+        let l1_clamp =
+            crate::tropical_nn::TropicalLayer::new(16, 2, w1_clamp, Some(vec![0.0, 0.0])).unwrap();
+        let l2_clamp =
+            crate::tropical_nn::TropicalLayer::new(2, 1, vec![7.95, -7.95], Some(vec![0.0]))
+                .unwrap();
+        let clamp_net = crate::tropical_nn::TropicalNetwork::new(
+            "clamp_test",
+            "decision_policy_scoring",
+            vec![l1_clamp, l2_clamp],
+        )
+        .unwrap();
+        let clamp_pair = TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+            "dpo-clamp",
+            "rm -rf wipe drop delete format",
+            "reject",
+            "allow",
+            0.05,
+        );
+        let clamped =
+            TropicalDecisionDriver::calibrate_network_from_pairs(&clamp_net, &[clamp_pair], 0.25)
+                .unwrap();
+        assert_eq!(clamped.layers[1].weights, vec![8.0, -8.0]);
+
+        // 4. Symmetric MoiraDecisionDriver::calibrated_network() triggers Layer 1 subgradient fallback
+        let sym_net = TropicalDecisionDriver::calibrated_network();
+        let sym_pair = TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+            "dpo-sym-1",
+            "refactor safe read test",
+            "deep",
+            "allow",
+            0.05,
+        );
+        let sym_calibrated =
+            TropicalDecisionDriver::calibrate_network_from_pairs(&sym_net, &[sym_pair], 0.20)
+                .unwrap();
+        assert_ne!(sym_calibrated.layers[0].weights, sym_net.layers[0].weights);
+        assert_eq!(
+            sym_calibrated.sha256_digest,
+            sym_calibrated.compute_digest()
+        );
     }
 }

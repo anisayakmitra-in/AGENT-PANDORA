@@ -1,9 +1,10 @@
 /**
  * @file pandora_c_api.c
- * @brief Implementation of C ABI for AGENT-PANDORA v3.0.10.
+ * @brief Implementation of C ABI for AGENT-PANDORA v3.1.3.
  */
 
 #include "pandora.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -144,4 +145,160 @@ bool pandora_cpuid_has_avx2(void) {
 #else
     return false;
 #endif
+}
+
+static int pandora_push_arg(const char** out_argv, size_t max_args, size_t* idx, const char* arg) {
+    if (*idx >= max_args) {
+        return -2;
+    }
+    out_argv[*idx] = arg;
+    *idx += 1;
+    return 0;
+}
+
+static int pandora_push_fmt_u32(
+    const char** out_argv,
+    size_t max_args,
+    size_t* idx,
+    char* scratch,
+    size_t scratch_len,
+    size_t* scratch_used,
+    uint32_t value
+) {
+    if (!scratch || *scratch_used >= scratch_len) {
+        return -2;
+    }
+    int written = snprintf(scratch + *scratch_used, scratch_len - *scratch_used, "%u", value);
+    if (written < 0 || (size_t)written >= scratch_len - *scratch_used) {
+        return -2;
+    }
+    const char* ptr = scratch + *scratch_used;
+    *scratch_used += (size_t)written + 1;
+    return pandora_push_arg(out_argv, max_args, idx, ptr);
+}
+
+static int pandora_push_fmt_f64(
+    const char** out_argv,
+    size_t max_args,
+    size_t* idx,
+    char* scratch,
+    size_t scratch_len,
+    size_t* scratch_used,
+    double value
+) {
+    if (!isfinite(value)) {
+        return -1;
+    }
+    if (!scratch || *scratch_used >= scratch_len) {
+        return -2;
+    }
+    int written = snprintf(scratch + *scratch_used, scratch_len - *scratch_used, "%.6g", value);
+    if (written < 0 || (size_t)written >= scratch_len - *scratch_used) {
+        return -2;
+    }
+    const char* ptr = scratch + *scratch_used;
+    *scratch_used += (size_t)written + 1;
+    return pandora_push_arg(out_argv, max_args, idx, ptr);
+}
+
+int pandora_build_lats_args(
+    const char* task,
+    const pandora_lats_options_t* options,
+    const char** out_argv,
+    size_t max_args,
+    size_t* out_argc,
+    char* scratch,
+    size_t scratch_len
+) {
+    if (!task || task[0] == '\0' || !out_argv || !out_argc) {
+        return -1;
+    }
+    size_t argc = 0;
+    size_t used = 0;
+    int rc = 0;
+
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "run")) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--strategy")) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "lats")) != 0) return rc;
+
+    if (options) {
+        if (options->rollouts > 0) {
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--lats-rollouts")) != 0) return rc;
+            if ((rc = pandora_push_fmt_u32(out_argv, max_args, &argc, scratch, scratch_len, &used, options->rollouts)) != 0) return rc;
+        }
+        if (options->depth > 0) {
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--lats-depth")) != 0) return rc;
+            if ((rc = pandora_push_fmt_u32(out_argv, max_args, &argc, scratch, scratch_len, &used, options->depth)) != 0) return rc;
+        }
+        if (options->puct_c != 0.0) {
+            if (!isfinite(options->puct_c) || options->puct_c < 0.0) return -1;
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--puct-c")) != 0) return rc;
+            if ((rc = pandora_push_fmt_f64(out_argv, max_args, &argc, scratch, scratch_len, &used, options->puct_c)) != 0) return rc;
+        }
+        if (options->escalation_threshold != 0.0) {
+            if (!isfinite(options->escalation_threshold) || options->escalation_threshold < 0.0) return -1;
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--escalation-threshold")) != 0) return rc;
+            if ((rc = pandora_push_fmt_f64(out_argv, max_args, &argc, scratch, scratch_len, &used, options->escalation_threshold)) != 0) return rc;
+        }
+    }
+
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, task)) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--json")) != 0) return rc;
+
+    *out_argc = argc;
+    return 0;
+}
+
+int pandora_build_tropical_search_args(
+    const char* query,
+    const pandora_tropical_search_options_t* options,
+    const char** out_argv,
+    size_t max_args,
+    size_t* out_argc,
+    char* scratch,
+    size_t scratch_len
+) {
+    if (!query || query[0] == '\0' || !out_argv || !out_argc) {
+        return -1;
+    }
+    size_t argc = 0;
+    size_t used = 0;
+    int rc = 0;
+
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "memory")) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "vfs")) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "tropical-search")) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, query)) != 0) return rc;
+
+    uint32_t limit = (options && options->limit > 0) ? options->limit : 5u;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--limit")) != 0) return rc;
+    if ((rc = pandora_push_fmt_u32(out_argv, max_args, &argc, scratch, scratch_len, &used, limit)) != 0) return rc;
+
+    if (options) {
+        if (options->tier && options->tier[0] != '\0') {
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--tier")) != 0) return rc;
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, options->tier)) != 0) return rc;
+        }
+        if (options->intent && options->intent[0] != '\0') {
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--intent")) != 0) return rc;
+            if ((rc = pandora_push_arg(out_argv, max_args, &argc, options->intent)) != 0) return rc;
+        }
+    }
+
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--json")) != 0) return rc;
+
+    *out_argc = argc;
+    return 0;
+}
+
+float pandora_tropical_max_plus_128(const float* a, const float* b) {
+    if (!a || !b) return 0.0f;
+    float best = -INFINITY;
+    for (int i = 0; i < PANDORA_DENSE_DIMENSION; i++) {
+        float sum = a[i] + b[i];
+        if (!isnan(sum) && sum > best) {
+            best = sum;
+        }
+    }
+    return best;
 }

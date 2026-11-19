@@ -288,16 +288,28 @@ fn contract_context_vfs_cli_and_in_memory() {
     assert_eq!(val_index["dense_dimension"], 128);
     assert!(val_index["checksum_valid"].as_bool().unwrap());
     assert!(val_index["is_fresh"].as_bool().unwrap());
+    assert_eq!(
+        val_index["index_version"],
+        pandora_runtime::VFS_INDEX_VERSION
+    );
 
     // Test CLI: pandora memory vfs index again (should report up_to_date)
     let resp_index2 = fixture.run(&["memory", "vfs", "index"]);
     let val_index2 = resp_index2.success("memory vfs index");
     assert_eq!(val_index2["status"], "up_to_date");
+    assert_eq!(
+        val_index2["index_version"],
+        pandora_runtime::VFS_INDEX_VERSION
+    );
 
     // Test CLI: pandora memory vfs index --rebuild
     let resp_rebuild = fixture.run(&["memory", "vfs", "index", "--rebuild"]);
     let val_rebuild = resp_rebuild.success("memory vfs index");
     assert_eq!(val_rebuild["status"], "rebuilt");
+    assert_eq!(
+        val_rebuild["index_version"],
+        pandora_runtime::VFS_INDEX_VERSION
+    );
 
     // Test CLI: pandora memory vfs stats
     let resp_stats = fixture.run(&["memory", "vfs", "stats"]);
@@ -306,6 +318,10 @@ fn contract_context_vfs_cli_and_in_memory() {
     assert!(val_stats["doc_count"].as_u64().unwrap() > 0);
     assert!(val_stats["checksum_valid"].as_bool().unwrap());
     assert!(val_stats["is_fresh"].as_bool().unwrap());
+    assert_eq!(
+        val_stats["index_version"],
+        pandora_runtime::VFS_INDEX_VERSION
+    );
 
     // Test CLI: pandora memory vfs search using persistent index
     let resp_search = fixture.run(&["memory", "vfs", "search", "pipeline vfs"]);

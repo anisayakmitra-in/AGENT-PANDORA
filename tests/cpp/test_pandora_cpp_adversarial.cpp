@@ -70,6 +70,37 @@ int main() {
     assert(std::fabs(dot - (-256.0f)) < 1e-4);
     std::cout << "  -> SIMD dot product computed correctly for mixed signs: " << dot << "\n";
 
+    // 6. Phase 4 C++20 wrappers (BuildLatsArgs, BuildTropicalSearchArgs, TropicalMaxPlus)
+    auto lats_args = target_client.BuildLatsArgs("Verify tropical LATS", pandora::LatsOptions{
+        .rollouts = 12,
+        .depth = 4,
+        .puct_c = 1.45,
+        .escalation_threshold = 0.2,
+    });
+    assert(lats_args.size() == 13);
+    assert(lats_args.front() == "run");
+    assert(lats_args[2] == "lats");
+    assert(lats_args.back() == "--json");
+
+    auto ts_args = target_client.BuildTropicalSearchArgs("tropical semiring", pandora::TropicalSearchOptions{
+        .limit = 4,
+        .tier = "L1",
+        .intent = "coding",
+    });
+    assert(ts_args.size() == 11);
+    assert(ts_args[2] == "tropical-search");
+    assert(ts_args.back() == "--json");
+
+    std::array<float, 128> trop_a{};
+    std::array<float, 128> trop_b{};
+    trop_a.fill(-2.0f);
+    trop_b.fill(-2.0f);
+    trop_a[7] = 1.25f;
+    trop_b[7] = 2.5f;
+    float mp = target_client.TropicalMaxPlus(trop_a, trop_b);
+    assert(std::fabs(mp - 3.75f) < 1e-5f);
+    std::cout << "  -> Phase 4 C++20 wrappers and TropicalMaxPlus verified: " << mp << "\n";
+
     std::cout << "ALL ADVERSARIAL C++20 TESTS PASSED CLEANLY.\n";
     return 0;
 }

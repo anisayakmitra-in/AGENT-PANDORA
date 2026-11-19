@@ -75,6 +75,49 @@ async function main() {
     assert.equal(searchRes.envelope.forwarded, "memory");
     assert.equal(searchRes.envelope.allArgs[1], "vfs");
     assert.equal(searchRes.envelope.allArgs[2], "search");
+
+    const tropSearchRes = await client.memoryVfsTropicalSearch("max-plus semiring", {
+      limit: 4,
+      tier: "L1",
+      intent: "coding",
+    });
+    assert.equal(tropSearchRes.envelope.forwarded, "memory");
+    assert.deepEqual(tropSearchRes.envelope.allArgs, [
+      "memory",
+      "vfs",
+      "tropical-search",
+      "max-plus semiring",
+      "--limit",
+      "4",
+      "--tier",
+      "L1",
+      "--intent",
+      "coding",
+      "--json",
+    ]);
+
+    const latsRes = await client.runWithLats("Verify LATS branching", {
+      rollouts: 12,
+      depth: 4,
+      puctC: 1.45,
+      escalationThreshold: 0.2,
+    });
+    assert.equal(latsRes.envelope.forwarded, "run");
+    assert.deepEqual(latsRes.envelope.allArgs, [
+      "run",
+      "--strategy",
+      "lats",
+      "--lats-rollouts",
+      "12",
+      "--lats-depth",
+      "4",
+      "--puct-c",
+      "1.45",
+      "--escalation-threshold",
+      "0.2",
+      "Verify LATS branching",
+      "--json",
+    ]);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }

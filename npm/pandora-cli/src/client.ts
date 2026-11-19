@@ -19,6 +19,53 @@ export type PandoraEnvelope<T extends JsonObject = JsonObject> =
   | PandoraSuccess<T>
   | PandoraError;
 
+export interface LatsTurnTelemetry {
+  turn: number;
+  tool_name: string;
+  escalated: boolean;
+  rollouts: number;
+  max_depth_reached: number;
+  nodes_created: number;
+  best_action: number | null;
+  best_value: number;
+}
+
+export interface LatsMetrics {
+  rollouts: number;
+  max_depth_reached: number;
+  nodes_created: number;
+  best_action: number | null;
+  best_value: number;
+  escalated: boolean;
+  turn_rollouts?: number;
+  turn_escalations?: number;
+  turns?: LatsTurnTelemetry[];
+}
+
+export interface RunLatsOptions extends PandoraRunOptions {
+  rollouts?: number;
+  depth?: number;
+  puctC?: number;
+  escalationThreshold?: number;
+}
+
+export interface TropicalSearchOptions extends PandoraRunOptions {
+  limit?: number;
+  tier?: string;
+  intent?: string;
+}
+
+export interface TropicalSearchResult {
+  uri: string;
+  title: string;
+  snippet: string;
+  sparse_score: number;
+  dense_score: number;
+  hybrid_score: number;
+  tier: string | null;
+  intent: string | null;
+}
+
 export interface PandoraRunOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -238,5 +285,42 @@ export class PandoraClient {
     overrideOptions?: PandoraRunOptions,
   ): Promise<PandoraRunResult> {
     return this.run(["memory", "vfs", "search", query, "--limit", String(limit)], overrideOptions);
+  }
+
+  public async memoryVfsTropicalSearch(
+    query: string,
+    options: TropicalSearchOptions = {},
+  ): Promise<PandoraRunResult<{ query: string; results: TropicalSearchResult[]; count: number }>> {
+    const { limit = 5, tier, intent, ...runOptions } = options;
+    const args = ["memory", "vfs", "tropical-search", query, "--limit", String(limit)];
+    if (tier !== undefined) {
+      args.push("--tier", tier);
+    }
+    if (intent !== undefined) {
+      args.push("--intent", intent);
+    }
+    return this.run(args, runOptions);
+  }
+
+  public async runWithLats(
+    task: string,
+    options: RunLatsOptions = {},
+  ): Promise<PandoraRunResult<{ strategy: string; lats_metrics?: LatsMetrics | null }>> {
+    const { rollouts, depth, puctC, escalationThreshold, ...runOptions } = options;
+    const args = ["run", "--strategy", "lats"];
+    if (rollouts !== undefined) {
+      args.push("--lats-rollouts", String(rollouts));
+    }
+    if (depth !== undefined) {
+      args.push("--lats-depth", String(depth));
+    }
+    if (puctC !== undefined) {
+      args.push("--puct-c", String(puctC));
+    }
+    if (escalationThreshold !== undefined) {
+      args.push("--escalation-threshold", String(escalationThreshold));
+    }
+    args.push(task);
+    return this.run(args, runOptions);
   }
 }

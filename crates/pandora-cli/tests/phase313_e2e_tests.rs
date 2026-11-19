@@ -327,3 +327,34 @@ fn cli_memory_vfs_tropical_search_returns_ranked_virtual_resources() {
     assert_eq!(body["command"], "memory vfs tropical-search");
     assert!(body["count"].as_u64().unwrap_or(0) >= 1, "body: {body}");
 }
+
+#[test]
+fn cli_model_calibrate_bare_relative_pnn_writes_in_current_dir() {
+    let temp = TestTempDir::new("moira_bare_pnn");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pandora"))
+        .current_dir(temp.path())
+        .args([
+            "model",
+            "calibrate",
+            "--pnn",
+            "custom.pnn",
+            "--workspace",
+            temp.path().to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("execute pandora model calibrate --pnn custom.pnn");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid JSON envelope");
+    assert_eq!(body["command"], "model calibrate");
+    assert_eq!(body["canary_passed"], true);
+    assert!(temp.path().join("custom.pnn").is_file());
+}

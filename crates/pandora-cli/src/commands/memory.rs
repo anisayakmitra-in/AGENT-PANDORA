@@ -1094,7 +1094,7 @@ fn vfs_index(args: &[String]) -> Result<CommandResult, CliError> {
         "corpus_hash": stats.corpus_hash,
         "checksum_valid": stats.checksum_valid,
         "is_fresh": stats.is_fresh,
-        "version": stats.version,
+        "index_version": stats.version,
         "vector_bytes": stats.vector_bytes,
         "vector_bytes_saved": stats.vector_bytes_saved,
         "cache_hits": stats.cache_hits,
@@ -1102,8 +1102,9 @@ fn vfs_index(args: &[String]) -> Result<CommandResult, CliError> {
     });
 
     let human = format!(
-        "Persisted VFS semantic index to {} ({} documents, {} terms, {} bytes, quantized vectors: {} bytes [{} bytes saved], cache hits/misses: {}/{}, status: {})",
+        "Persisted VFS semantic index to {} (version={}, {} documents, {} terms, {} bytes, quantized vectors: {} bytes [{} bytes saved], cache hits/misses: {}/{}, status: {})",
         output_path.display(),
+        stats.version,
         stats.doc_count,
         stats.vocab_size,
         stats.size_bytes,
@@ -1177,7 +1178,7 @@ fn vfs_stats(args: &[String]) -> Result<CommandResult, CliError> {
         "corpus_hash": stats.corpus_hash,
         "checksum_valid": stats.checksum_valid,
         "is_fresh": stats.is_fresh,
-        "version": stats.version,
+        "index_version": stats.version,
         "vector_bytes": stats.vector_bytes,
         "vector_bytes_saved": stats.vector_bytes_saved,
         "cache_hits": stats.cache_hits,
@@ -1185,8 +1186,9 @@ fn vfs_stats(args: &[String]) -> Result<CommandResult, CliError> {
     });
 
     let human = format!(
-        "VFS index stats for {}: {} docs, {} terms, dim {}, {} tokens, {} bytes, quantized vectors: {} bytes [{} bytes saved], cache hits/misses: {}/{} (checksum: {}, fresh: {})",
+        "VFS index stats for {}: version={}, {} docs, {} terms, dim {}, {} tokens, {} bytes, quantized vectors: {} bytes [{} bytes saved], cache hits/misses: {}/{} (checksum: {}, fresh: {})",
         index_path.display(),
+        stats.version,
         stats.doc_count,
         stats.vocab_size,
         stats.dense_dimension,
@@ -3247,5 +3249,85 @@ mod tests {
             vfs(&["unknown_cmd".to_string()]),
             "unknown memory vfs command 'unknown_cmd'",
         );
+    }
+
+    #[test]
+    fn vfs_index_and_stats_expose_index_version_without_envelope_shadowing() {
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_version_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let data_dir = tmp_dir.join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let config_path = tmp_dir.join("pandora.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&json!({
+                "format_version": 1,
+                "data_dir": data_dir.to_string_lossy(),
+                "workspace_dir": tmp_dir.to_string_lossy(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let index_path = tmp_dir.join("vfs.idx");
+        let cfg_str = config_path.to_str().unwrap().to_string();
+        let idx_str = index_path.to_str().unwrap().to_string();
+
+        let index_res = vfs_index(&[
+            "--config".to_string(),
+            cfg_str.clone(),
+            "--output".to_string(),
+            idx_str.clone(),
+        ])
+        .expect("vfs_index should succeed");
+        assert_eq!(
+            index_res.data["index_version"],
+            pandora_runtime::VFS_INDEX_VERSION
+        );
+        assert!(
+            index_res
+                .human
+                .contains(&format!("version={}", pandora_runtime::VFS_INDEX_VERSION)),
+            "human: {}",
+            index_res.human
+        );
+        let env_index = crate::output::envelope(index_res);
+        assert_eq!(env_index["version"], "0.1");
+        assert_eq!(
+            env_index["index_version"],
+            pandora_runtime::VFS_INDEX_VERSION
+        );
+
+        let stats_res = vfs_stats(&[
+            "--config".to_string(),
+            cfg_str,
+            "--path".to_string(),
+            idx_str,
+        ])
+        .expect("vfs_stats should succeed");
+        assert_eq!(
+            stats_res.data["index_version"],
+            pandora_runtime::VFS_INDEX_VERSION
+        );
+        assert!(
+            stats_res
+                .human
+                .contains(&format!("version={}", pandora_runtime::VFS_INDEX_VERSION)),
+            "human: {}",
+            stats_res.human
+        );
+        let env_stats = crate::output::envelope(stats_res);
+        assert_eq!(env_stats["version"], "0.1");
+        assert_eq!(
+            env_stats["index_version"],
+            pandora_runtime::VFS_INDEX_VERSION
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

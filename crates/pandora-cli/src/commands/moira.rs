@@ -16,7 +16,7 @@ const DEFAULT_HF_REVISION: &str = "main";
 const DEFAULT_HF_FILENAME: &str = "model_decision.pnn";
 
 const MOIRA_USAGE: &str = "\
-usage: pandora <model|moira> <inspect|doctor|status|sync> [options]
+usage: pandora <model|moira> <inspect|doctor|status|sync|calibrate> [options]
 
 subcommands:
   inspect [--pnn <path>] [--workspace <dir>]
@@ -25,6 +25,8 @@ subcommands:
       Verify integrity and runtime readiness of .pandora/model_tpan.pnn and .pandora/model_decision.pnn.
   sync [--from <repo-or-url>] [--dest <path>] [--revision <rev>] [--file <name>] [--dry-run]
       Explicitly download and verify model_decision.pnn from Hugging Face (default: anisayakmitra-in/FATE-O-SISTERS).
+  calibrate [--pairs <path>] [--pnn <path>] [--workspace <dir>] [--dry-run]
+      Calibrate model_decision.pnn from DpoPair traces gated by DecisionBenchmarkSuite canary checks.
 ";
 
 fn cmd_label(invoked_as: &str, action: &str) -> &'static str {
@@ -34,10 +36,12 @@ fn cmd_label(invoked_as: &str, action: &str) -> &'static str {
         ("moira", "doctor") => "moira doctor",
         ("moira", "status") => "moira status",
         ("moira", "sync") => "moira sync",
+        ("moira", "calibrate") => "moira calibrate",
         (_, "help") => "model help",
         (_, "inspect") => "model inspect",
         (_, "doctor") => "model doctor",
         (_, "status") => "model status",
+        (_, "calibrate") => "model calibrate",
         _ => "model sync",
     }
 }
@@ -64,6 +68,7 @@ pub fn execute(invoked_as: &str, args: &[String]) -> Result<CommandResult, CliEr
         "inspect" => inspect_command(invoked_as, rest),
         "doctor" | "status" => doctor_command(invoked_as, subcommand, rest),
         "sync" | "pull" | "download" => sync_command(invoked_as, rest),
+        "calibrate" => calibrate_command(invoked_as, rest),
         "list" => super::models::execute(args),
         other => Err(CliError::usage(format!(
             "unknown {invoked_as} subcommand '{other}'.\n\n{MOIRA_USAGE}"
@@ -543,6 +548,172 @@ fn sync_command(invoked_as: &str, args: &[String]) -> Result<CommandResult, CliE
     ))
 }
 
+fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["pairs", "pnn", "workspace", "config", "data-dir", "dry-run"],
+    )?;
+    let ws = resolve_workspace_root(&parsed);
+    let pnn_path = parsed
+        .value("pnn")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ws.join(".pandora/model_decision.pnn"));
+    let dry_run = parsed.has_flag("dry-run");
+
+    let base_network = if pnn_path.exists() {
+        TropicalNetwork::load_from_file(&pnn_path).map_err(|e| {
+            CliError::execution(
+                format!("failed to load .pnn weights at {}: {e}", pnn_path.display()),
+                json!({"path": pnn_path}),
+            )
+        })?
+    } else {
+        MoiraDecisionDriver::calibrated_network()
+    };
+
+    let pairs: Vec<pandora_types::DpoPair> = if let Some(pairs_path) = parsed.value("pairs") {
+        let raw = fs::read_to_string(pairs_path).map_err(|e| {
+            CliError::execution(
+                format!("failed to read DpoPair file {pairs_path}: {e}"),
+                json!({"pairs_path": pairs_path}),
+            )
+        })?;
+        serde_json::from_str(&raw)
+            .map_err(|e| CliError::usage(format!("invalid DpoPair JSON in {pairs_path}: {e}")))?
+    } else {
+        vec![
+            MoiraDecisionDriver::emit_dpo_pair_from_escalation(
+                "dpo-default-1",
+                "run_command rm -rf /",
+                "reject",
+                "allow",
+                0.08,
+            ),
+            MoiraDecisionDriver::emit_dpo_pair_from_escalation(
+                "dpo-default-2",
+                "view_file README.md",
+                "allow",
+                "require_confirm",
+                0.10,
+            ),
+        ]
+    };
+
+    use pandora_runtime::decision_engine::DecisionDriver;
+    let suite =
+        pandora_harnesses::decision_benchmark::DecisionBenchmarkSuite::default_real_task_traces();
+    let baseline_driver = MoiraDecisionDriver::new(Some(base_network.clone()));
+    let baseline_report = suite
+        .evaluate_driver("baseline", |q| baseline_driver.evaluate_question(q))
+        .map_err(|e| CliError::execution(format!("baseline benchmark failed: {e}"), json!({})))?;
+
+    let candidate_network =
+        MoiraDecisionDriver::calibrate_network_from_pairs(&base_network, &pairs, 0.05)
+            .map_err(|e| CliError::execution(format!("calibration failed: {e}"), json!({})))?;
+    let candidate_driver = MoiraDecisionDriver::new(Some(candidate_network.clone()));
+    let candidate_report = suite
+        .evaluate_driver("candidate", |q| candidate_driver.evaluate_question(q))
+        .map_err(|e| CliError::execution(format!("candidate benchmark failed: {e}"), json!({})))?;
+
+    let canary_gate = pandora_runtime::evolution::BayesianCanaryGate::default();
+    let baseline_passes = baseline_report.correct_count as u32;
+    let baseline_failures = baseline_report
+        .trace_count
+        .saturating_sub(baseline_report.correct_count) as u32;
+    let baseline_canary = canary_gate.evaluate(baseline_passes, baseline_failures, 0.0);
+
+    let candidate_passes = candidate_report.correct_count as u32;
+    let candidate_failures = candidate_report
+        .trace_count
+        .saturating_sub(candidate_report.correct_count) as u32;
+    let statistical_floor = (baseline_canary.lower_bound_95 - 1e-9).max(0.0);
+    let bayesian_verdict =
+        canary_gate.evaluate(candidate_passes, candidate_failures, statistical_floor);
+
+    let non_regression_passed = candidate_report.branch_selection_accuracy + 1e-9
+        >= baseline_report.branch_selection_accuracy
+        && candidate_report.mean_margin + 1e-9 >= baseline_report.mean_margin;
+    let canary_passed = non_regression_passed && bayesian_verdict.promoted;
+
+    if canary_passed && !dry_run {
+        ensure_pnn_parent_dir(&pnn_path)?;
+        let serialized = serde_json::to_string_pretty(&candidate_network).map_err(|e| {
+            CliError::execution(
+                format!("failed to serialize calibrated .pnn: {e}"),
+                json!({"path": pnn_path}),
+            )
+        })?;
+        let mut atomic = atomic_write_file::AtomicWriteFile::open(&pnn_path).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to open atomic .pnn target {}: {e}",
+                    pnn_path.display()
+                ),
+                json!({"path": pnn_path}),
+            )
+        })?;
+        use std::io::Write;
+        atomic.write_all(serialized.as_bytes()).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to write calibrated .pnn to {}: {e}",
+                    pnn_path.display()
+                ),
+                json!({"path": pnn_path}),
+            )
+        })?;
+        atomic.commit().map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to commit calibrated .pnn to {}: {e}",
+                    pnn_path.display()
+                ),
+                json!({"path": pnn_path}),
+            )
+        })?;
+    }
+
+    Ok(success(
+        cmd_label(invoked_as, "calibrate"),
+        json!({
+            "path": pnn_path,
+            "pairs_count": pairs.len(),
+            "dry_run": dry_run,
+            "canary_passed": canary_passed,
+            "baseline_accuracy": baseline_report.branch_selection_accuracy,
+            "candidate_accuracy": candidate_report.branch_selection_accuracy,
+            "baseline_mean_margin": baseline_report.mean_margin,
+            "candidate_mean_margin": candidate_report.mean_margin,
+            "candidate_digest": candidate_network.sha256_digest,
+            "bayesian_canary": {
+                "credible_level": canary_gate.credible_level(),
+                "passes": bayesian_verdict.passes,
+                "failures": bayesian_verdict.failures,
+                "alpha": bayesian_verdict.alpha,
+                "beta": bayesian_verdict.beta,
+                "lower_bound_95": bayesian_verdict.lower_bound_95,
+                "baseline_lower_bound_95": baseline_canary.lower_bound_95,
+                "promoted": bayesian_verdict.promoted,
+            },
+        }),
+        format!(
+            "Calibration {} (pairs: {}, accuracy: {:.3} -> {:.3}, mean_margin: {:.3} -> {:.3}, bayesian_lb95: {:.3}, dry_run: {})",
+            if canary_passed {
+                "passed canary gate"
+            } else {
+                "rejected by canary gate"
+            },
+            pairs.len(),
+            baseline_report.branch_selection_accuracy,
+            candidate_report.branch_selection_accuracy,
+            baseline_report.mean_margin,
+            candidate_report.mean_margin,
+            bayesian_verdict.lower_bound_95,
+            dry_run,
+        ),
+    ))
+}
+
 fn fetch_remote_pnn(url: &str) -> Result<String, CliError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -585,4 +756,102 @@ fn fetch_remote_pnn(url: &str) -> Result<String, CliError> {
             json!({ "url": url }),
         )
     })
+}
+
+fn ensure_pnn_parent_dir(pnn_path: &Path) -> Result<(), CliError> {
+    if let Some(parent) = pnn_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to create .pnn parent directory {}: {e}",
+                    parent.display()
+                ),
+                json!({"path": pnn_path}),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calibrate_command_dry_run_and_atomic_promotion_work() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora_moira_calibrate_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let pnn_path = root.join(".pandora/model_decision.pnn");
+
+        // 1. Dry-run evaluates BayesianCanaryGate without creating the .pnn file
+        let dry_res = calibrate_command(
+            "model",
+            &[
+                "--workspace".to_string(),
+                root.to_string_lossy().into_owned(),
+                "--dry-run".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(dry_res.data["dry_run"], true);
+        assert_eq!(dry_res.data["canary_passed"], true);
+        assert_eq!(dry_res.data["bayesian_canary"]["promoted"], true);
+        assert_eq!(dry_res.data["bayesian_canary"]["passes"], 12);
+        assert_eq!(dry_res.data["bayesian_canary"]["failures"], 0);
+        assert!(
+            dry_res.data["bayesian_canary"]["lower_bound_95"]
+                .as_f64()
+                .unwrap()
+                > 0.75
+        );
+        assert!(!pnn_path.exists());
+
+        // 2. Non-dry-run atomically writes verified .pnn file with valid SHA-256
+        let write_res = calibrate_command(
+            "moira",
+            &[
+                "--workspace".to_string(),
+                root.to_string_lossy().into_owned(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(write_res.data["dry_run"], false);
+        assert_eq!(write_res.data["canary_passed"], true);
+        assert!(pnn_path.is_file());
+        let loaded = TropicalNetwork::load_from_file(&pnn_path).unwrap();
+        assert_eq!(
+            loaded.sha256_digest,
+            write_res.data["candidate_digest"].as_str().unwrap()
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ensure_pnn_parent_dir_allows_bare_relative_filename_and_creates_nested_dirs() {
+        ensure_pnn_parent_dir(Path::new("model_decision.pnn"))
+            .expect("bare relative --pnn filename must not invoke create_dir_all(\"\")");
+
+        let root = std::env::temp_dir().join(format!(
+            "pandora_moira_parent_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = root.join("nested/sub/model_decision.pnn");
+        ensure_pnn_parent_dir(&nested).expect("nested parent directory should be created");
+        assert!(root.join("nested/sub").is_dir());
+        let _ = fs::remove_dir_all(&root);
+    }
 }
