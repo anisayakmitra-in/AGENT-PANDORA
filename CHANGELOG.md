@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.1.4
+
+### Live AgentLoop LATS Branching, PVFS v3 & Hilbert Tropical HNSW, Online DPO Distillation, 7D Multi-Step Rollouts & Hash-Chained `.pnn` Calibration Attestation Receipts
+- **Live Per-Turn LATS Branching & Online DPO Distillation (`crates/pandora-runtime/src/agent_loop.rs`, `crates/pandora-cli/src/commands/run.rs`)**:
+  - Wired per-turn `Parliament::evaluate_tool_safety` and `LatsEngine` MCTS escalation directly into `AgentLoop` (`LatsLoopConfig`, `LatsTurnTelemetry`), automatically emitting and persisting `DpoPair` records (`.pandora/dpo_pairs.jsonl`) whenever System 2 MCTS overrides the System 1 reflex prior.
+- **`PVFS` v3 Binary Format & Projective Hilbert Tropical HNSW (`crates/pandora-runtime/src/context_vfs.rs`, `crates/pandora-runtime/src/semantic_indexer.rs`)**:
+  - Upgraded `.pandora/indices/vfs.idx` to `PVFS` v3 (`VFS_INDEX_VERSION = 3`) persisting both 132B `QuantizedVector` and 512B `TropicalVector` tables with v1/v2 backward compatibility, defaulted `load_or_build_hnsw_index` and `save_hnsw_index` to tropical HNSW, restored idempotent tropical addition, and added projective Hilbert dispersion tie-breaking (`active_hilbert_distance`).
+- **7D `DecisionFeatures` Multi-Step Rollouts & Closed-Loop `.pnn` Calibration Attestation (`crates/pandora-runtime/src/decision_engine.rs`, `crates/pandora-runtime/src/lats_engine.rs`, `crates/pandora-cli/src/commands/moira.rs`)**:
+  - Added 7D `DecisionFeatures` state transitions ($T: [0,1]^7 \times \{0,1,2,3\} \to [0,1]^7$) and `LatsEngine::search_with_feature_rollouts` for multi-step recovery discovery (`Repair` -> `Proceed`).
+  - Added `pandora model|moira calibrate` with bounded tropical subgradient updates (`calibrate_network_from_pairs`), `BayesianCanaryGate` verification, and hash-chained `CalibrationAttestationReceipt` ledgers (`<pnn>.attestation.jsonl`).
+- **TypeScript SDK & C11/C++20 ABI Parity (`npm/pandora-cli/src/client.ts`, `include/pandora.h`, `native/c/pandora_c_api.c`, `include/pandora.hpp`)**:
+  - Exposed `runWithLats`, `memoryVfsTropicalSearch`, `pandora_build_lats_args`, `pandora_build_tropical_search_args`, `pandora_tropical_max_plus_128`, and C++20 RAII wrappers.
+
 ## v3.1.3
 
 ### Tropical MCTS Search, Fast-Path Reflex Tool Safety Gating, `--strategy lats` CLI & Tropical Semantic Projections

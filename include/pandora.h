@@ -17,7 +17,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PANDORA_VERSION "3.1.3"
+#define PANDORA_VERSION "3.1.4"
 #define PANDORA_DENSE_DIMENSION 128
 
 typedef struct pandora_client pandora_client_t;
