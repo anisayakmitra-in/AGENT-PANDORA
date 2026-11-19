@@ -323,8 +323,9 @@ pub use identity::{
 pub use job_store::{JobRecord, JobStore, JobStoreError, MAX_JOB_RESULT_BYTES};
 pub use kanban_engine::{KanbanEngine, KanbanError};
 pub use lats_engine::{
-    LatsEngine, LatsError, LatsMctsEngine, LatsNode, LatsSearchMetrics, LatsSearchResult,
-    convergence_choice, cosine_similarity, should_escalate, should_escalate_with_entropy,
+    LatsEngine, LatsError, LatsMctsEngine, LatsMemoEntry, LatsMemoKey, LatsNode,
+    LatsPrefixMemoCache, LatsSearchMetrics, LatsSearchResult, convergence_choice,
+    cosine_similarity, should_escalate, should_escalate_with_entropy,
 };
 pub use lsp_engine::{LspClientConfig, LspEngine, LspError, LspSession};
 pub use martingale_gate::{

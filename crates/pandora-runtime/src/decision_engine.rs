@@ -294,6 +294,18 @@ impl TropicalDecisionDriver {
         self.dpo_output_path.as_deref()
     }
 
+    /// Returns a cloned driver with its `.pnn` [`crate::tropical_nn::TropicalNetwork`] replaced
+    /// (used for Phase 9 in-loop hot-reload after `BayesianCanaryGate` promotion).
+    pub fn with_network(&self, network: crate::tropical_nn::TropicalNetwork) -> Self {
+        Self {
+            network: Some(network),
+            fallback: self.fallback.clone(),
+            default_temperature: self.default_temperature,
+            uncertainty_threshold: self.uncertainty_threshold,
+            dpo_output_path: self.dpo_output_path.clone(),
+        }
+    }
+
     /// Loads a static `.pnn` decision policy from disk; falls back to heuristics if absent or invalid.
     pub fn from_pnn_path(path: &std::path::Path) -> Self {
         let network = crate::tropical_nn::TropicalNetwork::load_from_file(path).ok();

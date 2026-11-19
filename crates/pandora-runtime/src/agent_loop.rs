@@ -443,6 +443,7 @@ pub struct LatsTurnTelemetry {
     best_value_bits: u64,
     pub reflex_action: Option<usize>,
     pub dpo_pair_emitted: bool,
+    pub memo_hit: bool,
 }
 
 impl LatsTurnTelemetry {
@@ -468,6 +469,7 @@ impl LatsTurnTelemetry {
             best_value_bits: best_value.to_bits(),
             reflex_action: None,
             dpo_pair_emitted: false,
+            memo_hit: false,
         }
     }
 
@@ -478,6 +480,11 @@ impl LatsTurnTelemetry {
     ) -> Self {
         self.reflex_action = reflex_action;
         self.dpo_pair_emitted = dpo_pair_emitted;
+        self
+    }
+
+    pub fn with_memo_hit(mut self, memo_hit: bool) -> Self {
+        self.memo_hit = memo_hit;
         self
     }
 
@@ -492,6 +499,8 @@ pub struct LatsLoopConfig {
     pub puct_c: f64,
     pub escalation_threshold: f64,
     pub tropical_driver: Arc<crate::decision_engine::TropicalDecisionDriver>,
+    pub auto_calibrate_threshold: Option<usize>,
+    pub enable_memo: bool,
 }
 
 impl LatsLoopConfig {
@@ -506,6 +515,8 @@ impl LatsLoopConfig {
             puct_c,
             escalation_threshold,
             tropical_driver,
+            auto_calibrate_threshold: None,
+            enable_memo: true,
         }
     }
 
@@ -521,6 +532,19 @@ impl LatsLoopConfig {
         self
     }
 
+    /// Enables Phase 9 autonomous in-loop `.pnn` hot-reload every `batch_k` emitted `DpoPair`
+    /// overrides (gated by `BayesianCanaryGate` + deterministic non-regression).
+    pub fn with_auto_calibrate(mut self, batch_k: usize) -> Self {
+        self.auto_calibrate_threshold = (batch_k > 0).then_some(batch_k);
+        self
+    }
+
+    /// Enables or disables Phase 10 quantized 7D feature memoization across LATS turns.
+    pub fn with_memo(mut self, enabled: bool) -> Self {
+        self.enable_memo = enabled;
+        self
+    }
+
     pub fn dpo_output_path(&self) -> Option<&std::path::Path> {
         self.tropical_driver.dpo_output_path()
     }
@@ -532,6 +556,9 @@ struct AgentRunEvidence {
     context_receipt: Box<ContextReceipt>,
     lats_telemetry: Vec<LatsTurnTelemetry>,
     dpo_pairs: Vec<pandora_types::DpoPair>,
+    pnn_hot_reloads: u32,
+    active_pnn_digest: Option<String>,
+    lats_memo_hits: u64,
 }
 
 impl Eq for AgentRunEvidence {}
@@ -579,6 +606,18 @@ impl AgentRunSummary {
 
     pub fn dpo_pairs_emitted(&self) -> usize {
         self.evidence.dpo_pairs.len()
+    }
+
+    pub fn pnn_hot_reloads(&self) -> u32 {
+        self.evidence.pnn_hot_reloads
+    }
+
+    pub fn active_pnn_digest(&self) -> Option<&str> {
+        self.evidence.active_pnn_digest.as_deref()
+    }
+
+    pub fn lats_memo_hits(&self) -> u64 {
+        self.evidence.lats_memo_hits
     }
 
     pub fn messages(&self) -> &[ChatMessage] {
@@ -994,6 +1033,12 @@ impl AgentLoop {
         let mut provider_metrics = Vec::new();
         let mut lats_telemetry = Vec::new();
         let mut dpo_pairs: Vec<pandora_types::DpoPair> = Vec::new();
+        let mut active_tropical_driver = self
+            .lats_config
+            .as_ref()
+            .map(|c| Arc::clone(&c.tropical_driver));
+        let mut lats_memo = crate::lats_engine::LatsPrefixMemoCache::default();
+        let mut pnn_hot_reloads: u32 = 0;
         let mut turns = 0;
         let mut tool_calls: u32 = 0;
         let mut convergence = ConvergenceTracker::new();
@@ -1083,6 +1128,11 @@ impl AgentLoop {
                                     context_receipt: Box::new(context_receipt.clone()),
                                     lats_telemetry: lats_telemetry.clone(),
                                     dpo_pairs: dpo_pairs.clone(),
+                                    pnn_hot_reloads,
+                                    active_pnn_digest: active_tropical_driver
+                                        .as_ref()
+                                        .and_then(|d| d.network().map(|n| n.sha256_digest.clone())),
+                                    lats_memo_hits: lats_memo.hits(),
                                 }),
                                 messages: persisted_messages(
                                     &messages,
@@ -1239,6 +1289,13 @@ impl AgentLoop {
                                         context_receipt: Box::new(context_receipt.clone()),
                                         lats_telemetry: lats_telemetry.clone(),
                                         dpo_pairs: dpo_pairs.clone(),
+                                        pnn_hot_reloads,
+                                        active_pnn_digest: active_tropical_driver
+                                            .as_ref()
+                                            .and_then(|d| {
+                                                d.network().map(|n| n.sha256_digest.clone())
+                                            }),
+                                        lats_memo_hits: lats_memo.hits(),
                                     }),
                                     messages: persisted_messages(
                                         &messages,
@@ -1264,6 +1321,11 @@ impl AgentLoop {
                         context_receipt: Box::new(context_receipt.clone()),
                         lats_telemetry: lats_telemetry.clone(),
                         dpo_pairs: dpo_pairs.clone(),
+                        pnn_hot_reloads,
+                        active_pnn_digest: active_tropical_driver
+                            .as_ref()
+                            .and_then(|d| d.network().map(|n| n.sha256_digest.clone())),
+                        lats_memo_hits: lats_memo.hits(),
                     }),
                     messages: persisted_messages(
                         &messages,
@@ -1299,15 +1361,17 @@ impl AgentLoop {
                     persistent_context.as_ref(),
                     context_insert_index,
                 )?;
-                let lats_denied = if let Some(lats) = &self.lats_config {
+                let lats_denied = if let (Some(lats), Some(live_driver)) =
+                    (&self.lats_config, active_tropical_driver.clone())
+                {
                     let decision_engine =
                         Arc::new(crate::decision_engine::SinglePassLogitEngine::with_driver(
-                            Arc::clone(&lats.tropical_driver)
+                            Arc::clone(&live_driver)
                                 as Arc<dyn crate::decision_engine::DecisionDriver>,
                         ));
                     let lats_engine = crate::lats_engine::LatsEngine::new_with_tropical(
                         lats.budget,
-                        Arc::clone(&lats.tropical_driver),
+                        Arc::clone(&live_driver),
                     )
                     .with_puct(lats.puct_c)
                     .with_escalation_threshold(lats.escalation_threshold);
@@ -1340,16 +1404,76 @@ impl AgentLoop {
                                 call.name(),
                                 call.arguments()
                             );
-                            if let Ok(search) = lats_engine.search_with_tropical_prompt(
+                            let active_digest = live_driver
+                                .network()
+                                .map(|net| net.sha256_digest.clone())
+                                .unwrap_or_default();
+                            let features =
+                                crate::decision_engine::DecisionFeatures::from_tool_context(
+                                    &prompt,
+                                    turn,
+                                    self.max_turns,
+                                    convergence.duplicate_failure_count(),
+                                );
+                            let memo_key = crate::lats_engine::LatsMemoKey::from_features(
+                                call.name(),
+                                &features,
+                                &active_digest,
+                            );
+                            let memoized = if lats.enable_memo {
+                                lats_memo.get(&memo_key).cloned()
+                            } else {
+                                None
+                            };
+                            let search_outcome = if let Some(hit) = memoized {
+                                Some((
+                                    hit.best_action,
+                                    hit.best_value,
+                                    0u32,
+                                    hit.max_depth_reached,
+                                    hit.nodes_created,
+                                    true,
+                                ))
+                            } else if let Ok(search) = lats_engine.search_with_tropical_prompt(
                                 &prompt,
                                 format!("turn:{turn}:{}", call.name()),
                                 &actions,
                                 &labels,
                             ) {
-                                let denied = search.best_action == Some(2);
+                                if lats.enable_memo {
+                                    lats_memo.insert(
+                                        memo_key,
+                                        crate::lats_engine::LatsMemoEntry {
+                                            best_action: search.best_action,
+                                            best_value: search.metrics.best_value,
+                                            nodes_created: search.metrics.nodes_created,
+                                            max_depth_reached: search.metrics.max_depth_reached,
+                                        },
+                                    );
+                                }
+                                Some((
+                                    search.best_action,
+                                    search.metrics.best_value,
+                                    search.metrics.rollouts,
+                                    search.metrics.max_depth_reached,
+                                    search.metrics.nodes_created,
+                                    false,
+                                ))
+                            } else {
+                                None
+                            };
+                            if let Some((
+                                best_action,
+                                best_value,
+                                rollouts,
+                                max_depth_reached,
+                                nodes_created,
+                                memo_hit,
+                            )) = search_outcome
+                            {
+                                let denied = best_action == Some(2);
                                 let mut emitted_dpo = false;
-                                if let (Some(mcts_act), Some(ref_act)) =
-                                    (search.best_action, reflex_idx)
+                                if let (Some(mcts_act), Some(ref_act)) = (best_action, reflex_idx)
                                     && mcts_act != ref_act
                                     && mcts_act < labels.len()
                                     && ref_act < labels.len()
@@ -1379,19 +1503,30 @@ impl AgentLoop {
                                     }
                                     dpo_pairs.push(pair);
                                     emitted_dpo = true;
+                                    if let Some(batch_k) = lats.auto_calibrate_threshold
+                                        && batch_k > 0
+                                        && dpo_pairs.len().is_multiple_of(batch_k)
+                                        && let Some(reloaded) =
+                                            try_hot_reload_pnn(&live_driver, &dpo_pairs)
+                                    {
+                                        active_tropical_driver = Some(Arc::new(reloaded));
+                                        pnn_hot_reloads = pnn_hot_reloads.saturating_add(1);
+                                        lats_memo.clear();
+                                    }
                                 }
                                 lats_telemetry.push(
                                     LatsTurnTelemetry::new(
                                         turn,
                                         call.name(),
                                         true,
-                                        search.metrics.rollouts,
-                                        search.metrics.max_depth_reached,
-                                        search.metrics.nodes_created,
-                                        search.best_action,
-                                        search.metrics.best_value,
+                                        rollouts,
+                                        max_depth_reached,
+                                        nodes_created,
+                                        best_action,
+                                        best_value,
                                     )
-                                    .with_dpo_emission(reflex_idx, emitted_dpo),
+                                    .with_dpo_emission(reflex_idx, emitted_dpo)
+                                    .with_memo_hit(memo_hit),
                                 );
                                 denied
                             } else {
@@ -1504,6 +1639,11 @@ impl AgentLoop {
                                     context_receipt: Box::new(context_receipt.clone()),
                                     lats_telemetry: lats_telemetry.clone(),
                                     dpo_pairs: dpo_pairs.clone(),
+                                    pnn_hot_reloads,
+                                    active_pnn_digest: active_tropical_driver
+                                        .as_ref()
+                                        .and_then(|d| d.network().map(|n| n.sha256_digest.clone())),
+                                    lats_memo_hits: lats_memo.hits(),
                                 }),
                                 messages: persisted_messages(
                                     &messages,
@@ -2134,6 +2274,9 @@ fn check_control(
                     context_receipt: Box::new(context_receipt.clone()),
                     lats_telemetry: lats_telemetry.to_vec(),
                     dpo_pairs: dpo_pairs.to_vec(),
+                    pnn_hot_reloads: 0,
+                    active_pnn_digest: None,
+                    lats_memo_hits: 0,
                 }),
                 messages: persisted_messages(messages, persistent_context, context_insert_index),
             }),
@@ -2388,3 +2531,53 @@ struct AgentRunContext<'a> {
 #[cfg(test)]
 #[path = "agent_loop_tests.rs"]
 mod tests;
+
+fn try_hot_reload_pnn(
+    current_driver: &crate::decision_engine::TropicalDecisionDriver,
+    pairs: &[pandora_types::DpoPair],
+) -> Option<crate::decision_engine::TropicalDecisionDriver> {
+    use crate::decision_engine::DecisionDriver;
+    let base_net = current_driver
+        .network()
+        .cloned()
+        .unwrap_or_else(crate::decision_engine::TropicalDecisionDriver::calibrated_network);
+    let candidate_net =
+        crate::decision_engine::TropicalDecisionDriver::calibrate_network_from_pairs(
+            &base_net, pairs, 0.05,
+        )
+        .ok()?;
+    let suite =
+        pandora_harnesses::decision_benchmark::DecisionBenchmarkSuite::default_real_task_traces();
+    let baseline_driver = crate::decision_engine::TropicalDecisionDriver::new(Some(base_net));
+    let candidate_driver = current_driver.with_network(candidate_net);
+    let base_report = suite
+        .evaluate_driver("baseline", |q| baseline_driver.evaluate_question(q))
+        .ok()?;
+    let cand_report = suite
+        .evaluate_driver("candidate", |q| candidate_driver.evaluate_question(q))
+        .ok()?;
+    let gate = crate::evolution::BayesianCanaryGate::default();
+    let base_canary = gate.evaluate(
+        base_report.correct_count as u32,
+        base_report
+            .trace_count
+            .saturating_sub(base_report.correct_count) as u32,
+        0.0,
+    );
+    let floor = (base_canary.lower_bound_95 - 1e-9).max(0.0);
+    let cand_verdict = gate.evaluate(
+        cand_report.correct_count as u32,
+        cand_report
+            .trace_count
+            .saturating_sub(cand_report.correct_count) as u32,
+        floor,
+    );
+    let non_regression = cand_report.branch_selection_accuracy + 1e-9
+        >= base_report.branch_selection_accuracy
+        && cand_report.mean_margin + 1e-9 >= base_report.mean_margin;
+    if non_regression && cand_verdict.promoted {
+        Some(candidate_driver)
+    } else {
+        None
+    }
+}

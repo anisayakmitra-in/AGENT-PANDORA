@@ -302,3 +302,25 @@ float pandora_tropical_max_plus_128(const float* a, const float* b) {
     }
     return best;
 }
+
+int pandora_build_verify_attestation_args(
+    const char* pnn_path,
+    const char** out_argv,
+    size_t max_args,
+    size_t* out_argc
+) {
+    if (!out_argv || !out_argc) {
+        return -1;
+    }
+    size_t argc = 0;
+    int rc = 0;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "model")) != 0) return rc;
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "verify-attestation")) != 0) return rc;
+    if (pnn_path && pnn_path[0] != '\0') {
+        if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--pnn")) != 0) return rc;
+        if ((rc = pandora_push_arg(out_argv, max_args, &argc, pnn_path)) != 0) return rc;
+    }
+    if ((rc = pandora_push_arg(out_argv, max_args, &argc, "--json")) != 0) return rc;
+    *out_argc = argc;
+    return 0;
+}

@@ -155,3 +155,85 @@ fn cli_model_calibrate_emits_hash_chained_attestation_receipts_and_detects_tampe
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn cli_model_verify_attestation_audits_ledger_and_rejects_tampering() {
+    let bin = env!("CARGO_BIN_EXE_pandora");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "pandora_phase12_verify_attest_{}_{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let pandora_dir = temp_dir.join(".pandora");
+    std::fs::create_dir_all(&pandora_dir).unwrap();
+    let pnn_path = pandora_dir.join("model_decision.pnn");
+
+    // Calibrate twice to build a 2-receipt hash chain
+    for _ in 0..2 {
+        let out = Command::new(bin)
+            .args([
+                "model",
+                "calibrate",
+                "--workspace",
+                temp_dir.to_str().unwrap(),
+                "--pnn",
+                pnn_path.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .expect("run pandora model calibrate");
+        assert!(out.status.success());
+    }
+
+    // Verify attestation ledger offline via CLI
+    let verify_ok = Command::new(bin)
+        .args([
+            "model",
+            "verify-attestation",
+            "--workspace",
+            temp_dir.to_str().unwrap(),
+            "--pnn",
+            pnn_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("run pandora model verify-attestation");
+    assert!(
+        verify_ok.status.success(),
+        "verify-attestation failed: {}",
+        String::from_utf8_lossy(&verify_ok.stderr)
+    );
+    let env: Value = serde_json::from_slice(&verify_ok.stdout).unwrap();
+    assert_eq!(env["valid"], true);
+    assert_eq!(env["chain_length"], 2);
+    assert_eq!(env["latest_sequence"], 1);
+    assert_eq!(env["pnn_digest_matches"], true);
+
+    // Tamper with live .pnn file and confirm verify-attestation fails closed
+    let mut pnn_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(&pnn_path).unwrap()).unwrap();
+    pnn_json["sha256_digest"] = serde_json::json!("f".repeat(64));
+    std::fs::write(&pnn_path, serde_json::to_string_pretty(&pnn_json).unwrap()).unwrap();
+
+    let verify_tampered = Command::new(bin)
+        .args([
+            "model",
+            "verify-attestation",
+            "--workspace",
+            temp_dir.to_str().unwrap(),
+            "--pnn",
+            pnn_path.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("run pandora model verify-attestation on tampered pnn");
+    assert!(
+        !verify_tampered.status.success(),
+        "verify-attestation must fail closed when .pnn digest mismatches attested ledger"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

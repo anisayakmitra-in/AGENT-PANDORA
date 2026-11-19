@@ -200,5 +200,12 @@ class PandoraClient {
         args.push(task);
         return this.run(args, runOptions);
     }
+    async modelVerifyAttestation(pnnPath, overrideOptions = {}) {
+        const args = ["model", "verify-attestation"];
+        if (pnnPath !== undefined && pnnPath.trim().length > 0) {
+            args.push("--pnn", pnnPath);
+        }
+        return this.run(args, overrideOptions);
+    }
 }
 exports.PandoraClient = PandoraClient;

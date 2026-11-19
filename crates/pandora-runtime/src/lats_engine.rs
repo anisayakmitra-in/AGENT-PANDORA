@@ -787,6 +787,119 @@ impl LatsEngine {
     }
 }
 
+/// 4-bit uniform quantization key for 7D [`crate::decision_engine::DecisionFeatures`] ($L_\infty$ error $\le 1/30$).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LatsMemoKey {
+    pub tool_name: String,
+    pub quantized_features: [u8; 7],
+    pub pnn_digest: String,
+}
+
+impl LatsMemoKey {
+    /// Quantizes each coordinate $x_i \in [0, 1]$ into $\{0, \dots, 15\}$.
+    pub fn from_features(
+        tool_name: impl Into<String>,
+        features: &crate::decision_engine::DecisionFeatures,
+        pnn_digest: impl Into<String>,
+    ) -> Self {
+        let arr = features.to_array();
+        let mut q = [0u8; 7];
+        for (i, &v) in arr.iter().enumerate() {
+            let c = if v.is_finite() {
+                v.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            q[i] = (c * 15.0 + 0.5).floor().clamp(0.0, 15.0) as u8;
+        }
+        Self {
+            tool_name: tool_name.into(),
+            quantized_features: q,
+            pnn_digest: pnn_digest.into(),
+        }
+    }
+}
+
+/// Bounded memoized MCTS decision entry (Phase 10).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LatsMemoEntry {
+    pub best_action: Option<usize>,
+    pub best_value: f64,
+    pub nodes_created: u64,
+    pub max_depth_reached: u32,
+}
+
+/// Bounded-capacity ($N_{\max} = 256$) prefix memoization cache for multi-turn LATS (Phase 10).
+#[derive(Clone, Debug)]
+pub struct LatsPrefixMemoCache {
+    entries: std::collections::HashMap<LatsMemoKey, LatsMemoEntry>,
+    order: std::collections::VecDeque<LatsMemoKey>,
+    capacity: usize,
+    hits: u64,
+    misses: u64,
+}
+
+impl Default for LatsPrefixMemoCache {
+    fn default() -> Self {
+        Self::new(256)
+    }
+}
+
+impl LatsPrefixMemoCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            order: std::collections::VecDeque::new(),
+            capacity: capacity.max(1),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    pub fn get(&mut self, key: &LatsMemoKey) -> Option<&LatsMemoEntry> {
+        if self.entries.contains_key(key) {
+            self.hits += 1;
+            self.entries.get(key)
+        } else {
+            self.misses += 1;
+            None
+        }
+    }
+
+    pub fn insert(&mut self, key: LatsMemoKey, entry: LatsMemoEntry) {
+        if !self.entries.contains_key(&key) {
+            if self.entries.len() >= self.capacity
+                && let Some(oldest) = self.order.pop_front()
+            {
+                self.entries.remove(&oldest);
+            }
+            self.order.push_back(key.clone());
+        }
+        self.entries.insert(key, entry);
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn hits(&self) -> u64 {
+        self.hits
+    }
+
+    pub fn misses(&self) -> u64 {
+        self.misses
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

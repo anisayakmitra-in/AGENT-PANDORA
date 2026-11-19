@@ -31,6 +31,16 @@ export interface LatsMetrics {
     turn_escalations?: number;
     turns?: LatsTurnTelemetry[];
 }
+export interface CalibrationAttestationVerification extends JsonObject {
+    valid: boolean;
+    chain_length: number;
+    latest_sequence: number;
+    latest_commitment: string;
+    latest_chain_hash: string;
+    pnn_digest_matches: boolean;
+    path: string;
+    receipt_path: string;
+}
 export interface RunLatsOptions extends PandoraRunOptions {
     rollouts?: number;
     depth?: number;
@@ -90,4 +100,5 @@ export declare class PandoraClient {
         strategy: string;
         lats_metrics?: LatsMetrics | null;
     }>>;
+    modelVerifyAttestation(pnnPath?: string, overrideOptions?: PandoraRunOptions): Promise<PandoraRunResult<CalibrationAttestationVerification>>;
 }

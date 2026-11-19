@@ -199,6 +199,29 @@ public:
         return out;
     }
 
+    /**
+     * Builds CLI argument list for `pandora model verify-attestation --json`.
+     */
+    [[nodiscard]] std::vector<std::string> BuildVerifyAttestationArgs(
+        const std::string& pnn_path = "") const {
+        std::array<const char*, 8> argv{};
+        size_t argc = 0;
+        const char* pnn_cstr = pnn_path.empty() ? nullptr : pnn_path.c_str();
+        if (pandora_build_verify_attestation_args(
+                pnn_cstr,
+                argv.data(),
+                argv.size(),
+                &argc) != 0) {
+            throw Exception("Failed to build verify-attestation CLI arguments");
+        }
+        std::vector<std::string> out;
+        out.reserve(argc);
+        for (size_t i = 0; i < argc; ++i) {
+            out.emplace_back(argv[i]);
+        }
+        return out;
+    }
+
     [[nodiscard]] bool HasAvx2() const noexcept {
         return pandora_cpuid_has_avx2();
     }

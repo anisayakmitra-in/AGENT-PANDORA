@@ -1146,6 +1146,8 @@ pub(super) fn execute_agent_core(
             puct_c,
             escalation_threshold,
             tropical_driver: std::sync::Arc::clone(&tropical_driver),
+            auto_calibrate_threshold: None,
+            enable_memo: true,
         });
         let lats_engine =
             pandora_runtime::LatsEngine::new_with_tropical(budget, tropical_driver.clone())
@@ -1553,6 +1555,7 @@ fn aggregate_lats_metrics_json(
         .or_else(|| telemetry.last().and_then(|t| t.best_action));
     let escalated = pre_escalated || telemetry.iter().any(|t| t.escalated);
     let dpo_pairs_emitted: usize = telemetry.iter().filter(|t| t.dpo_pair_emitted).count();
+    let memo_hits: usize = telemetry.iter().filter(|t| t.memo_hit).count();
     let turns_json: Vec<Value> = telemetry
         .iter()
         .map(|t| {
@@ -1567,6 +1570,7 @@ fn aggregate_lats_metrics_json(
                 "best_value": t.best_value(),
                 "reflex_action": t.reflex_action,
                 "dpo_pair_emitted": t.dpo_pair_emitted,
+                "memo_hit": t.memo_hit,
             })
         })
         .collect();
@@ -1580,6 +1584,7 @@ fn aggregate_lats_metrics_json(
         "turn_rollouts": turn_rollouts,
         "turn_escalations": turn_escalations,
         "dpo_pairs_emitted": dpo_pairs_emitted,
+        "memo_hits": memo_hits,
         "turns": turns_json,
     })
 }

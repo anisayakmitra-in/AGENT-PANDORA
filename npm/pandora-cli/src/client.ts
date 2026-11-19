@@ -42,6 +42,17 @@ export interface LatsMetrics {
   turns?: LatsTurnTelemetry[];
 }
 
+export interface CalibrationAttestationVerification extends JsonObject {
+  valid: boolean;
+  chain_length: number;
+  latest_sequence: number;
+  latest_commitment: string;
+  latest_chain_hash: string;
+  pnn_digest_matches: boolean;
+  path: string;
+  receipt_path: string;
+}
+
 export interface RunLatsOptions extends PandoraRunOptions {
   rollouts?: number;
   depth?: number;
@@ -322,5 +333,16 @@ export class PandoraClient {
     }
     args.push(task);
     return this.run(args, runOptions);
+  }
+
+  public async modelVerifyAttestation(
+    pnnPath?: string,
+    overrideOptions: PandoraRunOptions = {},
+  ): Promise<PandoraRunResult<CalibrationAttestationVerification>> {
+    const args = ["model", "verify-attestation"];
+    if (pnnPath !== undefined && pnnPath.trim().length > 0) {
+      args.push("--pnn", pnnPath);
+    }
+    return this.run<CalibrationAttestationVerification>(args, overrideOptions);
   }
 }

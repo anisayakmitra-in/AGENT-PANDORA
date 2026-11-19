@@ -167,6 +167,22 @@ int pandora_build_tropical_search_args(
  */
 float pandora_tropical_max_plus_128(const float* a, const float* b);
 
+/**
+ * Builds a `--json` CLI argv vector for `pandora model verify-attestation`.
+ *
+ * @param pnn_path Optional `.pnn` file path (NULL or empty omits `--pnn` and uses workspace default).
+ * @param out_argv Caller-allocated array receiving pointers into static literals / `pnn_path`.
+ * @param max_args Capacity of `out_argv` (at least 6).
+ * @param out_argc Receives the number of populated arguments.
+ * @return 0 on success, -1 on NULL output pointers, -2 if `out_argv` is too small.
+ */
+int pandora_build_verify_attestation_args(
+    const char* pnn_path,
+    const char** out_argv,
+    size_t max_args,
+    size_t* out_argc
+);
+
 #ifdef __cplusplus
 }
 #endif

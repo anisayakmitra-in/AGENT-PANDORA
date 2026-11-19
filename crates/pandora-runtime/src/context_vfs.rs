@@ -1713,7 +1713,12 @@ impl ContextVfs {
             HnswVector::Quantized(query_qv)
         };
 
-        let hnsw_results = index.search(&query_vector, limit, ef_search);
+        let candidate_limit = if uses_tropical {
+            limit.saturating_mul(2).max(limit.saturating_add(4))
+        } else {
+            limit
+        };
+        let hnsw_results = index.search(&query_vector, candidate_limit, ef_search);
 
         let mut results = Vec::with_capacity(hnsw_results.len());
         for res in hnsw_results {
@@ -1722,16 +1727,41 @@ impl ContextVfs {
             }
             let doc = &docs[res.doc_id];
             let snippet = generate_snippet(&doc.content, query);
+            let tier_bias = if uses_tropical {
+                match doc.tier {
+                    Some(MemoryTier::L0) => 0.040,
+                    Some(MemoryTier::L1) => 0.030,
+                    Some(MemoryTier::L2) => 0.020,
+                    Some(MemoryTier::L3) => 0.010,
+                    Some(MemoryTier::L4) | None => 0.0,
+                }
+            } else {
+                0.0
+            };
+            let weighted_score = (res.similarity * 0.95 + tier_bias).clamp(0.0, 1.0);
             results.push(SearchResultItem {
                 uri: doc.uri.clone(),
                 title: doc.title.clone(),
                 snippet,
                 sparse_score: 0.0,
                 dense_score: res.similarity,
-                hybrid_score: res.similarity,
+                hybrid_score: weighted_score,
                 tier: doc.tier,
                 intent: doc.intent,
             });
+        }
+        if uses_tropical {
+            results.sort_by(|a, b| {
+                b.hybrid_score
+                    .partial_cmp(&a.hybrid_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        b.dense_score
+                            .partial_cmp(&a.dense_score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            });
+            results.truncate(limit);
         }
 
         Ok(results)

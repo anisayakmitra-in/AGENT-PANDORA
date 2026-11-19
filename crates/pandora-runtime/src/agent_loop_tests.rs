@@ -2046,6 +2046,8 @@ fn lats_per_turn_escalation_denies_unsafe_tool_and_records_telemetry() {
         puct_c: 1.4,
         escalation_threshold: 0.15,
         tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+        auto_calibrate_threshold: None,
+        enable_memo: true,
     };
 
     let summary = AgentLoop::new(5, 5)
@@ -2123,6 +2125,8 @@ fn lats_high_threshold_escalates_safe_tool_and_preserves_telemetry_on_controlled
         puct_c: 1.4,
         escalation_threshold: 0.9999,
         tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+        auto_calibrate_threshold: None,
+        enable_memo: true,
     };
     let control = StopAfterEffect;
 
@@ -2198,6 +2202,8 @@ fn lats_non_escalated_reject_denies_destructive_tool_and_records_telemetry() {
         puct_c: 1.4,
         escalation_threshold: 0.15,
         tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+        auto_calibrate_threshold: None,
+        enable_memo: true,
     };
 
     let summary = AgentLoop::new(5, 5)
@@ -2289,6 +2295,8 @@ fn lats_non_escalated_allow_and_require_confirm_defer_to_policy_context() {
         puct_c: 1.4,
         escalation_threshold: 0.15,
         tropical_driver: Arc::new(crate::decision_engine::TropicalDecisionDriver::calibrated()),
+        auto_calibrate_threshold: None,
+        enable_memo: true,
     };
 
     let err = AgentLoop::new(5, 5)

@@ -16,7 +16,7 @@ const DEFAULT_HF_REVISION: &str = "main";
 const DEFAULT_HF_FILENAME: &str = "model_decision.pnn";
 
 const MOIRA_USAGE: &str = "\
-usage: pandora <model|moira> <inspect|doctor|status|sync|calibrate> [options]
+usage: pandora <model|moira> <inspect|doctor|status|sync|calibrate|verify-attestation> [options]
 
 subcommands:
   inspect [--pnn <path>] [--workspace <dir>]
@@ -27,6 +27,8 @@ subcommands:
       Explicitly download and verify model_decision.pnn from Hugging Face (default: anisayakmitra-in/FATE-O-SISTERS).
   calibrate [--pairs <path>] [--pnn <path>] [--workspace <dir>] [--dry-run]
       Calibrate model_decision.pnn from DpoPair traces gated by DecisionBenchmarkSuite canary checks.
+  verify-attestation [--pnn <path>] [--workspace <dir>]
+      Cryptographically audit the hash-chained .pnn calibration attestation ledger (<pnn>.attestation.jsonl).
 ";
 
 fn cmd_label(invoked_as: &str, action: &str) -> &'static str {
@@ -37,11 +39,13 @@ fn cmd_label(invoked_as: &str, action: &str) -> &'static str {
         ("moira", "status") => "moira status",
         ("moira", "sync") => "moira sync",
         ("moira", "calibrate") => "moira calibrate",
+        ("moira", "verify-attestation") => "moira verify-attestation",
         (_, "help") => "model help",
         (_, "inspect") => "model inspect",
         (_, "doctor") => "model doctor",
         (_, "status") => "model status",
         (_, "calibrate") => "model calibrate",
+        (_, "verify-attestation") => "model verify-attestation",
         _ => "model sync",
     }
 }
@@ -69,6 +73,7 @@ pub fn execute(invoked_as: &str, args: &[String]) -> Result<CommandResult, CliEr
         "doctor" | "status" => doctor_command(invoked_as, subcommand, rest),
         "sync" | "pull" | "download" => sync_command(invoked_as, rest),
         "calibrate" => calibrate_command(invoked_as, rest),
+        "verify-attestation" => verify_attestation_command(invoked_as, rest),
         "list" => super::models::execute(args),
         other => Err(CliError::usage(format!(
             "unknown {invoked_as} subcommand '{other}'.\n\n{MOIRA_USAGE}"
@@ -943,6 +948,126 @@ fn ensure_pnn_parent_dir(pnn_path: &Path) -> Result<(), CliError> {
         })?;
     }
     Ok(())
+}
+
+fn verify_attestation_command(
+    invoked_as: &str,
+    args: &[String],
+) -> Result<CommandResult, CliError> {
+    use pandora_runtime::decision_engine::CalibrationAttestationReceipt;
+
+    let parsed = parse_options(args, &["pnn", "workspace", "config", "data-dir"])?;
+    let ws = resolve_workspace_root(&parsed);
+    let pnn_path = parsed
+        .value("pnn")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ws.join(".pandora/model_decision.pnn"));
+    let receipt_path = attestation_receipt_path(&pnn_path);
+
+    if !receipt_path.is_file() {
+        return Err(CliError::execution(
+            format!(
+                "calibration attestation ledger not found at {}",
+                receipt_path.display()
+            ),
+            json!({ "path": pnn_path, "receipt_path": receipt_path, "valid": false }),
+        ));
+    }
+
+    let raw = fs::read_to_string(&receipt_path).map_err(|e| {
+        CliError::execution(
+            format!(
+                "failed to read calibration attestation ledger {}: {e}",
+                receipt_path.display()
+            ),
+            json!({ "receipt_path": receipt_path, "valid": false }),
+        )
+    })?;
+
+    let mut receipts = Vec::new();
+    for (idx, line) in raw.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let r: CalibrationAttestationReceipt = serde_json::from_str(l).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "malformed calibration attestation receipt at {}:{}: {e}",
+                    receipt_path.display(),
+                    idx + 1
+                ),
+                json!({ "receipt_path": receipt_path, "line": idx + 1, "valid": false }),
+            )
+        })?;
+        receipts.push(r);
+    }
+
+    if receipts.is_empty() || !CalibrationAttestationReceipt::verify_chain(&receipts) {
+        return Err(CliError::execution(
+            format!(
+                "calibration attestation hash-chain verification failed for {}",
+                receipt_path.display()
+            ),
+            json!({
+                "path": pnn_path,
+                "receipt_path": receipt_path,
+                "chain_length": receipts.len(),
+                "valid": false
+            }),
+        ));
+    }
+
+    let latest = receipts.last().unwrap();
+    let pnn_digest_matches = if pnn_path.is_file() {
+        let net = TropicalNetwork::load_from_file(&pnn_path).map_err(|e| {
+            CliError::execution(
+                format!("failed to load .pnn weights at {}: {e}", pnn_path.display()),
+                json!({ "path": pnn_path, "valid": false }),
+            )
+        })?;
+        net.sha256_digest == latest.candidate_digest
+    } else {
+        true
+    };
+
+    if !pnn_digest_matches {
+        return Err(CliError::execution(
+            format!(
+                "live .pnn digest does not match latest attested candidate_digest in {}",
+                receipt_path.display()
+            ),
+            json!({
+                "path": pnn_path,
+                "receipt_path": receipt_path,
+                "latest_sequence": latest.sequence,
+                "expected_candidate_digest": latest.candidate_digest,
+                "pnn_digest_matches": false,
+                "valid": false
+            }),
+        ));
+    }
+
+    Ok(success(
+        cmd_label(invoked_as, "verify-attestation"),
+        json!({
+            "valid": true,
+            "chain_length": receipts.len(),
+            "latest_sequence": latest.sequence,
+            "latest_commitment": latest.commitment,
+            "latest_chain_hash": latest.chain_hash,
+            "pnn_digest_matches": pnn_digest_matches,
+            "path": pnn_path,
+            "receipt_path": receipt_path,
+        }),
+        format!(
+            "Calibration attestation ledger verified (chain_length: {}, latest_seq: {}, commitment: {}, pnn_match: {})",
+            receipts.len(),
+            latest.sequence,
+            &latest.commitment[..16],
+            pnn_digest_matches,
+        ),
+    ))
 }
 
 #[cfg(test)]
