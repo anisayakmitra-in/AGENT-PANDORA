@@ -8,8 +8,8 @@ use pandora_runtime::parliament::{Parliament, ToolSafetyGateVerdict};
 use pandora_runtime::permit_store::PermitError;
 use pandora_runtime::reference_monitor::{AuthorizationError, ReferenceMonitor};
 use pandora_types::{
-    Capability, EffectPermit, EffectTarget, ExecutionId, ExecutionProfile, ExecutionProfileBinding,
-    ExecutionProfileBindingKind, GeneId, Operation, OperationRequest, ParliamentDecision, PermitId,
+    Capability, EffectTarget, ExecutionId, ExecutionProfile, ExecutionProfileBinding,
+    ExecutionProfileBindingKind, GeneId, Operation, OperationRequest, ParliamentDecision,
     PolicyContext, PrincipalId, ResourceScope, SessionId, Timestamp, ToolSafetyChoice,
     hash_artifact,
 };
@@ -602,21 +602,25 @@ fn test_stress_reference_monitor_blocks_destructive_tools() {
         assert!(matches!(err, AuthorizationError::Denied { .. }));
     }
 
-    // Attempting to consume an unissued permit must return UnknownPermit
-    let fake_nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| u64::from(d.subsec_nanos()).saturating_add(1))
-        .unwrap_or(1);
-    let fake_permit = EffectPermit::issue(
-        PermitId::new("permit-fake").unwrap(),
-        &request,
-        1,
-        fake_nonce,
-        now,
-        Timestamp::from_unix_seconds(now.as_unix_seconds() + 60),
+    // Attempting to consume a permit not issued by `monitor` must return UnknownPermit
+    let isolated_monitor = ReferenceMonitor::new_with_policy(
+        PolicyContext::new(
+            1,
+            [Capability::FilesystemRead, Capability::ProcessExecute],
+            [],
+        ),
+        60,
     );
+    let foreign_permit = isolated_monitor
+        .authorize_tool_safety(
+            request.clone(),
+            "view_file",
+            &json!({"path": "README.md"}),
+            now,
+        )
+        .expect("foreign monitor issues valid permit for safe read");
     assert_eq!(
-        monitor.store().consume(fake_permit, &request, now),
+        monitor.store().consume(foreign_permit, &request, now),
         Err(PermitError::UnknownPermit)
     );
 }
