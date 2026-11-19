@@ -441,6 +441,8 @@ pub struct LatsTurnTelemetry {
     pub nodes_created: u64,
     pub best_action: Option<usize>,
     best_value_bits: u64,
+    pub reflex_action: Option<usize>,
+    pub dpo_pair_emitted: bool,
 }
 
 impl LatsTurnTelemetry {
@@ -464,7 +466,19 @@ impl LatsTurnTelemetry {
             nodes_created,
             best_action,
             best_value_bits: best_value.to_bits(),
+            reflex_action: None,
+            dpo_pair_emitted: false,
         }
+    }
+
+    pub fn with_dpo_emission(
+        mut self,
+        reflex_action: Option<usize>,
+        dpo_pair_emitted: bool,
+    ) -> Self {
+        self.reflex_action = reflex_action;
+        self.dpo_pair_emitted = dpo_pair_emitted;
+        self
     }
 
     pub fn best_value(&self) -> f64 {
@@ -480,12 +494,47 @@ pub struct LatsLoopConfig {
     pub tropical_driver: Arc<crate::decision_engine::TropicalDecisionDriver>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl LatsLoopConfig {
+    pub fn new(
+        budget: crate::strategies::StrategyBudget,
+        puct_c: f64,
+        escalation_threshold: f64,
+        tropical_driver: Arc<crate::decision_engine::TropicalDecisionDriver>,
+    ) -> Self {
+        Self {
+            budget,
+            puct_c,
+            escalation_threshold,
+            tropical_driver,
+        }
+    }
+
+    /// Configures an optional JSONL path (e.g., `.pandora/dpo_pairs.jsonl`) to persist
+    /// [`pandora_types::DpoPair`] records emitted when LATS overrides the System 1 reflex prior.
+    pub fn with_dpo_output_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        let updated = self
+            .tropical_driver
+            .as_ref()
+            .clone()
+            .with_dpo_output_path(path);
+        self.tropical_driver = Arc::new(updated);
+        self
+    }
+
+    pub fn dpo_output_path(&self) -> Option<&std::path::Path> {
+        self.tropical_driver.dpo_output_path()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct AgentRunEvidence {
     provider_metrics: Vec<ProviderCallMetrics>,
     context_receipt: Box<ContextReceipt>,
     lats_telemetry: Vec<LatsTurnTelemetry>,
+    dpo_pairs: Vec<pandora_types::DpoPair>,
 }
+
+impl Eq for AgentRunEvidence {}
 
 impl AgentRunSummary {
     pub fn final_text(&self) -> &str {
@@ -522,6 +571,14 @@ impl AgentRunSummary {
 
     pub fn lats_telemetry(&self) -> &[LatsTurnTelemetry] {
         &self.evidence.lats_telemetry
+    }
+
+    pub fn dpo_pairs(&self) -> &[pandora_types::DpoPair] {
+        &self.evidence.dpo_pairs
+    }
+
+    pub fn dpo_pairs_emitted(&self) -> usize {
+        self.evidence.dpo_pairs.len()
     }
 
     pub fn messages(&self) -> &[ChatMessage] {
@@ -936,6 +993,7 @@ impl AgentLoop {
         let mut provider_receipts = Vec::new();
         let mut provider_metrics = Vec::new();
         let mut lats_telemetry = Vec::new();
+        let mut dpo_pairs: Vec<pandora_types::DpoPair> = Vec::new();
         let mut turns = 0;
         let mut tool_calls: u32 = 0;
         let mut convergence = ConvergenceTracker::new();
@@ -956,6 +1014,7 @@ impl AgentLoop {
                     &provider_metrics,
                     &context_receipt,
                     &lats_telemetry,
+                    &dpo_pairs,
                     &messages,
                     persistent_context.as_ref(),
                     context_insert_index,
@@ -1002,6 +1061,7 @@ impl AgentLoop {
                             &provider_metrics,
                             &context_receipt,
                             &lats_telemetry,
+                            &dpo_pairs,
                             &messages,
                             persistent_context.as_ref(),
                             context_insert_index,
@@ -1022,6 +1082,7 @@ impl AgentLoop {
                                     provider_metrics,
                                     context_receipt: Box::new(context_receipt.clone()),
                                     lats_telemetry: lats_telemetry.clone(),
+                                    dpo_pairs: dpo_pairs.clone(),
                                 }),
                                 messages: persisted_messages(
                                     &messages,
@@ -1047,6 +1108,7 @@ impl AgentLoop {
                 &provider_metrics,
                 &context_receipt,
                 &lats_telemetry,
+                &dpo_pairs,
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
@@ -1080,6 +1142,7 @@ impl AgentLoop {
                 &provider_metrics,
                 &context_receipt,
                 &lats_telemetry,
+                &dpo_pairs,
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
@@ -1111,6 +1174,7 @@ impl AgentLoop {
                 &provider_metrics,
                 &context_receipt,
                 &lats_telemetry,
+                &dpo_pairs,
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
@@ -1174,6 +1238,7 @@ impl AgentLoop {
                                         provider_metrics,
                                         context_receipt: Box::new(context_receipt.clone()),
                                         lats_telemetry: lats_telemetry.clone(),
+                                        dpo_pairs: dpo_pairs.clone(),
                                     }),
                                     messages: persisted_messages(
                                         &messages,
@@ -1198,6 +1263,7 @@ impl AgentLoop {
                         provider_metrics,
                         context_receipt: Box::new(context_receipt.clone()),
                         lats_telemetry: lats_telemetry.clone(),
+                        dpo_pairs: dpo_pairs.clone(),
                     }),
                     messages: persisted_messages(
                         &messages,
@@ -1228,6 +1294,7 @@ impl AgentLoop {
                     &provider_metrics,
                     &context_receipt,
                     &lats_telemetry,
+                    &dpo_pairs,
                     &messages,
                     persistent_context.as_ref(),
                     context_insert_index,
@@ -1245,12 +1312,27 @@ impl AgentLoop {
                     .with_puct(lats.puct_c)
                     .with_escalation_threshold(lats.escalation_threshold);
                     let parliament = crate::parliament::Parliament::new(1)
-                        .with_decision_engine(decision_engine)
+                        .with_decision_engine(Arc::clone(&decision_engine))
                         .with_lats_engine(Arc::new(lats_engine.clone()))
                         .with_uncertainty_threshold(lats.escalation_threshold);
                     if let Ok(gate) = parliament.evaluate_tool_safety(call.name(), call.arguments())
                     {
                         if gate.is_escalated() {
+                            let esc_margin = match &gate {
+                                crate::parliament::ToolSafetyGateVerdict::EscalateToSystem2 {
+                                    margin,
+                                    ..
+                                } => *margin,
+                                _ => 0.0,
+                            };
+                            let reflex_idx = decision_engine
+                                .evaluate_tool_safety(call.name(), call.arguments())
+                                .ok()
+                                .map(|v| match v.choice() {
+                                    pandora_types::ToolSafetyChoice::Allow => 0usize,
+                                    pandora_types::ToolSafetyChoice::RequireConfirm => 1usize,
+                                    pandora_types::ToolSafetyChoice::Reject => 2usize,
+                                });
                             let actions = [0usize, 1, 2];
                             let labels = ["allow", "require_confirm", "reject"];
                             let prompt = format!(
@@ -1265,16 +1347,52 @@ impl AgentLoop {
                                 &labels,
                             ) {
                                 let denied = search.best_action == Some(2);
-                                lats_telemetry.push(LatsTurnTelemetry::new(
-                                    turn,
-                                    call.name(),
-                                    true,
-                                    search.metrics.rollouts,
-                                    search.metrics.max_depth_reached,
-                                    search.metrics.nodes_created,
-                                    search.best_action,
-                                    search.metrics.best_value,
-                                ));
+                                let mut emitted_dpo = false;
+                                if let (Some(mcts_act), Some(ref_act)) =
+                                    (search.best_action, reflex_idx)
+                                    && mcts_act != ref_act
+                                    && mcts_act < labels.len()
+                                    && ref_act < labels.len()
+                                {
+                                    let pair = crate::decision_engine::TropicalDecisionDriver::emit_dpo_pair_from_escalation(
+                                        format!("dpo-{}-turn-{turn}", session.id().as_str()),
+                                        &prompt,
+                                        labels[mcts_act],
+                                        labels[ref_act],
+                                        esc_margin,
+                                    );
+                                    if let Some(dpo_path) = lats.dpo_output_path() {
+                                        if let Some(parent) = dpo_path.parent()
+                                            && !parent.as_os_str().is_empty()
+                                        {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+                                        if let Ok(serialized_line) = serde_json::to_string(&pair)
+                                            && let Ok(mut f) = std::fs::OpenOptions::new()
+                                                .create(true)
+                                                .append(true)
+                                                .open(dpo_path)
+                                        {
+                                            use std::io::Write;
+                                            let _ = writeln!(f, "{serialized_line}");
+                                        }
+                                    }
+                                    dpo_pairs.push(pair);
+                                    emitted_dpo = true;
+                                }
+                                lats_telemetry.push(
+                                    LatsTurnTelemetry::new(
+                                        turn,
+                                        call.name(),
+                                        true,
+                                        search.metrics.rollouts,
+                                        search.metrics.max_depth_reached,
+                                        search.metrics.nodes_created,
+                                        search.best_action,
+                                        search.metrics.best_value,
+                                    )
+                                    .with_dpo_emission(reflex_idx, emitted_dpo),
+                                );
                                 denied
                             } else {
                                 false
@@ -1364,6 +1482,7 @@ impl AgentLoop {
                             &provider_metrics,
                             &context_receipt,
                             &lats_telemetry,
+                            &dpo_pairs,
                             &messages,
                             persistent_context.as_ref(),
                             context_insert_index,
@@ -1384,6 +1503,7 @@ impl AgentLoop {
                                     provider_metrics,
                                     context_receipt: Box::new(context_receipt.clone()),
                                     lats_telemetry: lats_telemetry.clone(),
+                                    dpo_pairs: dpo_pairs.clone(),
                                 }),
                                 messages: persisted_messages(
                                     &messages,
@@ -1990,6 +2110,7 @@ fn check_control(
     provider_metrics: &[ProviderCallMetrics],
     context_receipt: &ContextReceipt,
     lats_telemetry: &[LatsTurnTelemetry],
+    dpo_pairs: &[pandora_types::DpoPair],
     messages: &[ChatMessage],
     persistent_context: Option<&ChatMessage>,
     context_insert_index: usize,
@@ -2012,6 +2133,7 @@ fn check_control(
                     provider_metrics: provider_metrics.to_vec(),
                     context_receipt: Box::new(context_receipt.clone()),
                     lats_telemetry: lats_telemetry.to_vec(),
+                    dpo_pairs: dpo_pairs.to_vec(),
                 }),
                 messages: persisted_messages(messages, persistent_context, context_insert_index),
             }),

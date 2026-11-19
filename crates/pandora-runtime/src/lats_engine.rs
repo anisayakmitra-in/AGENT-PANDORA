@@ -260,10 +260,27 @@ impl LatsEngine {
         initial_state: S,
         actions: &[usize],
         priors: &[f64],
+        value_fn: F,
+    ) -> Result<LatsSearchResult<S>, LatsError>
+    where
+        S: Clone,
+        F: FnMut(&S, usize) -> f64,
+    {
+        self.search_with(initial_state, actions, priors, |s, _a| s.clone(), value_fn)
+    }
+
+    /// Run a full LATS search with an explicit state transition operator `transition_fn(&parent_state, action) -> child_state`.
+    pub fn search_with<S, T, F>(
+        &self,
+        initial_state: S,
+        actions: &[usize],
+        priors: &[f64],
+        mut transition_fn: T,
         mut value_fn: F,
     ) -> Result<LatsSearchResult<S>, LatsError>
     where
         S: Clone,
+        T: FnMut(&S, usize) -> S,
         F: FnMut(&S, usize) -> f64,
     {
         if actions.is_empty() {
@@ -392,9 +409,8 @@ impl LatsEngine {
                     }
                 }
                 if let Some(action) = to_try {
-                    // Compute child state via a default transition: clone parent state.
-                    // Callers that need real transitions should use search_with.
-                    let parent_state = node_by_id(&nodes, current).unwrap().state.clone();
+                    let parent_ref = &node_by_id(&nodes, current).unwrap().state;
+                    let child_state = transition_fn(parent_ref, action);
                     let child_id = new_id(&mut next_id);
                     let prior = priors[action.min(priors.len() - 1)];
                     nodes.push(LatsNode {
@@ -402,7 +418,7 @@ impl LatsEngine {
                         parent: Some(current),
                         children: Vec::new(),
                         action: Some(action),
-                        state: parent_state,
+                        state: child_state,
                         visits: 0,
                         value_sum: 0.0,
                         prior,
@@ -602,11 +618,171 @@ impl LatsEngine {
             .evaluate_action_priors(&root_prompt, "", &label_strs)
             .map_err(|_| LatsError::DimensionMismatch)?;
 
-        // 2. Run MCTS rollout with zero-multiplication tropical leaf evaluation
-        self.search(initial_state, actions, &priors, |leaf_state, action_idx| {
-            let label = label_strs.get(action_idx).copied().unwrap_or(label_strs[0]);
-            let leaf_prompt = context_fn(leaf_state);
-            driver.evaluate_leaf_value(&leaf_prompt, "", label)
+        // 2. Run MCTS rollout with 7D DecisionFeatures state transitions and tropical leaf evaluation
+        let root_features =
+            crate::decision_engine::DecisionFeatures::from_tool_context(&root_prompt, 1, 8, 0);
+        #[derive(Clone, Debug)]
+        struct TropicalContextState<TState> {
+            inner: TState,
+            features: crate::decision_engine::DecisionFeatures,
+        }
+        let wrapped_init = TropicalContextState {
+            inner: initial_state,
+            features: root_features,
+        };
+        let raw = self.search_with(
+            wrapped_init,
+            actions,
+            &priors,
+            |parent, act| TropicalContextState {
+                inner: parent.inner.clone(),
+                features: parent.features.transition(act),
+            },
+            |leaf_state, action_idx| {
+                let label = label_strs.get(action_idx).copied().unwrap_or(label_strs[0]);
+                let leaf_prompt = context_fn(&leaf_state.inner);
+                let pnn_val = driver.evaluate_leaf_value(&leaf_prompt, "", label);
+                let feat_val =
+                    driver.evaluate_features_leaf(&leaf_prompt, label, &leaf_state.features);
+                (0.85 * pnn_val + 0.15 * feat_val).clamp(0.0, 1.0)
+            },
+        )?;
+        Ok(LatsSearchResult {
+            best_action: raw.best_action,
+            best_value: raw.best_value,
+            metrics: raw.metrics,
+            root_visits: raw.root_visits,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    /// Executes multi-step PUCT MCTS rollouts over the 7D [`crate::decision_engine::DecisionFeatures`]
+    /// state space using the deterministic transition operator $T: [0, 1]^7 \times \{0, 1, 2, 3\} \to [0, 1]^7$
+    /// across rollout depth $d \in \{1, \dots, D\}$ and scoring leaves with the calibrated `.pnn`
+    /// `TropicalNetwork` (`TropicalDecisionDriver`):
+    /// $$V_{\text{LATS}}(\mathbf{x}_0) = \sum_{d=0}^{D-1} \gamma^d R(\mathbf{x}_d, a_d) + \gamma^D \sigma\!\bigl(f_{\text{PNN}}(\mathbf{x}_D)_0\bigr)$$
+    pub fn search_with_feature_rollouts<L>(
+        &self,
+        prompt: &str,
+        initial_features: crate::decision_engine::DecisionFeatures,
+        actions: &[usize],
+        action_labels: &[L],
+        gamma: f64,
+    ) -> Result<LatsSearchResult<crate::decision_engine::DecisionFeatures>, LatsError>
+    where
+        L: AsRef<str>,
+    {
+        if actions.is_empty() {
+            return Err(LatsError::EmptyCandidates);
+        }
+        if actions.len() != action_labels.len() {
+            return Err(LatsError::DimensionMismatch);
+        }
+
+        let fallback_driver;
+        let driver: &TropicalDecisionDriver = match &self.tropical_driver {
+            Some(d) => d.as_ref(),
+            None => {
+                fallback_driver = TropicalDecisionDriver::calibrated();
+                &fallback_driver
+            }
+        };
+
+        let label_strs: Vec<&str> = action_labels.iter().map(|l| l.as_ref()).collect();
+        let priors = driver
+            .evaluate_action_priors(prompt, "", &label_strs)
+            .map_err(|_| LatsError::DimensionMismatch)?;
+
+        let discount = if gamma.is_finite() {
+            gamma.clamp(0.0, 1.0)
+        } else {
+            0.90
+        };
+        let horizon = self.budget.max_depth().clamp(1, 6) as usize;
+
+        #[derive(Clone, Debug)]
+        struct RolloutNodeState {
+            features: crate::decision_engine::DecisionFeatures,
+            trajectory: Vec<usize>,
+        }
+
+        let root_node_state = RolloutNodeState {
+            features: initial_features,
+            trajectory: Vec::new(),
+        };
+
+        let raw_res = self.search_with(
+            root_node_state,
+            actions,
+            &priors,
+            |parent, act| {
+                let mut traj = parent.trajectory.clone();
+                traj.push(act);
+                RolloutNodeState {
+                    features: parent.features.transition(act),
+                    trajectory: traj,
+                }
+            },
+            |leaf, action_idx| {
+                let mut rollout_traj = leaf.trajectory.clone();
+                if rollout_traj.is_empty() {
+                    rollout_traj.push(action_idx);
+                }
+                let mut sim_state = leaf.features;
+                while rollout_traj.len() < horizon {
+                    // Reject (2) and Abort (3) are absorbing terminal decisions
+                    if rollout_traj.last().copied().unwrap_or(0) >= 2 {
+                        break;
+                    }
+                    // Continuation policy during multi-step lookahead:
+                    // - If hazard is repaired (failure <= 0.35), Proceed (0)
+                    // - If hazard is severe (failure >= 0.75), Escalate/Reject (2)
+                    // - Otherwise Repair (1)
+                    let next_act = if sim_state.failure <= 0.35 {
+                        0
+                    } else if sim_state.failure >= 0.75 && actions.contains(&2) {
+                        2
+                    } else if actions.contains(&1) {
+                        1
+                    } else {
+                        0
+                    };
+                    sim_state = sim_state.transition(next_act);
+                    rollout_traj.push(next_act);
+                }
+                let raw_return = driver.evaluate_multistep_return(
+                    prompt,
+                    &initial_features,
+                    &rollout_traj,
+                    &label_strs,
+                    discount,
+                );
+                // Normalize by geometric discount sum so backed-up Q-values stay in [0.0, 1.0]
+                let mut norm_denom = 0.0;
+                let mut g = 1.0;
+                for _ in 0..=rollout_traj.len() {
+                    norm_denom += g;
+                    g *= discount;
+                }
+                if norm_denom > 0.0 {
+                    (raw_return / norm_denom).clamp(0.0, 1.0)
+                } else {
+                    raw_return.clamp(0.0, 1.0)
+                }
+            },
+        )?;
+
+        let mut metrics = raw_res.metrics;
+        if metrics.rollouts > 0 {
+            metrics.max_depth_reached = metrics.max_depth_reached.max(horizon as u32);
+        }
+
+        Ok(LatsSearchResult {
+            best_action: raw_res.best_action,
+            best_value: raw_res.best_value,
+            metrics,
+            root_visits: raw_res.root_visits,
+            _marker: std::marker::PhantomData,
         })
     }
 }

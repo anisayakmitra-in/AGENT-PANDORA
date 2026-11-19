@@ -578,28 +578,39 @@ fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult,
                 json!({"pairs_path": pairs_path}),
             )
         })?;
-        serde_json::from_str(&raw)
-            .map_err(|e| CliError::usage(format!("invalid DpoPair JSON in {pairs_path}: {e}")))?
+        parse_dpo_pairs_content(&raw, pairs_path)?
     } else {
-        vec![
-            MoiraDecisionDriver::emit_dpo_pair_from_escalation(
-                "dpo-default-1",
-                "run_command rm -rf /",
-                "reject",
-                "allow",
-                0.08,
-            ),
-            MoiraDecisionDriver::emit_dpo_pair_from_escalation(
-                "dpo-default-2",
-                "view_file README.md",
-                "allow",
-                "require_confirm",
-                0.10,
-            ),
-        ]
+        let default_jsonl = ws.join(".pandora/dpo_pairs.jsonl");
+        if default_jsonl.is_file()
+            && let Ok(raw) = fs::read_to_string(&default_jsonl)
+            && let Ok(loaded) = parse_dpo_pairs_content(&raw, &default_jsonl.display().to_string())
+            && !loaded.is_empty()
+        {
+            loaded
+        } else {
+            vec![
+                MoiraDecisionDriver::emit_dpo_pair_from_escalation(
+                    "dpo-default-1",
+                    "run_command rm -rf /",
+                    "reject",
+                    "allow",
+                    0.08,
+                ),
+                MoiraDecisionDriver::emit_dpo_pair_from_escalation(
+                    "dpo-default-2",
+                    "view_file README.md",
+                    "allow",
+                    "require_confirm",
+                    0.10,
+                ),
+            ]
+        }
     };
 
-    use pandora_runtime::decision_engine::DecisionDriver;
+    use pandora_runtime::decision_engine::{
+        CalibrationAttestationReceipt, DecisionDriver, compute_dpo_dataset_digest,
+    };
+    let dpo_dataset_digest = compute_dpo_dataset_digest(&pairs);
     let suite =
         pandora_harnesses::decision_benchmark::DecisionBenchmarkSuite::default_real_task_traces();
     let baseline_driver = MoiraDecisionDriver::new(Some(base_network.clone()));
@@ -634,6 +645,18 @@ fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult,
         >= baseline_report.branch_selection_accuracy
         && candidate_report.mean_margin + 1e-9 >= baseline_report.mean_margin;
     let canary_passed = non_regression_passed && bayesian_verdict.promoted;
+
+    let receipt_path = attestation_receipt_path(&pnn_path);
+    let (next_seq, prev_hash) = load_previous_receipt_tip(&receipt_path)?;
+    let attestation_receipt = CalibrationAttestationReceipt::new(
+        next_seq,
+        prev_hash,
+        base_network.sha256_digest.clone(),
+        candidate_network.sha256_digest.clone(),
+        dpo_dataset_digest.clone(),
+        bayesian_verdict.lower_bound_95,
+        canary_passed,
+    );
 
     if canary_passed && !dry_run {
         ensure_pnn_parent_dir(&pnn_path)?;
@@ -671,6 +694,7 @@ fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult,
                 json!({"path": pnn_path}),
             )
         })?;
+        append_calibration_receipt(&receipt_path, &attestation_receipt)?;
     }
 
     Ok(success(
@@ -684,7 +708,23 @@ fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult,
             "candidate_accuracy": candidate_report.branch_selection_accuracy,
             "baseline_mean_margin": baseline_report.mean_margin,
             "candidate_mean_margin": candidate_report.mean_margin,
+            "baseline_digest": base_network.sha256_digest,
             "candidate_digest": candidate_network.sha256_digest,
+            "dpo_dataset_digest": dpo_dataset_digest,
+            "attestation_receipt": {
+                "sequence": attestation_receipt.sequence,
+                "prev_receipt_hash": attestation_receipt.prev_receipt_hash,
+                "baseline_digest": attestation_receipt.baseline_digest,
+                "candidate_digest": attestation_receipt.candidate_digest,
+                "dpo_dataset_digest": attestation_receipt.dpo_dataset_digest,
+                "lower_bound_95": attestation_receipt.lower_bound_95,
+                "lower_bound_95_bits": attestation_receipt.lower_bound_95_bits,
+                "commitment": attestation_receipt.commitment,
+                "chain_hash": attestation_receipt.chain_hash,
+                "promoted": attestation_receipt.promoted,
+                "verified": attestation_receipt.verify(),
+                "receipt_path": receipt_path,
+            },
             "bayesian_canary": {
                 "credible_level": canary_gate.credible_level(),
                 "passes": bayesian_verdict.passes,
@@ -697,7 +737,7 @@ fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult,
             },
         }),
         format!(
-            "Calibration {} (pairs: {}, accuracy: {:.3} -> {:.3}, mean_margin: {:.3} -> {:.3}, bayesian_lb95: {:.3}, dry_run: {})",
+            "Calibration {} (pairs: {}, accuracy: {:.3} -> {:.3}, mean_margin: {:.3} -> {:.3}, bayesian_lb95: {:.3}, commitment: {}, dry_run: {})",
             if canary_passed {
                 "passed canary gate"
             } else {
@@ -709,9 +749,139 @@ fn calibrate_command(invoked_as: &str, args: &[String]) -> Result<CommandResult,
             baseline_report.mean_margin,
             candidate_report.mean_margin,
             bayesian_verdict.lower_bound_95,
+            &attestation_receipt.commitment[..16],
             dry_run,
         ),
     ))
+}
+
+fn parse_dpo_pairs_content(
+    raw: &str,
+    source_label: &str,
+) -> Result<Vec<pandora_types::DpoPair>, CliError> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('[') {
+        return serde_json::from_str(trimmed).map_err(|e| {
+            CliError::usage(format!("invalid DpoPair JSON array in {source_label}: {e}"))
+        });
+    }
+    let mut pairs = Vec::new();
+    for (idx, line) in raw.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let pair: pandora_types::DpoPair = serde_json::from_str(l).map_err(|e| {
+            CliError::usage(format!(
+                "invalid DpoPair JSONL at {source_label}:{}: {e}",
+                idx + 1
+            ))
+        })?;
+        pairs.push(pair);
+    }
+    if pairs.is_empty() {
+        return Err(CliError::usage(format!(
+            "no DpoPair records found in {source_label}"
+        )));
+    }
+    Ok(pairs)
+}
+
+fn attestation_receipt_path(pnn_path: &Path) -> PathBuf {
+    let mut os = pnn_path.as_os_str().to_os_string();
+    os.push(".attestation.jsonl");
+    PathBuf::from(os)
+}
+
+fn load_previous_receipt_tip(receipt_path: &Path) -> Result<(u64, String), CliError> {
+    use pandora_runtime::decision_engine::CalibrationAttestationReceipt;
+    if !receipt_path.is_file() {
+        return Ok((
+            0,
+            CalibrationAttestationReceipt::GENESIS_PREV_HASH.to_owned(),
+        ));
+    }
+    let raw = fs::read_to_string(receipt_path).map_err(|e| {
+        CliError::execution(
+            format!(
+                "failed to read calibration attestation ledger {}: {e}",
+                receipt_path.display()
+            ),
+            json!({"receipt_path": receipt_path}),
+        )
+    })?;
+    let mut receipts = Vec::new();
+    for (idx, line) in raw.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let r: CalibrationAttestationReceipt = serde_json::from_str(l).map_err(|e| {
+            CliError::execution(
+                format!(
+                    "corrupted calibration attestation receipt at {}:{}: {e}",
+                    receipt_path.display(),
+                    idx + 1
+                ),
+                json!({"receipt_path": receipt_path, "line": idx + 1}),
+            )
+        })?;
+        receipts.push(r);
+    }
+    if !CalibrationAttestationReceipt::verify_chain(&receipts) {
+        return Err(CliError::execution(
+            format!(
+                "calibration attestation chain verification failed for {}",
+                receipt_path.display()
+            ),
+            json!({"receipt_path": receipt_path}),
+        ));
+    }
+    if let Some(last) = receipts.last() {
+        Ok((last.sequence + 1, last.chain_hash.clone()))
+    } else {
+        Ok((
+            0,
+            CalibrationAttestationReceipt::GENESIS_PREV_HASH.to_owned(),
+        ))
+    }
+}
+
+fn append_calibration_receipt(
+    receipt_path: &Path,
+    receipt: &pandora_runtime::decision_engine::CalibrationAttestationReceipt,
+) -> Result<(), CliError> {
+    ensure_pnn_parent_dir(receipt_path)?;
+    let line = serde_json::to_string(receipt).map_err(|e| {
+        CliError::execution(
+            format!("failed to serialize calibration attestation receipt: {e}"),
+            json!({"receipt_path": receipt_path}),
+        )
+    })?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(receipt_path)
+        .map_err(|e| {
+            CliError::execution(
+                format!(
+                    "failed to open calibration attestation ledger {}: {e}",
+                    receipt_path.display()
+                ),
+                json!({"receipt_path": receipt_path}),
+            )
+        })?;
+    use std::io::Write;
+    writeln!(f, "{line}").map_err(|e| {
+        CliError::execution(
+            format!(
+                "failed to append calibration attestation receipt to {}: {e}",
+                receipt_path.display()
+            ),
+            json!({"receipt_path": receipt_path}),
+        )
+    })?;
+    Ok(())
 }
 
 fn fetch_remote_pnn(url: &str) -> Result<String, CliError> {

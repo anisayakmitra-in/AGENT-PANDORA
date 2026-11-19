@@ -1552,6 +1552,7 @@ fn aggregate_lats_metrics_json(
         .and_then(|m| m.best_action)
         .or_else(|| telemetry.last().and_then(|t| t.best_action));
     let escalated = pre_escalated || telemetry.iter().any(|t| t.escalated);
+    let dpo_pairs_emitted: usize = telemetry.iter().filter(|t| t.dpo_pair_emitted).count();
     let turns_json: Vec<Value> = telemetry
         .iter()
         .map(|t| {
@@ -1564,6 +1565,8 @@ fn aggregate_lats_metrics_json(
                 "nodes_created": t.nodes_created,
                 "best_action": t.best_action,
                 "best_value": t.best_value(),
+                "reflex_action": t.reflex_action,
+                "dpo_pair_emitted": t.dpo_pair_emitted,
             })
         })
         .collect();
@@ -1576,6 +1579,7 @@ fn aggregate_lats_metrics_json(
         "escalated": escalated,
         "turn_rollouts": turn_rollouts,
         "turn_escalations": turn_escalations,
+        "dpo_pairs_emitted": dpo_pairs_emitted,
         "turns": turns_json,
     })
 }

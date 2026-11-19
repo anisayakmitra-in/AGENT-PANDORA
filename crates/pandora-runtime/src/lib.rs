@@ -219,10 +219,11 @@ pub use cron_engine::{
 };
 pub use curator::{CuratorEngine, CuratorError};
 pub use decision_engine::{
-    CustomApiDecisionDriver, DecisionDriver, DecisionEngine, DecisionError, DpoPair,
-    FineTuningSample, GoldenEvaluationCase, GoldenSuiteDefinition, GoldenTargetRef,
-    HeuristicDecisionDriver, MockDecisionDriver, MoiraDecisionDriver, OllamaDecisionDriver,
-    SinglePassLogitEngine, TropicalDecisionDriver, normalized_entropy,
+    CalibrationAttestationReceipt, CustomApiDecisionDriver, DecisionDriver, DecisionEngine,
+    DecisionError, DecisionFeatures, DpoPair, FineTuningSample, GoldenEvaluationCase,
+    GoldenSuiteDefinition, GoldenTargetRef, HeuristicDecisionDriver, MockDecisionDriver,
+    MoiraDecisionDriver, OllamaDecisionDriver, SinglePassLogitEngine, TropicalDecisionDriver,
+    compute_calibration_commitment, compute_dpo_dataset_digest, normalized_entropy,
     should_escalate as decision_should_escalate,
 };
 pub use device_trust::{

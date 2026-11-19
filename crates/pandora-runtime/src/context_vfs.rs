@@ -1605,7 +1605,7 @@ impl ContextVfs {
         };
 
         if needs_build {
-            self.build_hnsw_index(None)?;
+            self.build_hnsw_index_tropical(None)?;
         }
 
         let index_arc = self

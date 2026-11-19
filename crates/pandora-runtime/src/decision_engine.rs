@@ -261,6 +261,7 @@ pub struct TropicalDecisionDriver {
     fallback: HeuristicDecisionDriver,
     default_temperature: f64,
     uncertainty_threshold: f64,
+    dpo_output_path: Option<std::path::PathBuf>,
 }
 
 impl Default for TropicalDecisionDriver {
@@ -277,7 +278,20 @@ impl TropicalDecisionDriver {
             fallback: HeuristicDecisionDriver::new(),
             default_temperature: 1.0,
             uncertainty_threshold: 0.15,
+            dpo_output_path: None,
         }
+    }
+
+    /// Configures an optional JSONL file path (e.g. `.pandora/dpo_pairs.jsonl`) where
+    /// online System-2 -> System-1 [`DpoPair`] records emitted during LATS escalations are appended.
+    pub fn with_dpo_output_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.dpo_output_path = Some(path.into());
+        self
+    }
+
+    /// Returns the configured JSONL output path for emitted [`DpoPair`] records, if any.
+    pub fn dpo_output_path(&self) -> Option<&std::path::Path> {
+        self.dpo_output_path.as_deref()
     }
 
     /// Loads a static `.pnn` decision policy from disk; falls back to heuristics if absent or invalid.
@@ -327,6 +341,7 @@ impl TropicalDecisionDriver {
             fallback: HeuristicDecisionDriver::new(),
             default_temperature: 0.25,
             uncertainty_threshold: 0.15,
+            dpo_output_path: None,
         }
     }
 
@@ -623,6 +638,489 @@ impl TropicalDecisionDriver {
                 Ok((1.0 - verdict.confidence).clamp(0.0, 1.0))
             }
         }
+    }
+
+    /// Evaluates a 7D [`DecisionFeatures`] leaf state $\mathbf{x}_D \in [0, 1]^7$ through the
+    /// loaded `.pnn` [` crate::tropical_nn::TropicalNetwork`] (`16 -> 4 -> 1`) via logistic
+    /// calibration $\sigma(f_{\text{PNN}}(\mathbf{x}_D)_0) \in [0, 1]$, falling back to a
+    /// deterministic potential function when no `.pnn` network is attached.
+    pub fn evaluate_features_leaf(
+        &self,
+        prompt: &str,
+        action_label: &str,
+        features: &DecisionFeatures,
+    ) -> f64 {
+        let features_16 = features.to_network_features_16(prompt, action_label);
+        let state_potential =
+            1.6 * features.progress + 0.8 * features.verify + 0.6 * features.evidence
+                - 2.2 * features.failure
+                - 0.9 * features.loop_ratio
+                - 0.4 * features.budget;
+        let state_val = (1.0 / (1.0 + (-state_potential).exp())).clamp(0.0, 1.0);
+        if let Some(ref net) = self.network
+            && let Ok(out) = net.forward(&features_16)
+        {
+            let logit = out.first().copied().unwrap_or(0.0) as f64;
+            let penalty = (features_16[12] + features_16[13]) as f64;
+            let calibrated = logit + penalty;
+            let pnn_val = (1.0 / (1.0 + (-calibrated).exp())).clamp(0.0, 1.0);
+            let combined = 0.55 * pnn_val + 0.45 * state_val;
+            if combined.is_finite() {
+                return combined.clamp(0.0, 1.0);
+            }
+        }
+        state_val
+    }
+
+    /// Evaluates the discounted multi-step return over a rollout trajectory $(a_0, \dots, a_{D-1})$:
+    /// $$V_{\text{LATS}}(\mathbf{x}_0) = \sum_{d=0}^{D-1} \gamma^d R(\mathbf{x}_d, a_d) + \gamma^D \sigma\!\bigl(f_{\text{PNN}}(\mathbf{x}_D)_0\bigr)$$
+    pub fn evaluate_multistep_return<L: AsRef<str>>(
+        &self,
+        prompt: &str,
+        initial_features: &DecisionFeatures,
+        actions_trajectory: &[usize],
+        action_labels: &[L],
+        gamma: f64,
+    ) -> f64 {
+        let discount = if gamma.is_finite() {
+            gamma.clamp(0.0, 1.0)
+        } else {
+            0.9
+        };
+        let mut state = *initial_features;
+        let mut total_return = 0.0;
+        let mut gamma_pow = 1.0;
+        let mut last_label = action_labels.first().map(|l| l.as_ref()).unwrap_or("allow");
+
+        for &act in actions_trajectory {
+            let next_state = state.transition(act);
+            let r = state.step_reward(act, &next_state);
+            total_return += gamma_pow * r;
+            gamma_pow *= discount;
+            state = next_state;
+            if let Some(lbl) = action_labels.get(act) {
+                last_label = lbl.as_ref();
+            }
+        }
+
+        let terminal_val = self.evaluate_features_leaf(prompt, last_label, &state);
+        total_return + gamma_pow * terminal_val
+    }
+}
+
+#[inline]
+fn clamp_unit(v: f64) -> f64 {
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// 7-dimensional normalized state vector $\mathbf{x} \in [0, 1]^7$ for multi-step LATS rollouts.
+///
+/// Coordinates:
+/// 0. `progress` ($x_0 \in [0, 1]$): estimated task completion ratio.
+/// 1. `failure` ($x_1 \in [0, 1]$): current hazard / failure ratio.
+/// 2. `loop_ratio` ($x_2 \in [0, 1]$): anti-thrash repetition ratio.
+/// 3. `budget` ($x_3 \in [0, 1]$): fraction of turn/tool budget consumed.
+/// 4. `verify` ($x_4 \in [0, 1]$): verification and safety confirmation coverage.
+/// 5. `evidence` ($x_5 \in [0, 1]$): accumulated execution evidence ratio.
+/// 6. `novelty` ($x_6 \in [0, 1]$): trajectory state novelty.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DecisionFeatures {
+    pub progress: f64,
+    pub failure: f64,
+    pub loop_ratio: f64,
+    pub budget: f64,
+    pub verify: f64,
+    pub evidence: f64,
+    pub novelty: f64,
+}
+
+impl Default for DecisionFeatures {
+    fn default() -> Self {
+        Self {
+            progress: 0.25,
+            failure: 0.15,
+            loop_ratio: 0.0,
+            budget: 0.10,
+            verify: 0.50,
+            evidence: 0.25,
+            novelty: 0.75,
+        }
+    }
+}
+
+impl DecisionFeatures {
+    /// Constructs a bounded 7D state vector $\mathbf{x} \in [0, 1]^7$, clamping every coordinate to $[0, 1]$.
+    pub fn new(coords: [f64; 7]) -> Self {
+        Self {
+            progress: clamp_unit(coords[0]),
+            failure: clamp_unit(coords[1]),
+            loop_ratio: clamp_unit(coords[2]),
+            budget: clamp_unit(coords[3]),
+            verify: clamp_unit(coords[4]),
+            evidence: clamp_unit(coords[5]),
+            novelty: clamp_unit(coords[6]),
+        }
+    }
+
+    /// Returns the 7 coordinates as an array `[f64; 7]` in $[0, 1]^7$.
+    pub fn to_array(&self) -> [f64; 7] {
+        [
+            self.progress,
+            self.failure,
+            self.loop_ratio,
+            self.budget,
+            self.verify,
+            self.evidence,
+            self.novelty,
+        ]
+    }
+
+    /// Returns `true` if all 7 coordinates are finite and lie within $[0.0, 1.0]$.
+    pub fn is_valid(&self) -> bool {
+        self.to_array()
+            .iter()
+            .all(|&x| x.is_finite() && (0.0..=1.0).contains(&x))
+    }
+
+    /// Extracts initial 7D [`DecisionFeatures`] from a tool/task prompt and runtime loop counters.
+    pub fn from_tool_context(
+        prompt: &str,
+        turn: u32,
+        max_turns: u32,
+        duplicate_failures: u32,
+    ) -> Self {
+        let base_16 = encode_decision_features(prompt, "", "allow");
+        let danger_hits = base_16[0] as f64;
+        let safe_hits = base_16[1] as f64;
+        let complex_hits = base_16[2] as f64;
+        let prod_flag = base_16[14] as f64;
+
+        let budget_ratio = if max_turns > 0 {
+            (turn as f64) / (max_turns as f64)
+        } else {
+            0.25
+        };
+        let loop_ratio = (duplicate_failures as f64) * 0.35;
+        let failure = if danger_hits >= 1.0 {
+            0.85 + 0.05 * danger_hits
+        } else if duplicate_failures > 0 || complex_hits > 0.0 || prod_flag > 0.0 {
+            0.40 + 0.15 * (duplicate_failures as f64) + 0.08 * complex_hits + 0.05 * prod_flag
+        } else {
+            0.15
+        };
+        let progress = 0.20 + 0.15 * budget_ratio + 0.05 * safe_hits;
+        let verify = if danger_hits >= 1.0 {
+            0.10
+        } else {
+            0.35 + 0.15 * safe_hits
+        };
+        let evidence = 0.20 + 0.10 * safe_hits + 0.10 * budget_ratio;
+        let novelty = (0.85 - 0.25 * loop_ratio).max(0.10);
+
+        Self::new([
+            progress,
+            failure,
+            loop_ratio,
+            budget_ratio,
+            verify,
+            evidence,
+            novelty,
+        ])
+    }
+
+    /// Deterministic state transition operator $T: [0, 1]^7 \times \{0, 1, 2, 3\} \to [0, 1]^7$.
+    ///
+    /// Action semantics:
+    /// - $a = 0$ (`Proceed` / `allow`): advances progress when `failure <= 0.35`, but amplifies
+    ///   failure and loop thrashing when applied prematurely in an unrepaired state (`failure > 0.35`).
+    /// - $a = 1$ (`Repair` / `require_confirm`): contracts failure ($-0.35$) and loop ratio ($-0.20$)
+    ///   while boosting verification ($+0.30$) and evidence ($+0.15$) at budget cost ($+0.10$).
+    /// - $a = 2$ (`Escalate` / `reject`): neutralizes high-hazard states (`failure >= 0.75`) or
+    ///   applies conservative verification gating.
+    /// - $a \ge 3$ (`Abort`): halts progression and resets loop thrashing.
+    pub fn transition(&self, action: usize) -> Self {
+        match action {
+            0 => {
+                if self.failure <= 0.35 {
+                    Self::new([
+                        self.progress + 0.35 * (1.0 - self.failure),
+                        self.failure * 0.90,
+                        self.loop_ratio * 0.85,
+                        self.budget + 0.08,
+                        self.verify + 0.05,
+                        self.evidence + 0.20,
+                        self.novelty + 0.10,
+                    ])
+                } else {
+                    Self::new([
+                        self.progress + 0.02,
+                        self.failure + 0.30,
+                        self.loop_ratio + 0.25,
+                        self.budget + 0.12,
+                        self.verify * 0.80,
+                        self.evidence + 0.02,
+                        self.novelty * 0.70,
+                    ])
+                }
+            }
+            1 => Self::new([
+                self.progress + 0.12,
+                self.failure - 0.35,
+                self.loop_ratio - 0.20,
+                self.budget + 0.10,
+                self.verify + 0.30,
+                self.evidence + 0.15,
+                self.novelty + 0.15,
+            ]),
+            2 => {
+                if self.failure >= 0.75 {
+                    Self::new([
+                        self.progress,
+                        self.failure - 0.65,
+                        self.loop_ratio * 0.50,
+                        self.budget + 0.05,
+                        self.verify + 0.45,
+                        self.evidence + 0.20,
+                        self.novelty,
+                    ])
+                } else {
+                    // Rejecting a recoverable (non-destructive) state stalls progress without repairing failure
+                    Self::new([
+                        self.progress,
+                        self.failure,
+                        self.loop_ratio + 0.10,
+                        self.budget + 0.15,
+                        self.verify,
+                        self.evidence,
+                        self.novelty * 0.50,
+                    ])
+                }
+            }
+            _ => Self::new([
+                self.progress,
+                self.failure,
+                0.0,
+                self.budget + 0.10,
+                self.verify,
+                self.evidence,
+                0.0,
+            ]),
+        }
+    }
+
+    /// Computes bounded immediate transition reward $R(\mathbf{x}_d, a_d) \in [0.0, 1.0]$.
+    pub fn step_reward(&self, action: usize, next: &Self) -> f64 {
+        if self.failure >= 0.75 {
+            return match action {
+                2 => clamp_unit(0.90 + 0.10 * next.verify),
+                1 => clamp_unit(0.35 + 0.10 * next.verify),
+                0 => clamp_unit(0.05 * (1.0 - next.failure)),
+                _ => clamp_unit(0.40),
+            };
+        }
+        if action >= 2 {
+            // In a non-destructive regime (failure < 0.75), Reject/Abort stalls task completion
+            return clamp_unit(0.15 * (1.0 - self.failure));
+        }
+        let delta_progress = next.progress - self.progress;
+        let failure_reduction = self.failure - next.failure;
+        let verify_gain = next.verify - self.verify;
+        let raw = 0.45
+            + 0.85 * delta_progress
+            + 0.70 * failure_reduction
+            + 0.30 * verify_gain
+            + 0.20 * next.evidence
+            - 0.55 * next.failure
+            - 0.25 * next.loop_ratio
+            - 0.15 * next.budget;
+        clamp_unit(raw)
+    }
+
+    /// Lifts the 7D [`DecisionFeatures`] state and prompt/action label into the 16D feature space
+    /// consumed by [`crate::tropical_nn::TropicalNetwork`].
+    pub fn to_network_features_16(&self, prompt: &str, label: &str) -> [f32; 16] {
+        let mut f = encode_decision_features(prompt, "", label);
+        let eff_danger = (f[0] + (self.failure as f32) * 2.0).max(0.0);
+        let eff_safe = (f[1]
+            + ((self.verify + self.progress * 0.5) as f32) * 2.0 * (1.0 - self.failure as f32))
+            .max(0.0);
+        let eff_complex = (f[2] + (self.loop_ratio + self.budget * 0.5) as f32).max(0.0);
+        let is_allow = f[3];
+        let is_reject = f[4];
+        let is_deep = f[5];
+
+        f[0] = eff_danger;
+        f[1] = eff_safe;
+        f[2] = eff_complex;
+        f[9] = (2.5 * eff_danger - 0.3 * eff_safe) * is_reject;
+        f[10] = (eff_safe - 2.5 * eff_danger - 0.5 * eff_complex) * is_allow;
+        f[11] = (2.0 * eff_complex - eff_danger) * is_deep;
+        f[12] = -2.5 * eff_danger * is_allow;
+        f[13] = -1.5 * eff_safe * is_reject;
+        f
+    }
+}
+
+/// Computes a deterministic SHA-256 digest $H(\mathcal{D}_{\text{DPO}})$ over an ordered slice of [`DpoPair`] records.
+pub fn compute_dpo_dataset_digest(pairs: &[DpoPair]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update((pairs.len() as u64).to_le_bytes());
+    for pair in pairs {
+        hasher.update((pair.id.len() as u64).to_le_bytes());
+        hasher.update(pair.id.as_bytes());
+        hasher.update((pair.prompt.len() as u64).to_le_bytes());
+        hasher.update(pair.prompt.as_bytes());
+        hasher.update((pair.chosen.len() as u64).to_le_bytes());
+        hasher.update(pair.chosen.as_bytes());
+        hasher.update((pair.rejected.len() as u64).to_le_bytes());
+        hasher.update(pair.rejected.as_bytes());
+        hasher.update(pair.margin.to_bits().to_le_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// Computes the cryptographic calibration commitment:
+/// $$C_{\text{cal}} = \operatorname{SHA256}\!\bigl(H(W_{\text{base}}) \;\|\; H(W_{\text{cand}}) \;\|\; H(\mathcal{D}_{\text{DPO}}) \;\|\; \operatorname{le64}(q_{0.05})\bigr)$$
+pub fn compute_calibration_commitment(
+    baseline_digest: &str,
+    candidate_digest: &str,
+    dpo_dataset_digest: &str,
+    lower_bound_95: f64,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(baseline_digest.as_bytes());
+    hasher.update(candidate_digest.as_bytes());
+    hasher.update(dpo_dataset_digest.as_bytes());
+    hasher.update(lower_bound_95.to_bits().to_le_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Tamper-evident, hash-chained `.pnn` calibration attestation receipt (Phase 8).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CalibrationAttestationReceipt {
+    pub sequence: u64,
+    pub prev_receipt_hash: String,
+    pub baseline_digest: String,
+    pub candidate_digest: String,
+    pub dpo_dataset_digest: String,
+    pub lower_bound_95: f64,
+    pub lower_bound_95_bits: u64,
+    pub commitment: String,
+    pub chain_hash: String,
+    pub promoted: bool,
+}
+
+impl CalibrationAttestationReceipt {
+    /// Genesis previous-receipt hash (`64` hex zeroes).
+    pub const GENESIS_PREV_HASH: &'static str =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+
+    /// Constructs a new hash-chained [`CalibrationAttestationReceipt`].
+    pub fn new(
+        sequence: u64,
+        prev_receipt_hash: impl Into<String>,
+        baseline_digest: impl Into<String>,
+        candidate_digest: impl Into<String>,
+        dpo_dataset_digest: impl Into<String>,
+        lower_bound_95: f64,
+        promoted: bool,
+    ) -> Self {
+        let prev_receipt_hash = prev_receipt_hash.into();
+        let baseline_digest = baseline_digest.into();
+        let candidate_digest = candidate_digest.into();
+        let dpo_dataset_digest = dpo_dataset_digest.into();
+        let lower_bound_95_bits = lower_bound_95.to_bits();
+        let commitment = compute_calibration_commitment(
+            &baseline_digest,
+            &candidate_digest,
+            &dpo_dataset_digest,
+            lower_bound_95,
+        );
+        let chain_hash =
+            Self::compute_chain_hash(sequence, &prev_receipt_hash, &commitment, promoted);
+        Self {
+            sequence,
+            prev_receipt_hash,
+            baseline_digest,
+            candidate_digest,
+            dpo_dataset_digest,
+            lower_bound_95,
+            lower_bound_95_bits,
+            commitment,
+            chain_hash,
+            promoted,
+        }
+    }
+
+    /// Computes the hash-chain digest linking `(sequence, prev_receipt_hash, commitment, promoted)`.
+    pub fn compute_chain_hash(
+        sequence: u64,
+        prev_receipt_hash: &str,
+        commitment: &str,
+        promoted: bool,
+    ) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(sequence.to_le_bytes());
+        hasher.update(prev_receipt_hash.as_bytes());
+        hasher.update(commitment.as_bytes());
+        hasher.update([u8::from(promoted)]);
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Verifies bit-exact integrity of `commitment`, `lower_bound_95_bits`, and `chain_hash`.
+    pub fn verify(&self) -> bool {
+        if !self.lower_bound_95.is_finite()
+            || self.lower_bound_95.to_bits() != self.lower_bound_95_bits
+        {
+            return false;
+        }
+        if self.baseline_digest.is_empty()
+            || self.candidate_digest.is_empty()
+            || self.dpo_dataset_digest.is_empty()
+            || self.prev_receipt_hash.len() != 64
+        {
+            return false;
+        }
+        let expected_commitment = compute_calibration_commitment(
+            &self.baseline_digest,
+            &self.candidate_digest,
+            &self.dpo_dataset_digest,
+            self.lower_bound_95,
+        );
+        if self.commitment != expected_commitment {
+            return false;
+        }
+        let expected_chain = Self::compute_chain_hash(
+            self.sequence,
+            &self.prev_receipt_hash,
+            &self.commitment,
+            self.promoted,
+        );
+        self.chain_hash == expected_chain
+    }
+
+    /// Verifies an ordered sequence of hash-chained calibration receipts from genesis (`sequence == 0`).
+    pub fn verify_chain(receipts: &[Self]) -> bool {
+        for (idx, r) in receipts.iter().enumerate() {
+            if !r.verify() || r.sequence != idx as u64 {
+                return false;
+            }
+            if idx == 0 {
+                if r.prev_receipt_hash != Self::GENESIS_PREV_HASH {
+                    return false;
+                }
+            } else if r.prev_receipt_hash != receipts[idx - 1].chain_hash {
+                return false;
+            }
+        }
+        true
     }
 }
 

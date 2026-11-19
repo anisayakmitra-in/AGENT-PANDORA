@@ -140,9 +140,42 @@ impl TropicalVector {
         (max_diff_ab + max_diff_ba).max(0.0)
     }
 
-    /// Maps the max-plus inner product and positive multi-coordinate tropical overlap
-    /// into a calibrated similarity score in $[0.0, 1.0]$ via logistic sigmoid
-    /// $\sigma(z) = \frac{1}{1 + e^{-z}}$, using zero multiplications in the inner loop.
+    /// Computes Hilbert's tropical projective metric distance restricted to the active
+    /// whole-token support $A = \{i \mid x_i > 0.5 \lor w_i > 0.5\}$:
+    /// $$d_{\text{Hilbert}, A}(\mathbf{x}, \mathbf{w}) = \max_{i \in A}(x_i - w_i) + \max_{i \in A}(w_i - x_i)$$
+    /// Falls back to full-support [`Self::hilbert_distance`] when $A$ is empty.
+    pub fn active_hilbert_distance(&self, other: &Self) -> f32 {
+        if self == other {
+            return 0.0;
+        }
+        let mut max_diff_ab = f32::NEG_INFINITY;
+        let mut max_diff_ba = f32::NEG_INFINITY;
+        let mut active_count = 0usize;
+        for i in 0..TROPICAL_DIMENSION {
+            let a = self.0[i];
+            let b = other.0[i];
+            if a.is_finite() && b.is_finite() && (a > 0.5 || b > 0.5) {
+                active_count += 1;
+                let d_ab = a - b;
+                let d_ba = b - a;
+                if d_ab > max_diff_ab {
+                    max_diff_ab = d_ab;
+                }
+                if d_ba > max_diff_ba {
+                    max_diff_ba = d_ba;
+                }
+            }
+        }
+        if active_count == 0 || !max_diff_ab.is_finite() || !max_diff_ba.is_finite() {
+            return self.hilbert_distance(other);
+        }
+        (max_diff_ab + max_diff_ba).max(0.0)
+    }
+
+    /// Maps the max-plus inner product, positive multi-coordinate tropical overlap,
+    /// and projective Hilbert dispersion penalty $-\lambda_H d_{\text{Hilbert}, A}(\mathbf{x}, \mathbf{w})$
+    /// ($\lambda_H = 0.05$) into a calibrated similarity score in $[0.0, 1.0]$ via logistic sigmoid
+    /// $\sigma(z) = \frac{1}{1 + e^{-z}}$.
     pub fn similarity(&self, other: &Self) -> f32 {
         let raw_max = self.score_max_plus(other);
         if raw_max == f32::NEG_INFINITY {
@@ -158,7 +191,12 @@ impl TropicalVector {
                 pos_sum += a + b;
             }
         }
-        let z = if pos_sum > 0.0 { pos_sum } else { raw_max };
+        let hilbert_disp = self.active_hilbert_distance(other);
+        let z = if pos_sum > 0.0 {
+            (pos_sum - 0.05 * hilbert_disp).max(0.01)
+        } else {
+            raw_max - 0.05 * hilbert_disp
+        };
         let clamped = z.clamp(-20.0, 20.0);
         (1.0 / (1.0 + (-clamped).exp())).clamp(0.0, 1.0)
     }
