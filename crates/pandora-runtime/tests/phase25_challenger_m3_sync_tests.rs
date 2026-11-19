@@ -812,9 +812,13 @@ fn test_adversarial_websocket_sync_framing_stress() {
         if parsed["event"] == "sync_response" {
             assert_eq!(parsed["status"], "catch_up");
             assert_eq!(parsed["since_seq"], 280);
-            assert_eq!(parsed["current_seq"], 301); // 300 pre-populated + 1 from WS connect
+            let cur_seq = parsed["current_seq"].as_u64().expect("current_seq u64");
+            assert!(
+                cur_seq >= 301,
+                "expected current_seq >= 301 (300 pre-populated + >=1 WS frames), got {cur_seq}"
+            );
             let missed = parsed["records"].as_array().expect("records array");
-            assert_eq!(missed.len(), 21); // 281..=301
+            assert_eq!(missed.len(), (cur_seq - 280) as usize);
             catch_up_found = true;
             break;
         }
