@@ -140,14 +140,26 @@ impl TropicalVector {
         (max_diff_ab + max_diff_ba).max(0.0)
     }
 
-    /// Maps the max-plus inner product into a calibrated similarity score in $[0.0, 1.0]$
-    /// via logistic sigmoid $\sigma(z) = \frac{1}{1 + e^{-z}}$.
+    /// Maps the max-plus inner product and positive multi-coordinate tropical overlap
+    /// into a calibrated similarity score in $[0.0, 1.0]$ via logistic sigmoid
+    /// $\sigma(z) = \frac{1}{1 + e^{-z}}$, using zero multiplications in the inner loop.
     pub fn similarity(&self, other: &Self) -> f32 {
-        let raw = self.score_max_plus(other);
-        if raw == f32::NEG_INFINITY {
+        let raw_max = self.score_max_plus(other);
+        if raw_max == f32::NEG_INFINITY {
             return 0.0;
         }
-        let clamped = raw.clamp(-20.0, 20.0);
+        // Accumulate coordinate alignments where both vectors have whole-token salience (> 0.5)
+        // so multi-token matches strictly dominate n-gram noise (0.45) and single collisions.
+        let mut pos_sum = 0.0f32;
+        for i in 0..TROPICAL_DIMENSION {
+            let a = self.0[i];
+            let b = other.0[i];
+            if a.is_finite() && b.is_finite() && a > 0.5 && b > 0.5 {
+                pos_sum += a + b;
+            }
+        }
+        let z = if pos_sum > 0.0 { pos_sum } else { raw_max };
+        let clamped = z.clamp(-20.0, 20.0);
         (1.0 / (1.0 + (-clamped).exp())).clamp(0.0, 1.0)
     }
 
@@ -285,10 +297,9 @@ impl TropicalProjector {
             coords[idx] = weight;
             touched[idx] = true;
         } else {
-            // Tropical max-plus: take the max of existing weight and new weight, plus a small
-            // bounded additive reinforcement (+0.15) for repeated term occurrences.
-            let reinforced = (coords[idx].max(weight) + 0.15).min(4.0);
-            coords[idx] = coords[idx].max(reinforced);
+            // Idempotent tropical addition (\oplus = max): prevents n-gram hash collisions
+            // from inflating buckets above whole-token salience (0.85..1.35).
+            coords[idx] = coords[idx].max(weight);
         }
     }
 
