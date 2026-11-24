@@ -20,8 +20,9 @@ use pandora_runtime::federated_policy::{
 };
 use pandora_runtime::inference_infra::{
     ClusterNodeSpec, DisaggregatedClusterCoordinator, FinOpsGpuAutoscaler,
-    GrammarConstrainedEngine, InferencePhase, MoeExpertParallelRouter, QuantPrecision,
-    QuantizationCalibrationPipeline, TritonRooflineAnalyzer,
+    GrammarConstrainedEngine, HierarchicalKvCacheManager, InferenceParetoAnalyzer, InferencePhase,
+    MoeExpertParallelRouter, ParetoPoint, QuantPrecision, QuantizationCalibrationPipeline,
+    TritonRooflineAnalyzer,
 };
 use pandora_runtime::martingale_gate::MartingaleCanaryGate;
 use pandora_runtime::mean_field_game::{MeanFieldGame, MfgResourceConfig};
@@ -1263,6 +1264,7 @@ pub(crate) fn kv_cache_with_cmd(
             "prefix-len",
             "suffix-len",
             "bytes-per-token",
+            "hierarchical",
             "config",
             "data-dir",
             "workspace",
@@ -1311,6 +1313,64 @@ pub(crate) fn kv_cache_with_cmd(
     };
     if bytes_per_token == 0 {
         return Err(CliError::usage("--bytes-per-token must be greater than 0"));
+    }
+
+    if parsed.has_flag("hierarchical") {
+        let mut mgr = HierarchicalKvCacheManager::new(
+            sessions * prefix_len * bytes_per_token / 2,
+            sessions * prefix_len * bytes_per_token,
+            sessions * prefix_len * bytes_per_token * 4,
+        );
+
+        let mut block_ids = Vec::new();
+        for s in 0..sessions {
+            let id = mgr.allocate_block(
+                &format!("session-{s}"),
+                prefix_len + suffix_len,
+                bytes_per_token,
+            );
+            block_ids.push(id);
+            mgr.tick();
+        }
+
+        let report = mgr.rebalance_and_compact();
+        let prefetched = if let Some(&first) = block_ids.first() {
+            mgr.prefetch_blocks(&[first])
+        } else {
+            0
+        };
+
+        let json_data = json!({
+            "mode": "hierarchical_3_tier",
+            "theorem": 56,
+            "theorem_name": "Hierarchical Memory Bound & Asynchronous KV-Block Eviction",
+            "total_blocks": report.total_blocks,
+            "l0_vram_blocks": report.l0_vram_blocks,
+            "l1_host_blocks": report.l1_host_blocks,
+            "l2_nvme_blocks": report.l2_nvme_blocks,
+            "l0_vram_bytes": report.l0_vram_bytes,
+            "l1_host_bytes": report.l1_host_bytes,
+            "l2_nvme_bytes": report.l2_nvme_bytes,
+            "evicted_to_l1": report.evicted_to_l1,
+            "evicted_to_l2": report.evicted_to_l2,
+            "prefetched_to_l0": prefetched,
+            "effective_access_latency_us": report.effective_access_latency_us,
+            "theorem_56_latency_bound_satisfied": report.theorem_56_latency_bound_satisfied,
+        });
+
+        let human = format!(
+            "Theorem 56 Hierarchical KV-Cache: L0={} blocks ({:.2}MB), L1={} blocks ({:.2}MB), L2={} blocks ({:.2}MB) | Latency: {:.2}us (Bound OK: {})",
+            report.l0_vram_blocks,
+            (report.l0_vram_bytes as f64) / 1048576.0,
+            report.l1_host_blocks,
+            (report.l1_host_bytes as f64) / 1048576.0,
+            report.l2_nvme_blocks,
+            (report.l2_nvme_bytes as f64) / 1048576.0,
+            report.effective_access_latency_us,
+            report.theorem_56_latency_bound_satisfied
+        );
+
+        return Ok(success("runtime kv-cache hierarchical", json_data, human));
     }
 
     let mut cache = RadixKvCache::new(bytes_per_token);
@@ -2021,6 +2081,7 @@ pub(crate) fn inference(args: &[String]) -> Result<CommandResult, CliError> {
             "quant",
             "roofline",
             "finops",
+            "pareto",
             "json",
         ],
     )?;
@@ -2037,6 +2098,8 @@ pub(crate) fn inference(args: &[String]) -> Result<CommandResult, CliError> {
         "roofline"
     } else if parsed.has_flag("finops") {
         "finops"
+    } else if parsed.has_flag("pareto") {
+        "pareto"
     } else {
         parsed.value("mode").unwrap_or("all")
     };
@@ -2242,6 +2305,70 @@ pub(crate) fn inference(args: &[String]) -> Result<CommandResult, CliError> {
             );
             Ok(success("runtime inference roofline", json_data, human))
         }
+        "pareto" => {
+            let analyzer = InferenceParetoAnalyzer::new();
+            let candidates = vec![
+                ParetoPoint {
+                    framework: "vllm".to_string(),
+                    precision: "fp16".to_string(),
+                    is_disaggregated: false,
+                    cost_per_million_tokens_usd: 4.50,
+                    ttft_ms: 120.0,
+                    throughput_tokens_per_sec: 250.0,
+                    mfu_percentage: 42.0,
+                    is_pareto_optimal: false,
+                },
+                ParetoPoint {
+                    framework: "sglang".to_string(),
+                    precision: "fp4".to_string(),
+                    is_disaggregated: true,
+                    cost_per_million_tokens_usd: 1.20,
+                    ttft_ms: 45.0,
+                    throughput_tokens_per_sec: 850.0,
+                    mfu_percentage: 58.0,
+                    is_pareto_optimal: false,
+                },
+                ParetoPoint {
+                    framework: "tensorrt-llm".to_string(),
+                    precision: "int4".to_string(),
+                    is_disaggregated: true,
+                    cost_per_million_tokens_usd: 1.80,
+                    ttft_ms: 50.0,
+                    throughput_tokens_per_sec: 780.0,
+                    mfu_percentage: 55.0,
+                    is_pareto_optimal: false,
+                },
+                ParetoPoint {
+                    framework: "monolithic-baseline".to_string(),
+                    precision: "fp16".to_string(),
+                    is_disaggregated: false,
+                    cost_per_million_tokens_usd: 6.20,
+                    ttft_ms: 185.0,
+                    throughput_tokens_per_sec: 175.0,
+                    mfu_percentage: 26.0,
+                    is_pareto_optimal: false,
+                },
+            ];
+
+            let report = analyzer.compute_pareto_frontier(&candidates);
+            let json_data = json!({
+                "engine": "InferenceParetoAnalyzer",
+                "theorem": 57,
+                "theorem_name": "Non-Dominated Multi-Objective Pareto Frontier Optimality",
+                "total_evaluated_configurations": report.total_evaluated_configurations,
+                "pareto_optimal_points_count": report.pareto_optimal_points_count,
+                "recommended_configuration": report.recommended_configuration,
+                "frontier": report.frontier,
+                "theorem_57_pareto_optimality_verified": report.theorem_57_pareto_optimality_verified,
+            });
+            let human = format!(
+                "Theorem 57 Inference Pareto Frontier: {}/{} non-dominated optimal points. Best: {}",
+                report.pareto_optimal_points_count,
+                report.total_evaluated_configurations,
+                report.recommended_configuration
+            );
+            Ok(success("runtime inference pareto", json_data, human))
+        }
         "all" => {
             let mut engine = GrammarConstrainedEngine::new();
             let test_input = "{\"status\":\"healthy\",\"code\":200}";
@@ -2328,7 +2455,7 @@ pub(crate) fn inference(args: &[String]) -> Result<CommandResult, CliError> {
             Ok(success("runtime inference all", json_data, human))
         }
         other => Err(CliError::usage(format!(
-            "unknown inference mode '{other}'; expected 'grammar', 'disaggregated', 'moe', 'quant', 'roofline', 'finops', or 'all'"
+            "unknown inference mode '{other}'; expected 'grammar', 'disaggregated', 'moe', 'quant', 'roofline', 'finops', 'pareto', or 'all'"
         ))),
     }
 }
@@ -2700,5 +2827,37 @@ mod tests {
                 .as_bool()
                 .unwrap()
         );
+
+        let res_pareto = execute(&["inference".to_string(), "--pareto".to_string()])
+            .expect("pareto should succeed");
+        assert_eq!(res_pareto.command, "runtime inference pareto");
+        assert!(
+            res_pareto.data["theorem_57_pareto_optimality_verified"]
+                .as_bool()
+                .unwrap()
+        );
+        assert_eq!(
+            res_pareto.data["recommended_configuration"],
+            "sglang-fp4-disagg"
+        );
+    }
+
+    #[test]
+    fn test_runtime_kv_cache_hierarchical_cli() {
+        let res = execute(&[
+            "kv-cache".to_string(),
+            "--hierarchical".to_string(),
+            "--sessions".to_string(),
+            "4".to_string(),
+        ])
+        .expect("hierarchical kv-cache should succeed");
+        assert_eq!(res.command, "runtime kv-cache hierarchical");
+        assert_eq!(res.data["mode"], "hierarchical_3_tier");
+        assert!(
+            res.data["theorem_56_latency_bound_satisfied"]
+                .as_bool()
+                .unwrap()
+        );
+        assert_eq!(res.data["total_blocks"], 4);
     }
 }

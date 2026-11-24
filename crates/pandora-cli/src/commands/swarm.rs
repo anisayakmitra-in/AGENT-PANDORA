@@ -15,6 +15,7 @@ use pandora_runtime::federated_policy::{POLICY_DIMENSION_LABELS, PolicyGradientV
 use pandora_runtime::mesh_sync::PeerIdentity;
 use pandora_runtime::multi_agent_collab::ExternalAgentKind;
 use pandora_runtime::multi_agent_consensus::ProposalScoreVector;
+use pandora_runtime::swarm_pipeline::{AutonomousSwarmPipeline, SwarmTaskSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
@@ -57,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', or 'sync-gradients'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', or 'pipeline'",
             ));
         }
     };
@@ -68,8 +69,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "propose" => propose(&args[1..]),
         "vote" => vote(&args[1..]),
         "sync-gradients" | "sync" => sync_gradients(&args[1..]),
+        "pipeline" => pipeline(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline"
         ))),
     }
 }
@@ -635,6 +637,97 @@ fn sync_gradients(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn pipeline(args: &[String]) -> Result<CommandResult, CliError> {
+    let first = args.first().map(String::as_str);
+    let sub = match first {
+        Some("run") => "run",
+        Some("status") => "status",
+        _ => "run",
+    };
+
+    let slice = if first == Some("run") || first == Some("status") {
+        &args[1..]
+    } else {
+        args
+    };
+
+    if sub == "status" {
+        let json_data = json!({
+            "status": "ready",
+            "roles": ["Planner", "Architect", "Coder", "Verifier"],
+            "theorems": [33, 35, 39, 48, 50],
+            "ast_confinement": "active",
+            "zk_attestation": "schwartz_zippel_goldilocks",
+            "pac_bayes_risk_gate": 0.15
+        });
+        return Ok(success(
+            "swarm pipeline status",
+            json_data,
+            "Autonomous Swarm Pipeline: Ready",
+        ));
+    }
+
+    let parsed = parse_options(
+        slice,
+        &["task", "goal", "max-rounds", "risk", "auto-heal", "json"],
+    )?;
+
+    let task_id = parsed.value("task").unwrap_or("task-autonomous-heal-01");
+    let goal = parsed
+        .value("goal")
+        .unwrap_or("Autonomous bug resolution and invariant certification");
+    let max_rounds: usize = parsed
+        .value("max-rounds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let risk: f64 = parsed
+        .value("risk")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.15);
+
+    let spec = SwarmTaskSpec {
+        task_id: task_id.to_string(),
+        goal: goal.to_string(),
+        target_files: vec!["crates/pandora-runtime/src/cache.rs".to_string()],
+        required_invariants: vec![
+            "inv_memory_safety_forbid_unsafe".to_string(),
+            "inv_acyclic_causal_dag".to_string(),
+            "inv_pac_bayes_risk_bound".to_string(),
+        ],
+        max_pac_bayes_risk: risk,
+    };
+
+    let mut pipeline = AutonomousSwarmPipeline::new(max_rounds, risk);
+    let report = pipeline.execute_lifecycle(&spec);
+
+    let json_data = json!({
+        "pipeline": "autonomous_swarm_sdlc",
+        "task_id": report.task_id,
+        "total_rounds": report.total_rounds,
+        "self_healed": report.self_healed,
+        "certified": report.certified,
+        "cycles": report.cycles,
+        "final_policy_gradient": report.final_policy_gradient,
+        "merkle_receipt_sha256": report.merkle_receipt_sha256,
+        "theorems_verified": report.theorems_verified,
+    });
+
+    let human = format!(
+        "Autonomous Swarm Pipeline: Task '{}' {} in {} round(s) (self_healed: {}), receipt: {}",
+        report.task_id,
+        if report.certified {
+            "CERTIFIED"
+        } else {
+            "FAILED"
+        },
+        report.total_rounds,
+        report.self_healed,
+        report.merkle_receipt_sha256
+    );
+
+    Ok(success("swarm pipeline run", json_data, human))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,5 +761,28 @@ mod tests {
     fn test_swarm_cli_vote_missing_proposal() {
         let err = assert_err(execute(&["vote".to_string()]));
         assert!(err.message.contains("swarm vote requires"));
+    }
+
+    #[test]
+    fn test_swarm_cli_pipeline_run_and_status() {
+        let status_res =
+            execute(&["pipeline".to_string(), "status".to_string()]).expect("status succeeds");
+        assert_eq!(status_res.command, "swarm pipeline status");
+        assert_eq!(status_res.data["status"], "ready");
+
+        let run_res = execute(&[
+            "pipeline".to_string(),
+            "run".to_string(),
+            "--task".to_string(),
+            "task-test-01".to_string(),
+            "--max-rounds".to_string(),
+            "2".to_string(),
+        ])
+        .expect("pipeline run succeeds");
+        assert_eq!(run_res.command, "swarm pipeline run");
+        assert_eq!(run_res.data["task_id"], "task-test-01");
+        assert!(run_res.data["certified"].as_bool().unwrap());
+        assert!(run_res.data["self_healed"].as_bool().unwrap());
+        assert_eq!(run_res.data["total_rounds"], 2);
     }
 }

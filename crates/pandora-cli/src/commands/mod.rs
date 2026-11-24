@@ -432,6 +432,9 @@ fn is_flag(name: &str) -> bool {
             | "quant"
             | "roofline"
             | "finops"
+            | "auto-heal"
+            | "pareto"
+            | "hierarchical"
             | "require-signature"
             | "require-capsule"
     )

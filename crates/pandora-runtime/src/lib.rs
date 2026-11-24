@@ -116,6 +116,7 @@ pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
 pub mod swarm_mesh;
+pub mod swarm_pipeline;
 pub mod synthetic_canvas;
 pub mod tool_engine;
 pub mod tripartite_governance;

@@ -2783,6 +2783,25 @@ fn handle_connection(
             let snap_val = CockpitWebServer::current_snapshot_json(&controller);
             write_json_response(&mut stream, 200, "OK", &snap_val)?;
         }
+        ("GET", "/api/benchmark") => {
+            let report = crate::inference_infra::InferenceParetoAnalyzer::default_benchmark();
+            let val = serde_json::to_value(&report)
+                .unwrap_or_else(|_| json!({"error": "serialization_failed"}));
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
+        ("GET", "/api/swarm/pipeline") => {
+            let spec = crate::swarm_pipeline::SwarmTaskSpec::default();
+            let val = json!({
+                "status": "ready",
+                "default_task_id": spec.task_id,
+                "goal": spec.goal,
+                "invariants": spec.required_invariants,
+                "max_pac_bayes_risk": spec.max_pac_bayes_risk,
+                "target_files": spec.target_files,
+                "theorems": [33, 35, 41, 44, 45, 48, 50, 56, 57]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;
