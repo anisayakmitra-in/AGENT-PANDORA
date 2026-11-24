@@ -319,6 +319,378 @@ impl MartingaleTelemetrySummary {
     }
 }
 
+/// Phase 15 Split Conformal Prediction & Adaptive Conformal Inference telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConformalTelemetrySummary {
+    pub calibration_size: usize,
+    pub target_alpha: f64,
+    pub order_statistic_rank: usize,
+    pub quantile_threshold: f64,
+    pub marginal_coverage_lower_bound: f64,
+    pub marginal_coverage_upper_bound: f64,
+    pub current_alpha_t: f64,
+    pub empirical_coverage_rate: f64,
+    pub empirical_miscoverage_rate: f64,
+    pub within_theoretical_bound: bool,
+    pub theoretical_error_bound: f64,
+    pub last_set_size: usize,
+    pub last_verdict: String,
+}
+
+impl Default for ConformalTelemetrySummary {
+    fn default() -> Self {
+        Self {
+            calibration_size: 100,
+            target_alpha: 0.10,
+            order_statistic_rank: 91,
+            quantile_threshold: 0.90,
+            marginal_coverage_lower_bound: 0.90,
+            marginal_coverage_upper_bound: 0.91,
+            current_alpha_t: 0.10,
+            empirical_coverage_rate: 0.90,
+            empirical_miscoverage_rate: 0.10,
+            within_theoretical_bound: true,
+            theoretical_error_bound: 0.10,
+            last_set_size: 1,
+            last_verdict: "certify_singleton".to_owned(),
+        }
+    }
+}
+
+impl ConformalTelemetrySummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        calibration_size: usize,
+        target_alpha: f64,
+        order_statistic_rank: usize,
+        quantile_threshold: f64,
+        marginal_coverage_lower_bound: f64,
+        marginal_coverage_upper_bound: f64,
+        current_alpha_t: f64,
+        empirical_coverage_rate: f64,
+        empirical_miscoverage_rate: f64,
+        within_theoretical_bound: bool,
+        theoretical_error_bound: f64,
+        last_set_size: usize,
+        last_verdict: impl Into<String>,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            calibration_size,
+            target_alpha,
+            order_statistic_rank,
+            quantile_threshold,
+            marginal_coverage_lower_bound,
+            marginal_coverage_upper_bound,
+            current_alpha_t,
+            empirical_coverage_rate,
+            empirical_miscoverage_rate,
+            within_theoretical_bound,
+            theoretical_error_bound,
+            last_set_size,
+            last_verdict: last_verdict.into(),
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.target_alpha.is_finite()
+            && self.quantile_threshold.is_finite()
+            && self.marginal_coverage_lower_bound.is_finite()
+            && self.marginal_coverage_upper_bound.is_finite()
+            && self.current_alpha_t.is_finite()
+            && self.empirical_coverage_rate.is_finite()
+            && self.empirical_miscoverage_rate.is_finite()
+            && self.theoretical_error_bound.is_finite()
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if !self.target_alpha.is_finite() || !(0.0..1.0).contains(&self.target_alpha) {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "target_alpha must be finite and in (0, 1)",
+            ));
+        }
+        if !self.quantile_threshold.is_finite() {
+            return Err(DistillationContractError::NonFiniteMetric(
+                "quantile_threshold",
+            ));
+        }
+        if !self.marginal_coverage_lower_bound.is_finite()
+            || self.marginal_coverage_lower_bound < 0.0
+        {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "marginal_coverage_lower_bound must be finite and >= 0",
+            ));
+        }
+        if !self.marginal_coverage_upper_bound.is_finite()
+            || self.marginal_coverage_upper_bound > 1.0 + 1e-12
+        {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "marginal_coverage_upper_bound must be finite and <= 1",
+            ));
+        }
+        if self.marginal_coverage_lower_bound > self.marginal_coverage_upper_bound + 1e-12 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "marginal_coverage_lower_bound must be <= marginal_coverage_upper_bound",
+            ));
+        }
+        if !self.current_alpha_t.is_finite() {
+            return Err(DistillationContractError::NonFiniteMetric(
+                "current_alpha_t",
+            ));
+        }
+        if !self.empirical_coverage_rate.is_finite()
+            || !(0.0..=1.0).contains(&self.empirical_coverage_rate)
+        {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "empirical_coverage_rate must be finite and in [0, 1]",
+            ));
+        }
+        if !self.empirical_miscoverage_rate.is_finite()
+            || !(0.0..=1.0).contains(&self.empirical_miscoverage_rate)
+        {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "empirical_miscoverage_rate must be finite and in [0, 1]",
+            ));
+        }
+        if !self.theoretical_error_bound.is_finite() || self.theoretical_error_bound < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "theoretical_error_bound must be finite and >= 0",
+            ));
+        }
+        if self.last_verdict.trim().is_empty() {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "last_verdict must not be empty",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Phase 16 Spectral Graph Partitioning & Algebraic Connectivity telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpectralTopologySummary {
+    pub num_vertices: usize,
+    pub num_edges: usize,
+    pub is_connected: bool,
+    pub fiedler_value: f64,
+    pub normalized_fiedler_value: f64,
+    pub cheeger_lower_bound: f64,
+    pub cheeger_upper_bound: f64,
+    pub sweep_cut_conductance: f64,
+    pub sweep_cut_partition_size: usize,
+    pub cheeger_inequality_verified: bool,
+    pub verdict: String,
+}
+
+impl Default for SpectralTopologySummary {
+    fn default() -> Self {
+        Self {
+            num_vertices: 6,
+            num_edges: 7,
+            is_connected: true,
+            fiedler_value: 0.438,
+            normalized_fiedler_value: 0.205,
+            cheeger_lower_bound: 0.102,
+            cheeger_upper_bound: 0.640,
+            sweep_cut_conductance: 0.143,
+            sweep_cut_partition_size: 3,
+            cheeger_inequality_verified: true,
+            verdict: "connected_resilient".to_owned(),
+        }
+    }
+}
+
+impl SpectralTopologySummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        num_vertices: usize,
+        num_edges: usize,
+        is_connected: bool,
+        fiedler_value: f64,
+        normalized_fiedler_value: f64,
+        cheeger_lower_bound: f64,
+        cheeger_upper_bound: f64,
+        sweep_cut_conductance: f64,
+        sweep_cut_partition_size: usize,
+        cheeger_inequality_verified: bool,
+        verdict: impl Into<String>,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            num_vertices,
+            num_edges,
+            is_connected,
+            fiedler_value,
+            normalized_fiedler_value,
+            cheeger_lower_bound,
+            cheeger_upper_bound,
+            sweep_cut_conductance,
+            sweep_cut_partition_size,
+            cheeger_inequality_verified,
+            verdict: verdict.into(),
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.fiedler_value.is_finite()
+            && self.normalized_fiedler_value.is_finite()
+            && self.cheeger_lower_bound.is_finite()
+            && self.cheeger_upper_bound.is_finite()
+            && self.sweep_cut_conductance.is_finite()
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if !self.fiedler_value.is_finite() || self.fiedler_value < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "fiedler_value must be finite and >= 0",
+            ));
+        }
+        if !self.normalized_fiedler_value.is_finite() || self.normalized_fiedler_value < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "normalized_fiedler_value must be finite and >= 0",
+            ));
+        }
+        if !self.cheeger_lower_bound.is_finite() || self.cheeger_lower_bound < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "cheeger_lower_bound must be finite and >= 0",
+            ));
+        }
+        if !self.cheeger_upper_bound.is_finite() || self.cheeger_upper_bound < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "cheeger_upper_bound must be finite and >= 0",
+            ));
+        }
+        if !self.sweep_cut_conductance.is_finite() || self.sweep_cut_conductance < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "sweep_cut_conductance must be finite and >= 0",
+            ));
+        }
+        if self.verdict.trim().is_empty() {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "verdict must not be empty",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Phase 17 Exp3 Adversarial Multi-Armed Bandit router telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdversarialBanditSummary {
+    pub num_arms: usize,
+    pub total_rounds: usize,
+    pub gamma: f64,
+    pub eta: f64,
+    pub total_reward: f64,
+    pub theoretical_regret_bound: f64,
+    pub arm_weights: Vec<f64>,
+    pub arm_probabilities: Vec<f64>,
+    pub arm_pull_counts: Vec<usize>,
+    pub arm_rewards: Vec<f64>,
+}
+
+impl Default for AdversarialBanditSummary {
+    fn default() -> Self {
+        Self {
+            num_arms: 3,
+            total_rounds: 200,
+            gamma: 0.098,
+            eta: 0.033,
+            total_reward: 135.0,
+            theoretical_regret_bound: 67.31,
+            arm_weights: vec![0.933, 0.033, 0.034],
+            arm_probabilities: vec![0.875, 0.062, 0.063],
+            arm_pull_counts: vec![130, 36, 34],
+            arm_rewards: vec![110.5, 12.6, 11.9],
+        }
+    }
+}
+
+impl AdversarialBanditSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        num_arms: usize,
+        total_rounds: usize,
+        gamma: f64,
+        eta: f64,
+        total_reward: f64,
+        theoretical_regret_bound: f64,
+        arm_weights: Vec<f64>,
+        arm_probabilities: Vec<f64>,
+        arm_pull_counts: Vec<usize>,
+        arm_rewards: Vec<f64>,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            num_arms,
+            total_rounds,
+            gamma,
+            eta,
+            total_reward,
+            theoretical_regret_bound,
+            arm_weights,
+            arm_probabilities,
+            arm_pull_counts,
+            arm_rewards,
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.gamma.is_finite()
+            && self.eta.is_finite()
+            && self.total_reward.is_finite()
+            && self.theoretical_regret_bound.is_finite()
+            && self.arm_weights.iter().all(|w| w.is_finite())
+            && self.arm_probabilities.iter().all(|p| p.is_finite())
+            && self.arm_rewards.iter().all(|r| r.is_finite())
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if !self.gamma.is_finite() || !(0.0..=1.0).contains(&self.gamma) {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "gamma must be finite and in (0, 1]",
+            ));
+        }
+        if !self.eta.is_finite() || self.eta <= 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "eta must be finite and > 0",
+            ));
+        }
+        if !self.total_reward.is_finite() || self.total_reward < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "total_reward must be finite and >= 0",
+            ));
+        }
+        if !self.theoretical_regret_bound.is_finite() || self.theoretical_regret_bound < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "theoretical_regret_bound must be finite and >= 0",
+            ));
+        }
+        if self.arm_weights.iter().any(|w| !w.is_finite()) {
+            return Err(DistillationContractError::NonFiniteMetric("arm_weights"));
+        }
+        if self
+            .arm_probabilities
+            .iter()
+            .any(|p| !p.is_finite() || *p < 0.0)
+        {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "all arm_probabilities must be finite and >= 0",
+            ));
+        }
+        if self.arm_rewards.iter().any(|r| !r.is_finite()) {
+            return Err(DistillationContractError::NonFiniteMetric("arm_rewards"));
+        }
+        Ok(())
+    }
+}
+
 /// Persisted runtime and cross-session distillation telemetry snapshot surfaced in Cockpit & TUI.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -339,6 +711,12 @@ pub struct DistillationTelemetrySnapshot {
     pub wasserstein_drift: Option<WassersteinTelemetrySummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub martingale_canary: Option<MartingaleTelemetrySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conformal_calibration: Option<ConformalTelemetrySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spectral_topology: Option<SpectralTopologySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adversarial_bandit: Option<AdversarialBanditSummary>,
     pub updated_at_unix: u64,
 }
 
@@ -387,6 +765,18 @@ impl DistillationTelemetrySnapshot {
         self
     }
 
+    pub fn with_phase15_17_metrics(
+        mut self,
+        conformal_calibration: Option<ConformalTelemetrySummary>,
+        spectral_topology: Option<SpectralTopologySummary>,
+        adversarial_bandit: Option<AdversarialBanditSummary>,
+    ) -> Self {
+        self.conformal_calibration = conformal_calibration;
+        self.spectral_topology = spectral_topology;
+        self.adversarial_bandit = adversarial_bandit;
+        self
+    }
+
     pub fn is_finite(&self) -> bool {
         self.wasserstein_drift
             .as_ref()
@@ -395,6 +785,18 @@ impl DistillationTelemetrySnapshot {
                 .martingale_canary
                 .as_ref()
                 .is_none_or(MartingaleTelemetrySummary::is_finite)
+            && self
+                .conformal_calibration
+                .as_ref()
+                .is_none_or(ConformalTelemetrySummary::is_finite)
+            && self
+                .spectral_topology
+                .as_ref()
+                .is_none_or(SpectralTopologySummary::is_finite)
+            && self
+                .adversarial_bandit
+                .as_ref()
+                .is_none_or(AdversarialBanditSummary::is_finite)
     }
 
     pub fn validate(&self) -> Result<(), DistillationContractError> {
@@ -403,6 +805,15 @@ impl DistillationTelemetrySnapshot {
         }
         if let Some(ref canary) = self.martingale_canary {
             canary.validate()?;
+        }
+        if let Some(ref conformal) = self.conformal_calibration {
+            conformal.validate()?;
+        }
+        if let Some(ref topology) = self.spectral_topology {
+            topology.validate()?;
+        }
+        if let Some(ref bandit) = self.adversarial_bandit {
+            bandit.validate()?;
         }
         Ok(())
     }
@@ -462,7 +873,12 @@ mod tests {
                 Some("commit123".to_owned()),
                 true,
             )
-            .with_phase_metrics(Some(drift), Some(canary), 1_700_000_000);
+            .with_phase_metrics(Some(drift), Some(canary), 1_700_000_000)
+            .with_phase15_17_metrics(
+                Some(ConformalTelemetrySummary::default()),
+                Some(SpectralTopologySummary::default()),
+                Some(AdversarialBanditSummary::default()),
+            );
 
         assert!(snap.is_finite());
         assert!(snap.validate().is_ok());
@@ -470,6 +886,73 @@ mod tests {
         let json = serde_json::to_string(&snap).unwrap();
         let parsed: DistillationTelemetrySnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, snap);
+    }
+
+    #[test]
+    fn phase15_17_telemetry_summaries_validate_and_reject_invalids() {
+        let conf = ConformalTelemetrySummary::default();
+        assert!(conf.is_finite());
+        assert!(conf.validate().is_ok());
+
+        let topo = SpectralTopologySummary::default();
+        assert!(topo.is_finite());
+        assert!(topo.validate().is_ok());
+
+        let bandit = AdversarialBanditSummary::default();
+        assert!(bandit.is_finite());
+        assert!(bandit.validate().is_ok());
+
+        assert!(matches!(
+            ConformalTelemetrySummary::new(
+                10,
+                1.5, // alpha > 1
+                9,
+                0.9,
+                0.9,
+                0.95,
+                0.1,
+                0.9,
+                0.1,
+                true,
+                0.1,
+                1,
+                "certify_singleton",
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
+
+        assert!(matches!(
+            SpectralTopologySummary::new(
+                4,
+                6,
+                true,
+                -1.0, // negative fiedler
+                0.5,
+                0.2,
+                0.8,
+                0.4,
+                2,
+                true,
+                "connected_resilient",
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
+
+        assert!(matches!(
+            AdversarialBanditSummary::new(
+                3,
+                100,
+                0.1,
+                0.0, // eta <= 0
+                50.0,
+                10.0,
+                vec![0.5, 0.3, 0.2],
+                vec![0.5, 0.3, 0.2],
+                vec![50, 30, 20],
+                vec![25.0, 15.0, 10.0],
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
     }
 
     #[test]

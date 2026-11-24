@@ -2384,6 +2384,15 @@ impl ContextVfs {
         if let Ok(guard) = self.cached_hnsw_index.read() {
             if let Some(cached) = guard.as_ref() {
                 if cached.corpus_hash() == &current_corpus_hash {
+                    let index_path = self
+                        .hnsw_index_path
+                        .read()
+                        .ok()
+                        .and_then(|guard| guard.clone())
+                        .unwrap_or_else(|| PathBuf::from(VFS_HNSW_INDEX_PATH_DEFAULT));
+                    if index_path.is_file() && !self.is_hnsw_index_fresh() {
+                        let _ = cached.save_to_file(&index_path);
+                    }
                     return Ok(Arc::clone(cached));
                 }
             }

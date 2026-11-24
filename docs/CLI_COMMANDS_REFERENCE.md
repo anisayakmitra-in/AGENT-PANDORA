@@ -28,6 +28,7 @@ Complete command and flag reference for the `pandora` binary.
 | `pandora cockpit` | Real-time multi-agent observability & operations | `status`, `tui`, `web`, `distill` |
 | `pandora doctor` | System diagnostic health check | `--fix` |
 | `pandora policy` | Inspect active reference monitor policy | `--export` |
+| `pandora runtime` | Certified mathematical runtime engines & verification | `conformal`, `topology`, `bandit`, `drift`, `canary-gate`, `tropical` |
 | `pandora update` | In-place self-update with signature verification | `--channel`, `--version` |
 | `pandora completions` | Generate shell autocompletion scripts | `powershell`, `bash`, `zsh`, `fish` |
 
@@ -159,5 +160,25 @@ pandora cockpit distill [--sessions-dir <path>] [--dpo-input <path>] [--capsule-
 - `--pnn-out <path>`: Output destination for calibrated `.pnn` model checkpoint.
 - `--key <path>`: Path to Ed25519 signing key hex.
 - `--dry-run`: Evaluate distillation and canary gating without persisting artifacts to disk.
+
+---
+
+## `pandora runtime`
+
+Execute mathematical assurance engines and certified runtime subcomponents:
+
+```text
+pandora runtime <conformal|topology|bandit|drift|canary-gate|tropical|scheduler|...> [options]
+```
+
+### Subcommands
+
+- `conformal [--samples <n>] [--alpha <f64>] [--gamma <f64>] [--steps <T>] [--json]`
+  Split Conformal Prediction & Adaptive Conformal Inference (ACI) uncertainty calibration (Theorems 29 & 30).
+- `topology | spectral [--nodes <n>] [--bridge-weight <f64>] [--threshold <f64>] [--json]`
+  Spectral Graph Partitioning, algebraic connectivity Fiedler value $\lambda_2(L)$, and Cheeger sweep-cut conductance $h(G)$ (Theorems 31 & 32).
+- `bandit | exp3 [--arms <k>] [--horizon <T>] [--gamma <f64>] [--json]`
+  Exp3 adversarial multi-armed bandit routing with importance-weighted reward estimation and minimax sublinear regret bounds (Theorems 33 & 34).
+
 
 

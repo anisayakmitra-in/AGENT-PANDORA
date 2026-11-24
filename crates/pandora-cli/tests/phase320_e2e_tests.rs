@@ -744,6 +744,7 @@ fn test_tier1_r2_05_run_lats_auto_calibrate_dpo_output_and_memo_telemetry() {
             verdict: "continue_monitoring".to_string(),
         }),
         updated_at_unix: 1700000000,
+        ..Default::default()
     };
     save_telemetry_snapshot(&tpath, &snap).expect("saved snapshot");
 
@@ -793,6 +794,7 @@ fn test_tier1_r2_06_cockpit_status_and_fleet_dashboard_surface_live_telemetry() 
             verdict: "promote_canary".to_string(),
         }),
         updated_at_unix: 1700000000,
+        ..Default::default()
     };
     save_telemetry_snapshot(&tpath, &snap).expect("saved telemetry");
 
@@ -867,6 +869,7 @@ fn test_tier1_r2_07_cockpit_web_surfaces_live_telemetry_http_and_sse() {
             verdict: "promote_canary".to_string(),
         }),
         updated_at_unix: 1700000000,
+        ..Default::default()
     };
     save_telemetry_snapshot(&tpath, &snap).expect("saved telemetry");
 
@@ -951,6 +954,7 @@ fn test_tier1_r2_08_cockpit_tui_headless_snapshot_surfaces_telemetry() {
             verdict: "promote_canary".to_string(),
         }),
         updated_at_unix: 1700000000,
+        ..Default::default()
     };
     save_telemetry_snapshot(&tpath, &snap).expect("saved telemetry");
 

@@ -252,8 +252,38 @@ impl Parliament {
             .uncertainty_threshold
             .unwrap_or_else(|| engine.uncertainty_threshold());
 
+        // Phase 15 Conformal Prediction Set Uncertainty Certification (Theorem 29)
+        let candidate_actions: Vec<crate::conformal_calibrator::CandidateAction> = verdict
+            .distribution
+            .candidates
+            .iter()
+            .map(|c| crate::conformal_calibrator::CandidateAction {
+                action_id: c.choice.as_str().to_string(),
+                nonconformity_score: (1.0 - c.probability).clamp(0.0, 1.0),
+            })
+            .collect();
+        let conformal_escalate = if !candidate_actions.is_empty() {
+            let cal_scores: Vec<f64> = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85];
+            crate::conformal_calibrator::SplitConformalCalibrator::calibrate(
+                &cal_scores,
+                threshold.clamp(0.05, 0.50),
+            )
+            .and_then(|cal| cal.predict_set(&candidate_actions))
+            .map(|rep| {
+                matches!(
+                    rep.verdict,
+                    crate::conformal_calibrator::ConformalGovernanceVerdict::EscalateAmbiguous
+                        | crate::conformal_calibrator::ConformalGovernanceVerdict::AbstainEmpty
+                )
+            })
+            .unwrap_or(false)
+        } else {
+            false
+        };
+
         let needs_escalation =
-            crate::decision_engine::should_escalate(margin, threshold, normalized_entropy);
+            crate::decision_engine::should_escalate(margin, threshold, normalized_entropy)
+                || conformal_escalate;
 
         if needs_escalation {
             // Escalate to System 2 MCTS

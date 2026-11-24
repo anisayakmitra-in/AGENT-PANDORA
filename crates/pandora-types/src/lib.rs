@@ -79,7 +79,8 @@ pub use decision::{
     GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
 };
 pub use distillation::{
-    DistillationContractError, DistillationTelemetrySnapshot, MartingaleTelemetrySummary,
+    AdversarialBanditSummary, ConformalTelemetrySummary, DistillationContractError,
+    DistillationTelemetrySnapshot, MartingaleTelemetrySummary, SpectralTopologySummary,
     WassersteinTelemetrySummary,
 };
 pub use dsrs::{DsrDemonstration, DsrsError, Signature, SignatureField, SignatureFieldKind};
