@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.1.5
+
+### Autonomous In-Loop `.pnn` Hot-Reload, Quantized 7D LATS Memoization, Tier-Weighted Tropical HNSW, Offline Calibration Attestation & Security Patch (`RUSTSEC-2026-0592`)
+- **Autonomous In-Loop `.pnn` Hot-Reload & Subgradient Self-Calibration (`crates/pandora-runtime/src/agent_loop.rs`, `crates/pandora-runtime/src/decision_engine.rs`)**:
+  - Added `TropicalDecisionDriver::with_network` and `LatsLoopConfig::with_auto_calibrate(batch_k)` with `try_hot_reload_pnn` gated by `DecisionBenchmarkSuite`, `BayesianCanaryGate`, non-regression checks, and no-op digest filtering, plus `AgentRunSummary::pnn_hot_reloads()` and `active_pnn_digest()`.
+- **Quantized 7D Feature Memoization (`crates/pandora-runtime/src/lats_engine.rs`, `crates/pandora-runtime/src/agent_loop.rs`, `crates/pandora-cli/src/commands/run.rs`)**:
+  - Added `LatsMemoKey` (4-bit per-coordinate quantization with $L_\infty \le 1/30$), `LatsMemoEntry`, and `LatsPrefixMemoCache` ($N_{\max}=256$) with `LatsLoopConfig::with_memo(bool)`, `AgentRunSummary::lats_memo_hits()`, `LatsTurnTelemetry::memo_hit`, and `"memo_hits"` CLI telemetry.
+- **Tier-Weighted Tropical HNSW Routing (`crates/pandora-runtime/src/context_vfs.rs`)**:
+  - Updated `ContextVfs::search_hnsw` for tropical indices to fetch $2\times$ candidates and apply non-saturating tier-weighted tie-breaking (`0.99999 * s + beta_tier` across `L0 > L1 > L2 > L3 > L4`).
+- **Offline Calibration Attestation Verification & SDK/ABI Parity (`crates/pandora-cli/src/commands/moira.rs`, `npm/pandora-cli/src/client.ts`, `include/pandora.h`, `native/c/pandora_c_api.c`, `include/pandora.hpp`)**:
+  - Added `pandora model|moira verify-attestation`, `PandoraClient.modelVerifyAttestation` + `CalibrationAttestationVerification`, and C11/C++20 `pandora_build_verify_attestation_args` / `Client::BuildVerifyAttestationArgs`.
+- **Security & Dependency Maintenance (`Cargo.lock`)**:
+  - Upgraded `url` to `2.5.9` (`form_urlencoded` `1.2.3`) resolving `RUSTSEC-2026-0592`.
+
 ## v3.1.4
 
 ### Live AgentLoop LATS Branching, PVFS v3 & Hilbert Tropical HNSW, Online DPO Distillation, 7D Multi-Step Rollouts & Hash-Chained `.pnn` Calibration Attestation Receipts

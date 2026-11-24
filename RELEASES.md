@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, and `v3.1.4`. The active release identity
-is `v3.1.4`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, and `v3.1.5`. The active release identity
+is `v3.1.5`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,10 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v3.1.5
+
+This release delivers Phases 9–12 of the architectural roadmap (autonomous in-loop `.pnn` hot-reload via `LatsLoopConfig::with_auto_calibrate`, quantized 7D `LatsPrefixMemoCache` memoization, tier-weighted tropical HNSW tie-breaking across `L0`–`L4`, and offline `verify-attestation` verification across CLI, TypeScript SDK, and C11/C++20 bindings under `#![forbid(unsafe_code)]`), along with the `url 2.5.9` security update (`RUSTSEC-2026-0592`).
 
 ## v3.1.4
 
