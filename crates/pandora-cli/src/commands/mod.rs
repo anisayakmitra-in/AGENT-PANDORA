@@ -426,6 +426,12 @@ fn is_flag(name: &str) -> bool {
             | "quantized"
             | "simulate"
             | "tropical"
+            | "grammar"
+            | "disaggregated"
+            | "moe"
+            | "quant"
+            | "roofline"
+            | "finops"
             | "require-signature"
             | "require-capsule"
     )

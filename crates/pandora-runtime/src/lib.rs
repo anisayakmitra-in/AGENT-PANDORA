@@ -55,6 +55,7 @@ pub mod hnsw;
 pub mod hooks;
 pub mod human_review;
 pub mod identity;
+pub mod inference_infra;
 pub mod job_store;
 pub mod kanban_engine;
 pub mod lats_engine;
