@@ -52,13 +52,17 @@ impl PersistentSwarmState {
 }
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
-    let subcommand = args.first().ok_or_else(|| {
-        CliError::usage(
-            "swarm requires 'connect', 'status', 'propose', 'vote', or 'sync-gradients'",
-        )
-    })?;
+    let first = args.first().map(String::as_str);
+    let subcommand = match first {
+        Some(s) if !s.starts_with('-') => s,
+        _ => {
+            return Err(CliError::usage(
+                "swarm requires 'connect', 'status', 'propose', 'vote', or 'sync-gradients'",
+            ));
+        }
+    };
 
-    match subcommand.as_str() {
+    match subcommand {
         "connect" => connect(&args[1..]),
         "status" => status(&args[1..]),
         "propose" => propose(&args[1..]),
@@ -275,6 +279,7 @@ fn propose(args: &[String]) -> Result<CommandResult, CliError> {
             "diff",
             "title",
             "agent",
+            "author",
             "proposal-id",
         ],
     )?;
@@ -304,7 +309,7 @@ fn propose(args: &[String]) -> Result<CommandResult, CliError> {
     let title = parsed
         .value("title")
         .unwrap_or("Distributed Swarm Consensus Candidate");
-    let author_agent = parse_agent_kind(parsed.value("agent"));
+    let author_agent = parse_agent_kind(parsed.value("author").or_else(|| parsed.value("agent")));
     let timestamp_ms = now_epoch_ms();
 
     let proposal_id = parsed

@@ -29,6 +29,7 @@ Complete command and flag reference for the `pandora` binary.
 | `pandora doctor` | System diagnostic health check | `--fix` |
 | `pandora policy` | Inspect active reference monitor policy | `--export` |
 | `pandora runtime` | Certified mathematical runtime engines & verification | `conformal`, `topology`, `bandit`, `drift`, `canary-gate`, `tropical`, `mfg`, `pac-bayes`, `assurance` |
+| `pandora swarm` | Distributed P2P cross-node swarm mesh & Byzantine consensus | `connect`, `status`, `propose`, `vote`, `sync-gradients` |
 | `pandora update` | In-place self-update with signature verification | `--channel`, `--version` |
 | `pandora completions` | Generate shell autocompletion scripts | `powershell`, `bash`, `zsh`, `fish` |
 
@@ -191,6 +192,30 @@ pandora runtime <conformal|topology|bandit|drift|canary-gate|tropical|scheduler|
   Autonomous self-healing daemon guard executing continuous multi-engine telemetry verification ticks, commit to Merkle audit store, and circuit breaker evaluation.
 - `federated | federated-policy [--agents <n>] [--byzantine <f>] [--steps <k>] [--learning-rate <lr>] [--momentum <m>] [--max-norm <norm>] [--seed <seed>] [--json]`
   Byzantine-fault-tolerant federated reinforcement learning policy aggregation with coordinate-wise trimmed mean and Beta-reputation quarantine monitor (Theorems 45 & 46).
+
+---
+
+## `pandora swarm`
+
+Distributed cross-node peer-to-peer swarm mesh, Byzantine patch consensus, and federated policy optimization (Theorem 47):
+
+```text
+pandora swarm <connect|status|propose|vote|sync-gradients> [options]
+```
+
+### Subcommands
+
+- `connect --peer <addr> [--node-id <id>] [--json]`
+  Connect to a cluster peer node over authenticated Ed25519 channel and update mesh topology.
+- `status [--json]`
+  Inspect active P2P mesh peers, cluster epoch, BFT quorum parameters ($N \ge 3f + 1$, $Q = 2f + 1$), active proposals, decisions, and 6D federated policy parameters $\boldsymbol{\theta}$.
+- `propose --goal <text> [--diff <content|path>] [--title <text>] [--author <agent>] [--proposal-id <id>] [--json]`
+  Broadcast candidate code patch proposal across the cluster for multi-agent evaluation.
+- `vote --proposal <id> [--approve|--reject] [--voter <id>] [--pass <f64>] [--confidence <f64>] [--compactness <f64>] [--invariant <f64>] [--json]`
+  Cast an Ed25519-signed Byzantine consensus vote on a candidate patch with equivocation detection and centroid scoring; commits `PANDORA_PATCH_CERT_V1:...` upon supermajority quorum.
+- `sync-gradients [--epoch <n>] [--loss <f64>] [--samples <n>] [--json]`
+  Disseminate local empirical gradients and aggregate cross-cluster updates using coordinate-wise trimmed mean to update global policy parameters $\boldsymbol{\theta}$.
+
 
 
 
