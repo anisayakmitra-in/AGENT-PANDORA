@@ -28,7 +28,7 @@ Complete command and flag reference for the `pandora` binary.
 | `pandora cockpit` | Real-time multi-agent observability & operations | `status`, `tui`, `web`, `distill` |
 | `pandora doctor` | System diagnostic health check | `--fix` |
 | `pandora policy` | Inspect active reference monitor policy | `--export` |
-| `pandora runtime` | Certified mathematical runtime engines & verification | `conformal`, `topology`, `bandit`, `drift`, `canary-gate`, `tropical` |
+| `pandora runtime` | Certified mathematical runtime engines & verification | `conformal`, `topology`, `bandit`, `drift`, `canary-gate`, `tropical`, `mfg`, `pac-bayes`, `assurance` |
 | `pandora update` | In-place self-update with signature verification | `--channel`, `--version` |
 | `pandora completions` | Generate shell autocompletion scripts | `powershell`, `bash`, `zsh`, `fish` |
 
@@ -179,6 +179,18 @@ pandora runtime <conformal|topology|bandit|drift|canary-gate|tropical|scheduler|
   Spectral Graph Partitioning, algebraic connectivity Fiedler value $\lambda_2(L)$, and Cheeger sweep-cut conductance $h(G)$ (Theorems 31 & 32).
 - `bandit | exp3 [--arms <k>] [--horizon <T>] [--gamma <f64>] [--json]`
   Exp3 adversarial multi-armed bandit routing with importance-weighted reward estimation and minimax sublinear regret bounds (Theorems 33 & 34).
+- `mfg | mean-field [--resources <k>] [--base-costs <c1,c2...>] [--congestion-slopes <b1,b2...>] [--temperature <tau>] [--damping <alpha>] [--iterations <n>] [--tolerance <eps>] [--json]`
+  Mean-Field Game (MFG) resource congestion control, Banach fixed-point Nash equilibrium convergence, and Price of Anarchy $\mathrm{PoA} \le 4/3$ verification (Theorems 35 & 36).
+- `pac-bayes | pacbayes [--samples <m>] [--empirical-risk <r>] [--kl <d>] [--target-risk <eps>] [--delta <d>] [--hypotheses <n>] [--losses <l1,l2...>] [--json]`
+  PAC-Bayes policy generalization guarantee, McAllester / Maurer empirical risk inversion, Catoni Gibbs optimal temperature $\beta^\star$, and non-vacuous candidate promotion gate (Theorems 37 & 38).
+- `tropical | max-plus [--nodes <n>] [--topology <pipeline|cycle|custom>] [--sla-threshold <ms>] [--matrix <json>] [--json]`
+  Tropical max-plus $((\mathbb{R} \cup \{-\infty\}, \oplus, \otimes))$ DAG algebra, Kleene star makespan closure $A^*$, and Karp cycle mean $\lambda(G)$ deadlock guard (Theorems 39 & 40).
+- `assurance | assurance-receipt [--run-id <id>] [--json]`
+  Generate and verify a 12-Engine Unified Mathematical Assurance Receipt covering all certified theorems (Theorems 17–40) with SHA-256 state chaining and Ed25519 signature verification.
+- `daemon-guard | guard [--interval-ms <n>] [--iterations <n>] [--store <path>] [--once] [--circuit-threshold <n>] [--cooldown-secs <n>] [--json]`
+  Autonomous self-healing daemon guard executing continuous multi-engine telemetry verification ticks, commit to Merkle audit store, and circuit breaker evaluation.
+- `federated | federated-policy [--agents <n>] [--byzantine <f>] [--steps <k>] [--learning-rate <lr>] [--momentum <m>] [--max-norm <norm>] [--seed <seed>] [--json]`
+  Byzantine-fault-tolerant federated reinforcement learning policy aggregation with coordinate-wise trimmed mean and Beta-reputation quarantine monitor (Theorems 45 & 46).
 
 
 

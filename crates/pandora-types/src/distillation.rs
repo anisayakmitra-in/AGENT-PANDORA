@@ -691,6 +691,369 @@ impl AdversarialBanditSummary {
     }
 }
 
+/// Phase 18 Mean-Field Game (MFG) resource allocation & congestion control telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MfgTelemetrySummary {
+    pub num_resources: usize,
+    pub temperature_tau: f64,
+    pub nash_social_cost: f64,
+    pub optimal_social_cost: f64,
+    pub price_of_anarchy: f64,
+    pub theoretical_poa_bound: f64,
+    pub iterations: usize,
+    pub residual_norm: f64,
+    pub is_strict_contraction: bool,
+    pub poa_bound_satisfied: bool,
+}
+
+impl Default for MfgTelemetrySummary {
+    fn default() -> Self {
+        Self {
+            num_resources: 3,
+            temperature_tau: 1.0,
+            nash_social_cost: 2.14,
+            optimal_social_cost: 1.81,
+            price_of_anarchy: 1.182,
+            theoretical_poa_bound: 1.3333333333333333,
+            iterations: 14,
+            residual_norm: 1.2e-6,
+            is_strict_contraction: true,
+            poa_bound_satisfied: true,
+        }
+    }
+}
+
+impl MfgTelemetrySummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        num_resources: usize,
+        temperature_tau: f64,
+        nash_social_cost: f64,
+        optimal_social_cost: f64,
+        price_of_anarchy: f64,
+        theoretical_poa_bound: f64,
+        iterations: usize,
+        residual_norm: f64,
+        is_strict_contraction: bool,
+        poa_bound_satisfied: bool,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            num_resources,
+            temperature_tau,
+            nash_social_cost,
+            optimal_social_cost,
+            price_of_anarchy,
+            theoretical_poa_bound,
+            iterations,
+            residual_norm,
+            is_strict_contraction,
+            poa_bound_satisfied,
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.temperature_tau.is_finite()
+            && self.nash_social_cost.is_finite()
+            && self.optimal_social_cost.is_finite()
+            && self.price_of_anarchy.is_finite()
+            && self.theoretical_poa_bound.is_finite()
+            && self.residual_norm.is_finite()
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if !self.temperature_tau.is_finite() || self.temperature_tau <= 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "temperature_tau must be finite and > 0",
+            ));
+        }
+        if !self.nash_social_cost.is_finite() || self.nash_social_cost < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "nash_social_cost must be finite and >= 0",
+            ));
+        }
+        if !self.optimal_social_cost.is_finite() || self.optimal_social_cost < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "optimal_social_cost must be finite and >= 0",
+            ));
+        }
+        if !self.price_of_anarchy.is_finite() || self.price_of_anarchy < 1.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "price_of_anarchy must be finite and >= 1",
+            ));
+        }
+        if !self.theoretical_poa_bound.is_finite() || self.theoretical_poa_bound < 1.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "theoretical_poa_bound must be finite and >= 1",
+            ));
+        }
+        if !self.residual_norm.is_finite() || self.residual_norm < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "residual_norm must be finite and >= 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Phase 19 PAC-Bayes Policy Generalization & Variational KL Monitor telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PacBayesTelemetrySummary {
+    pub sample_size: usize,
+    pub delta: f64,
+    pub empirical_risk: f64,
+    pub kl_divergence: f64,
+    pub mcallester_bound: f64,
+    pub catoni_temperature_beta: f64,
+    pub target_risk: f64,
+    pub promotion_verdict: String,
+    pub promotion_granted: bool,
+}
+
+impl Default for PacBayesTelemetrySummary {
+    fn default() -> Self {
+        Self {
+            sample_size: 500,
+            delta: 0.05,
+            empirical_risk: 0.042,
+            kl_divergence: 0.128,
+            mcallester_bound: 0.098,
+            catoni_temperature_beta: 12.4,
+            target_risk: 0.10,
+            promotion_verdict: "PromoteToCandidate".to_string(),
+            promotion_granted: true,
+        }
+    }
+}
+
+impl PacBayesTelemetrySummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        sample_size: usize,
+        delta: f64,
+        empirical_risk: f64,
+        kl_divergence: f64,
+        mcallester_bound: f64,
+        catoni_temperature_beta: f64,
+        target_risk: f64,
+        promotion_verdict: impl Into<String>,
+        promotion_granted: bool,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            sample_size,
+            delta,
+            empirical_risk,
+            kl_divergence,
+            mcallester_bound,
+            catoni_temperature_beta,
+            target_risk,
+            promotion_verdict: promotion_verdict.into(),
+            promotion_granted,
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.delta.is_finite()
+            && self.empirical_risk.is_finite()
+            && self.kl_divergence.is_finite()
+            && self.mcallester_bound.is_finite()
+            && self.catoni_temperature_beta.is_finite()
+            && self.target_risk.is_finite()
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if !self.delta.is_finite() || !(0.0..=1.0).contains(&self.delta) {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "delta must be finite and in (0, 1]",
+            ));
+        }
+        if !self.empirical_risk.is_finite() || self.empirical_risk < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "empirical_risk must be finite and >= 0",
+            ));
+        }
+        if !self.kl_divergence.is_finite() || self.kl_divergence < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "kl_divergence must be finite and >= 0",
+            ));
+        }
+        if !self.mcallester_bound.is_finite() || self.mcallester_bound < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "mcallester_bound must be finite and >= 0",
+            ));
+        }
+        if !self.catoni_temperature_beta.is_finite() || self.catoni_temperature_beta <= 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "catoni_temperature_beta must be finite and > 0",
+            ));
+        }
+        if !self.target_risk.is_finite() || self.target_risk < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "target_risk must be finite and >= 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Phase 20 Tropical Max-Plus DAG Calculus & Karp Cycle Mean telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TropicalDagTelemetrySummary {
+    pub workflow_nodes: usize,
+    pub topology: String,
+    pub critical_path_makespan: f64,
+    pub karp_cycle_mean: f64,
+    pub periodic_throughput: f64,
+    pub sla_deadlock_threshold: f64,
+    pub has_positive_cycle: bool,
+    pub sla_compliant: bool,
+}
+
+impl Default for TropicalDagTelemetrySummary {
+    fn default() -> Self {
+        Self {
+            workflow_nodes: 5,
+            topology: "feedforward_dag".to_string(),
+            critical_path_makespan: 14.2,
+            karp_cycle_mean: 0.0,
+            periodic_throughput: 0.0704,
+            sla_deadlock_threshold: 100.0,
+            has_positive_cycle: false,
+            sla_compliant: true,
+        }
+    }
+}
+
+impl TropicalDagTelemetrySummary {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        workflow_nodes: usize,
+        topology: impl Into<String>,
+        critical_path_makespan: f64,
+        karp_cycle_mean: f64,
+        periodic_throughput: f64,
+        sla_deadlock_threshold: f64,
+        has_positive_cycle: bool,
+        sla_compliant: bool,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            workflow_nodes,
+            topology: topology.into(),
+            critical_path_makespan,
+            karp_cycle_mean,
+            periodic_throughput,
+            sla_deadlock_threshold,
+            has_positive_cycle,
+            sla_compliant,
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        self.critical_path_makespan.is_finite()
+            && self.karp_cycle_mean.is_finite()
+            && self.periodic_throughput.is_finite()
+            && self.sla_deadlock_threshold.is_finite()
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if !self.critical_path_makespan.is_finite() || self.critical_path_makespan < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "critical_path_makespan must be finite and >= 0",
+            ));
+        }
+        if !self.karp_cycle_mean.is_finite() {
+            return Err(DistillationContractError::NonFiniteMetric(
+                "karp_cycle_mean",
+            ));
+        }
+        if !self.periodic_throughput.is_finite() || self.periodic_throughput < 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "periodic_throughput must be finite and >= 0",
+            ));
+        }
+        if !self.sla_deadlock_threshold.is_finite() || self.sla_deadlock_threshold <= 0.0 {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "sla_deadlock_threshold must be finite and > 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Tamper-evident 12-engine mathematical assurance receipt telemetry summary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AssuranceReceiptSummary {
+    pub run_id: String,
+    pub sequence_number: u64,
+    pub prev_receipt_sha256: Option<String>,
+    pub all_invariants_verified: bool,
+    pub phases_certified: usize,
+    pub receipt_sha256: String,
+    pub signature: Option<String>,
+}
+
+impl Default for AssuranceReceiptSummary {
+    fn default() -> Self {
+        Self {
+            run_id: "pandora-assurance-live".to_string(),
+            sequence_number: 1,
+            prev_receipt_sha256: None,
+            all_invariants_verified: true,
+            phases_certified: 12,
+            receipt_sha256:
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            signature: None,
+        }
+    }
+}
+
+impl AssuranceReceiptSummary {
+    pub fn new(
+        run_id: impl Into<String>,
+        sequence_number: u64,
+        prev_receipt_sha256: Option<String>,
+        all_invariants_verified: bool,
+        phases_certified: usize,
+        receipt_sha256: impl Into<String>,
+        signature: Option<String>,
+    ) -> Result<Self, DistillationContractError> {
+        let summary = Self {
+            run_id: run_id.into(),
+            sequence_number,
+            prev_receipt_sha256,
+            all_invariants_verified,
+            phases_certified,
+            receipt_sha256: receipt_sha256.into(),
+            signature,
+        };
+        summary.validate()?;
+        Ok(summary)
+    }
+
+    pub fn is_finite(&self) -> bool {
+        true
+    }
+
+    pub fn validate(&self) -> Result<(), DistillationContractError> {
+        if self.receipt_sha256.is_empty() {
+            return Err(DistillationContractError::InvalidMetricValue(
+                "receipt_sha256 must not be empty",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Persisted runtime and cross-session distillation telemetry snapshot surfaced in Cockpit & TUI.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -717,6 +1080,14 @@ pub struct DistillationTelemetrySnapshot {
     pub spectral_topology: Option<SpectralTopologySummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adversarial_bandit: Option<AdversarialBanditSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mfg_congestion: Option<MfgTelemetrySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pac_bayes: Option<PacBayesTelemetrySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tropical_dag: Option<TropicalDagTelemetrySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assurance_receipt: Option<AssuranceReceiptSummary>,
     pub updated_at_unix: u64,
 }
 
@@ -777,6 +1148,20 @@ impl DistillationTelemetrySnapshot {
         self
     }
 
+    pub fn with_phase18_20_metrics(
+        mut self,
+        mfg_congestion: Option<MfgTelemetrySummary>,
+        pac_bayes: Option<PacBayesTelemetrySummary>,
+        tropical_dag: Option<TropicalDagTelemetrySummary>,
+        assurance_receipt: Option<AssuranceReceiptSummary>,
+    ) -> Self {
+        self.mfg_congestion = mfg_congestion;
+        self.pac_bayes = pac_bayes;
+        self.tropical_dag = tropical_dag;
+        self.assurance_receipt = assurance_receipt;
+        self
+    }
+
     pub fn is_finite(&self) -> bool {
         self.wasserstein_drift
             .as_ref()
@@ -797,6 +1182,22 @@ impl DistillationTelemetrySnapshot {
                 .adversarial_bandit
                 .as_ref()
                 .is_none_or(AdversarialBanditSummary::is_finite)
+            && self
+                .mfg_congestion
+                .as_ref()
+                .is_none_or(MfgTelemetrySummary::is_finite)
+            && self
+                .pac_bayes
+                .as_ref()
+                .is_none_or(PacBayesTelemetrySummary::is_finite)
+            && self
+                .tropical_dag
+                .as_ref()
+                .is_none_or(TropicalDagTelemetrySummary::is_finite)
+            && self
+                .assurance_receipt
+                .as_ref()
+                .is_none_or(AssuranceReceiptSummary::is_finite)
     }
 
     pub fn validate(&self) -> Result<(), DistillationContractError> {
@@ -814,6 +1215,18 @@ impl DistillationTelemetrySnapshot {
         }
         if let Some(ref bandit) = self.adversarial_bandit {
             bandit.validate()?;
+        }
+        if let Some(ref mfg) = self.mfg_congestion {
+            mfg.validate()?;
+        }
+        if let Some(ref pac) = self.pac_bayes {
+            pac.validate()?;
+        }
+        if let Some(ref dag) = self.tropical_dag {
+            dag.validate()?;
+        }
+        if let Some(ref receipt) = self.assurance_receipt {
+            receipt.validate()?;
         }
         Ok(())
     }
@@ -976,6 +1389,78 @@ mod tests {
                 1.0,
                 0.0,
                 "continue_monitoring",
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
+    }
+
+    #[test]
+    fn phase18_20_and_assurance_telemetry_summaries_validate_and_reject_invalids() {
+        let mfg = MfgTelemetrySummary::default();
+        assert!(mfg.is_finite());
+        assert!(mfg.validate().is_ok());
+
+        let pac = PacBayesTelemetrySummary::default();
+        assert!(pac.is_finite());
+        assert!(pac.validate().is_ok());
+
+        let dag = TropicalDagTelemetrySummary::default();
+        assert!(dag.is_finite());
+        assert!(dag.validate().is_ok());
+
+        let receipt = AssuranceReceiptSummary::default();
+        assert!(receipt.is_finite());
+        assert!(receipt.validate().is_ok());
+
+        assert!(matches!(
+            MfgTelemetrySummary::new(
+                3,
+                -0.5, // tau <= 0
+                2.14,
+                1.81,
+                1.182,
+                1.3333333333333333,
+                14,
+                1.2e-6,
+                true,
+                true,
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
+
+        assert!(matches!(
+            PacBayesTelemetrySummary::new(
+                500,
+                1.5, // delta > 1
+                0.042,
+                0.128,
+                0.098,
+                12.4,
+                0.10,
+                "PromoteToCandidate",
+                true,
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
+
+        assert!(matches!(
+            TropicalDagTelemetrySummary::new(
+                5,
+                "feedforward_dag",
+                -1.0, // negative makespan
+                0.0,
+                0.0704,
+                100.0,
+                false,
+                true,
+            ),
+            Err(DistillationContractError::InvalidMetricValue(_))
+        ));
+
+        assert!(matches!(
+            AssuranceReceiptSummary::new(
+                "test", 1, None, true, 12, "", // empty receipt hash
+                None,
             ),
             Err(DistillationContractError::InvalidMetricValue(_))
         ));

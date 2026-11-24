@@ -79,9 +79,10 @@ pub use decision::{
     GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
 };
 pub use distillation::{
-    AdversarialBanditSummary, ConformalTelemetrySummary, DistillationContractError,
-    DistillationTelemetrySnapshot, MartingaleTelemetrySummary, SpectralTopologySummary,
-    WassersteinTelemetrySummary,
+    AdversarialBanditSummary, AssuranceReceiptSummary, ConformalTelemetrySummary,
+    DistillationContractError, DistillationTelemetrySnapshot, MartingaleTelemetrySummary,
+    MfgTelemetrySummary, PacBayesTelemetrySummary, SpectralTopologySummary,
+    TropicalDagTelemetrySummary, WassersteinTelemetrySummary,
 };
 pub use dsrs::{DsrDemonstration, DsrsError, Signature, SignatureField, SignatureFieldKind};
 pub use effect::{
