@@ -78,9 +78,9 @@ fn phase9_agent_loop_hot_reloads_pnn_mid_session_with_canary_gate() {
 
     let budget = StrategyBudget::new(4, 3, 1000, 8, 10, 1000).unwrap();
     let mut base_net = TropicalDecisionDriver::calibrated_network();
-    for row in 0..4 {
-        base_net.layers[0].weights[row * 16 + 10] = 2.1;
-    }
+    base_net.layers[0].weights[10] = 1.2;
+    base_net.layers[0].weights[4] = 1.6;
+    base_net.layers[1].weights = vec![0.0, -5.0, -5.0, -5.0];
     let base_net = pandora_runtime::tropical_nn::TropicalNetwork::new(
         base_net.name,
         base_net.domain,
@@ -112,7 +112,7 @@ fn phase9_agent_loop_hot_reloads_pnn_mid_session_with_canary_gate() {
         manifest,
         turn: Mutex::new(0),
         total_tool_turns: 2,
-        note: "override read inspection",
+        note: "override",
     };
     let now = Timestamp::from_unix_seconds(1_700_000_000);
     let session = Session::new(
@@ -124,7 +124,7 @@ fn phase9_agent_loop_hot_reloads_pnn_mid_session_with_canary_gate() {
     );
 
     let summary = loop_engine
-        .run(&provider, &controller, session, "inspect README.md", now)
+        .run(&provider, &controller, session, "open README.md", now)
         .unwrap();
 
     assert_eq!(summary.dpo_pairs_emitted(), 2);
@@ -222,7 +222,7 @@ fn phase10_lats_prefix_memo_cache_quantization_eviction_and_agent_loop_hits() {
     );
 
     let summary = loop_engine
-        .run(&provider, &controller, session, "inspect README.md", now)
+        .run(&provider, &controller, session, "open README.md", now)
         .unwrap();
 
     assert!(

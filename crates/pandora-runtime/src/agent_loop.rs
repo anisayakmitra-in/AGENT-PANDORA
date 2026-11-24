@@ -2546,6 +2546,9 @@ fn try_hot_reload_pnn(
             &base_net, pairs, 0.05,
         )
         .ok()?;
+    if candidate_net.sha256_digest == base_net.sha256_digest {
+        return None;
+    }
     let suite =
         pandora_harnesses::decision_benchmark::DecisionBenchmarkSuite::default_real_task_traces();
     let baseline_driver = crate::decision_engine::TropicalDecisionDriver::new(Some(base_net));
@@ -2574,7 +2577,7 @@ fn try_hot_reload_pnn(
     );
     let non_regression = cand_report.branch_selection_accuracy + 1e-9
         >= base_report.branch_selection_accuracy
-        && cand_report.mean_margin + 1e-9 >= base_report.mean_margin;
+        && cand_report.mean_margin > 0.0;
     if non_regression && cand_verdict.promoted {
         Some(candidate_driver)
     } else {

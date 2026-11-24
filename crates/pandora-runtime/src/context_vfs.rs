@@ -1729,16 +1729,16 @@ impl ContextVfs {
             let snippet = generate_snippet(&doc.content, query);
             let tier_bias = if uses_tropical {
                 match doc.tier {
-                    Some(MemoryTier::L0) => 0.040,
-                    Some(MemoryTier::L1) => 0.030,
-                    Some(MemoryTier::L2) => 0.020,
-                    Some(MemoryTier::L3) => 0.010,
+                    Some(MemoryTier::L0) => 0.000004,
+                    Some(MemoryTier::L1) => 0.000003,
+                    Some(MemoryTier::L2) => 0.000002,
+                    Some(MemoryTier::L3) => 0.000001,
                     Some(MemoryTier::L4) | None => 0.0,
                 }
             } else {
                 0.0
             };
-            let weighted_score = (res.similarity * 0.95 + tier_bias).clamp(0.0, 1.0);
+            let weighted_score = (res.similarity * 0.99999 + tier_bias).clamp(0.0, 1.0);
             results.push(SearchResultItem {
                 uri: doc.uri.clone(),
                 title: doc.title.clone(),
