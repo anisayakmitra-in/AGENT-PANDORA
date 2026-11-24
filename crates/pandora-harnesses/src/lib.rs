@@ -15,12 +15,19 @@ pub mod recursive_engine;
 pub mod research;
 pub mod security;
 pub mod slash;
+pub mod tier_orchestrator;
 pub mod verification;
 
 pub use catalog::{HarnessCatalog, HarnessCatalogError, replaceable_builtin_harness_kind};
 pub use recursive_engine::{
     ComposeSynthesis, HarnessCandidate, ProbeOutcome, ProposalKind, RecursionMode,
     RecursiveHarnessRunner, default_baseline_harness_tree,
+};
+pub use tier_orchestrator::{
+    ConstitutionalPermitGene, DomainGeneRouter, GenomicAdaptationEngine, GenomicEvaluationResult,
+    HarnessTier, HarnessTierOrchestrator, MetaCoordinationGene, MetaEvolutionGene, MetaSwarmGene,
+    SubstrateTelemetryGene, SystemMemoryConstitutionalGene, TierInventoryReport,
+    WholeAgentChromosome,
 };
 
 pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifest) -> String {

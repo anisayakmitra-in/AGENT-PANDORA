@@ -12,7 +12,7 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "harness requires 'list', 'inspect', 'run', 'tree', 'recursive', or 'library'",
+            "harness requires 'list', 'inspect', 'run', 'tree', 'recursive', 'library', 'tiers', 'dispatch', or 'gene'",
         )
     })?;
     match subcommand.as_str() {
@@ -22,8 +22,11 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "tree" => tree(&args[1..]),
         "recursive" => recursive(&args[1..]),
         "library" => library(&args[1..]),
+        "tiers" => tiers(&args[1..]),
+        "dispatch" => dispatch(&args[1..]),
+        "gene" => gene(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown harness command '{unknown}'; expected list, inspect, run, tree, recursive, or library"
+            "unknown harness command '{unknown}'; expected list, inspect, run, tree, recursive, library, tiers, dispatch, or gene"
         ))),
     }
 }
@@ -581,6 +584,122 @@ fn library_inspect(args: &[String]) -> Result<CommandResult, CliError> {
     ))
 }
 
+fn tiers(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["config", "data-dir", "workspace"])?;
+    let orchestrator = pandora_harnesses::HarnessTierOrchestrator::new();
+    let report = orchestrator.inventory_report();
+    let json_data = json!({
+        "command": "harness tiers",
+        "total_tiers": report.total_tiers,
+        "source_harnesses_count": report.source_harnesses_count,
+        "source_genes_count": report.source_genes_count,
+        "domain_harnesses_count": report.domain_harnesses_count,
+        "domain_genes_count": report.domain_genes_count,
+        "meta_harnesses_count": report.meta_harnesses_count,
+        "meta_genes_count": report.meta_genes_count,
+        "total_registered_genes": report.total_registered_genes,
+        "constitutional_service_bound": report.constitutional_service_bound,
+        "version": report.version,
+        "theorems": [58, 59, 60, 61],
+    });
+    let human = format!(
+        "Pandora Harness Tiers: {} tiers (Source: {}, Domain: {}, Meta: {}) | {} registered genes (Constitutional: {})",
+        report.total_tiers,
+        report.source_harnesses_count,
+        report.domain_harnesses_count,
+        report.meta_harnesses_count,
+        report.total_registered_genes,
+        report.constitutional_service_bound
+    );
+    Ok(success("harness tiers", json_data, human))
+}
+
+fn dispatch(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "task", "meta"])?;
+    let task = parsed.value("task").unwrap_or("analyze system security");
+    let meta = parsed.value("meta").unwrap_or("coordination-meta");
+    let orchestrator = pandora_harnesses::HarnessTierOrchestrator::new();
+    let res = orchestrator.dispatch_task(task, meta);
+    let human = format!(
+        "Harness Multi-Tier Dispatch: Task '{}' routed through Meta '{}' to Domain '{}'",
+        task,
+        meta,
+        res["dispatched_domain"].as_str().unwrap_or("unknown")
+    );
+    Ok(success("harness dispatch", res, human))
+}
+
+fn gene(args: &[String]) -> Result<CommandResult, CliError> {
+    let action = args.first().map(String::as_str).unwrap_or("list");
+    match action {
+        "list" => {
+            let parsed = parse_options(&args[1..], &["config", "data-dir", "workspace", "tier"])?;
+            let filter_tier = parsed.value("tier");
+            let orchestrator = pandora_harnesses::HarnessTierOrchestrator::new();
+            let report = orchestrator.inventory_report();
+            let json_data = json!({
+                "command": "harness gene list",
+                "tier_filter": filter_tier,
+                "total_genes": report.total_registered_genes,
+                "source_genes": ["system.memory.constitutional", "system.substrate.telemetry", "system.governance.permit"],
+                "meta_genes": ["meta.coordination.handoff", "meta.evolution.synthesis", "meta.swarm.consensus"],
+                "domain_genes_count": 64
+            });
+            Ok(success(
+                "harness gene list",
+                json_data,
+                format!("Total registered genes: {}", report.total_registered_genes),
+            ))
+        }
+        "evolve" => {
+            let parsed = parse_options(
+                &args[1..],
+                &[
+                    "config",
+                    "data-dir",
+                    "workspace",
+                    "seed",
+                    "generations",
+                    "target-risk",
+                ],
+            )?;
+            let seed = parsed.value("seed").unwrap_or("thanatos-champion");
+            let generations: u32 = parsed
+                .value("generations")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3);
+            let target_risk: f64 = parsed
+                .value("target-risk")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.25);
+            let engine = pandora_harnesses::GenomicAdaptationEngine::new(generations, target_risk);
+            let results = engine.evolve_genome(seed);
+            let final_gen = results.last().cloned().unwrap();
+            let json_data = json!({
+                "command": "harness gene evolve",
+                "seed": seed,
+                "total_generations": results.len(),
+                "final_fitness": final_gen.fitness_score,
+                "final_pac_bayes_risk": final_gen.pac_bayes_risk_bound,
+                "theorem": 61,
+                "theorem_61_pac_bound_satisfied": final_gen.theorem_61_pac_bound_satisfied,
+                "generations": results
+            });
+            let human = format!(
+                "Genomic Adaptation Engine (Theorem 61): Seed '{}' evolved across {} generations (Fitness: {:.3}, PAC Risk: {:.3})",
+                seed,
+                results.len(),
+                final_gen.fitness_score,
+                final_gen.pac_bayes_risk_bound
+            );
+            Ok(success("harness gene evolve", json_data, human))
+        }
+        unknown => Err(CliError::usage(format!(
+            "unknown harness gene command '{unknown}'; expected list or evolve"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,5 +767,35 @@ mod tests {
                 .human
                 .contains("Improvement Harness Library Entry: lib-001")
         );
+    }
+
+    #[test]
+    fn harness_tiers_and_dispatch_cli() {
+        let tiers_res = execute(&["tiers".to_owned()]).expect("tiers ok");
+        assert_eq!(tiers_res.data["total_tiers"], 3);
+        assert_eq!(tiers_res.data["total_registered_genes"], 70);
+
+        let dispatch_res = execute(&[
+            "dispatch".to_owned(),
+            "--task".to_owned(),
+            "scan for cve vulnerabilities".to_owned(),
+        ])
+        .expect("dispatch ok");
+        assert_eq!(dispatch_res.data["dispatched_domain"], "security-domain");
+
+        let gene_list_res = execute(&["gene".to_owned(), "list".to_owned()]).expect("gene list ok");
+        assert_eq!(gene_list_res.data["total_genes"], 70);
+
+        let gene_evolve_res = execute(&[
+            "gene".to_owned(),
+            "evolve".to_owned(),
+            "--seed".to_owned(),
+            "thanatos-seed".to_owned(),
+            "--generations".to_owned(),
+            "2".to_owned(),
+        ])
+        .expect("gene evolve ok");
+        assert_eq!(gene_evolve_res.data["total_generations"], 2);
+        assert_eq!(gene_evolve_res.data["theorem"], 61); // done
     }
 }

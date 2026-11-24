@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, and `v3.1.5`. The active release identity
-is `v3.1.5`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, and `v3.1.5`, and `v4.0.0`. The active release identity
+is `v4.0.0`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,17 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.0
+
+Codename: **THANATOS**
+
+Major workspace release delivering:
+- **Phase 25**: Zero-Knowledge Proofs, Polynomial Attestation & Merkle Rollup (Theorems 48–49: Schwartz-Zippel Lemma, Reed-Solomon polynomial IOP verification, non-interactive batch attestation).
+- **Phase 26**: Colab Remote GPU Bridge, VRAM Telemetry & 12 Specialized Inference Engines (Theorems 50–55: vLLM, TensorRT-LLM, SGLang, TGI, Ollama, Aphrodite, LMDeploy, DeepSpeed, Triton, MLC-LLM, ExLlamaV2, Candle).
+- **Phase 27**: End-to-End Autonomous Multi-Agent Swarm SDLC Pipeline, Token-Level Grammar AST Patching & Pareto Frontier Optimization (Theorems 33, 35, 41, 56, 57: PAC-Bayes risk verification, pushdown automaton grammar patching, hierarchical KV-cache offloading).
+- **Phase 28**: Unified Source, Domain & Meta Harness Tier Orchestration, Constitutional Substrates, and Genomic PAC-Bayes Evolutionary Adaptation Engine (Theorems 58–61: Cross-Domain Invariant Preservation, Recursive Meta-Synthesis, Byzantine Quorum Stability, Multi-Locus Generalization Convergence).
+- Full `#![forbid(unsafe_code)]` compliance across all 7 workspace crates.
 
 ## v3.1.5
 

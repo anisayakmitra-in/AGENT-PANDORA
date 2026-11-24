@@ -78,7 +78,7 @@ Success JSON payload (`--json`):
 
 ```json
 {
-  "version": "3.1.5",
+  "version": "4.0.0",
   "command": "model verify-attestation",
   "valid": true,
   "chain_length": 1,

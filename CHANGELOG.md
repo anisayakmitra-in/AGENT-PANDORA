@@ -1,5 +1,30 @@
 # Changelog
 
+## v4.0.0
+
+### THANATOS: Unified Source, Domain & Meta Harness Tier Orchestration, Genomic PAC-Bayes Evolutionary Adaptation, Autonomous Swarm Coding SDLC & 12 Inference Engines
+- **Phase 28: Unified Source, Domain & Meta Harness Tier Orchestration & Genomic PAC-Bayes Adaptation Engine (crates/pandora-harnesses/src/tier_orchestrator.rs, crates/pandora-cli/src/commands/harness.rs)**:
+  - Implemented 3-Tier Harness Hierarchy (Source, Domain, Meta) with constitutional substrate memory, telemetry, and execution permits (Theorems 58–61).
+  - Implemented Meta Composition Genes: MetaCoordinationGene (Theorem 58: Cross-Domain Invariant Preservation with handoff limits and contract verification), MetaEvolutionGene (Theorem 59: Recursive Meta-Synthesis with prompt compression), and MetaSwarmGene (Theorem 60: Byzantine Quorum Stability with BFT safety bounds).
+  - Implemented DomainGeneRouter dynamically resolving 9 specialized domain harnesses (coding, 
+esearch, security, debugging, design, data, operations, rchitecture, erification) across 64 domain genes.
+  - Implemented GenomicAdaptationEngine with multi-locus chromosomes, deterministic mutation, fitness scoring, and Theorem 61 PAC-Bayes generalization risk verification ($\le 0.25$).
+  - Added CLI subcommands pandora harness tiers, pandora harness dispatch, pandora harness gene list, and pandora harness gene evolve.
+  - Added REST endpoint GET /api/harness/tiers to CockpitWebServer.
+- **Phase 27: End-to-End Autonomous Multi-Agent Swarm SDLC Pipeline & Pareto Optimization (crates/pandora-runtime/src/swarm_pipeline.rs, crates/pandora-runtime/src/ast_patcher.rs, crates/pandora-cli/src/commands/swarm.rs)**:
+  - Implemented self-governing 4-agent autonomous swarm lifecycle (Planner -> Architect -> Coder -> Verifier) with automated bug detection and self-healing rollbacks.
+  - Implemented 100% token-level grammar-constrained AST patching (Theorem 50) with pushdown automaton bracket and syntax verification.
+  - Implemented PAC-Bayes risk verification (Theorem 33) and Schwartz-Zippel ZK polynomial attestation (Theorem 48) before automated Merkle DAG commitment.
+  - Implemented Hierarchical KV-Cache Offloading (Theorem 56) with 3-tier LRU memory management and Pareto frontier optimization (Theorem 57).
+- **Phase 26: Colab Remote GPU Bridge & 12 Inference Engines (crates/pandora-runtime/src/colab_bridge.rs, crates/pandora-runtime/src/inference_infra.rs)**:
+  - Integrated 12 production inference engines: vLLM, TensorRT-LLM, SGLang, TGI, Ollama, Aphrodite, LMDeploy, DeepSpeed-FastGen, Triton, MLC-LLM, ExLlamaV2, and Candle.
+  - Added remote GPU bridge with zero-trust token authentication, VRAM telemetry streaming, and automated failover.
+- **Phase 25: Zero-Knowledge Proofs, Polynomial Attestation & Merkle Rollup (crates/pandora-runtime/src/zk_colab.rs)**:
+  - Implemented Reed-Solomon polynomial IOP attestation with Schwartz-Zippel soundness (Theorems 48–49).
+  - Implemented non-interactive cryptographic batch rollups with binary Merkle trees and tamper-evident audit proofs.
+- **Platform Invariants**:
+  - #![forbid(unsafe_code)] preserved strictly across all 7 workspace crates.
+
 ## v3.1.5
 
 ### Autonomous In-Loop `.pnn` Hot-Reload, Quantized 7D LATS Memoization, Tier-Weighted Tropical HNSW, Offline Calibration Attestation & Security Patch (`RUSTSEC-2026-0592`)

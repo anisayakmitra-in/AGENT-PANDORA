@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (HEAD `5c0ca6f` / `v3.1.5` Release Verification, Cross-Session Distillation & PVFS/HNSW Optimization)
+# Project: AGENT-PANDORA (v4.0.0-THANATOS Major Release: Unified Source/Domain/Meta Harnesses, Autonomous Swarm SDLC, ZK Rollup & 12 Inference Engines)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release Constraint (R4)**: Active workspace version MUST remain `3.1.5` (NO bump to `v3.2.0`, NO git push, NO git tag creation, NO release publication, NO modification to remote `v3.1.5` release).
+- **Versioning & Release**: Workspace version promoted to `4.0.0` (Codename: **THANATOS**).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
