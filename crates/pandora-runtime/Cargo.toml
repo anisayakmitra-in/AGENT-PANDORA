@@ -28,3 +28,8 @@ zeroize.workspace = true
 
 [dev-dependencies]
 wat.workspace = true
+
+[[bench]]
+name = "r3_throughput_bench"
+harness = false
+

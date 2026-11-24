@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
@@ -287,6 +287,18 @@ pub struct HnswIndexStats {
     pub entry_point: Option<usize>,
 }
 
+/// Summary report returned by [`HnswIndex::compact`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HnswCompactionReport {
+    pub nodes_before: usize,
+    pub nodes_after: usize,
+    pub tombstones_removed: usize,
+    pub edges_repaired: usize,
+    pub nodes_reconnected: usize,
+    pub new_entry_point: Option<usize>,
+    pub new_max_level: usize,
+}
+
 /// A node in the multi-layer HNSW graph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HnswNode {
@@ -399,6 +411,8 @@ pub struct HnswIndex {
     max_level: usize,
     nodes: Vec<HnswNode>,
     doc_ids: Vec<usize>,
+    tombstones: HashSet<usize>,
+    doc_to_node: HashMap<usize, usize>,
     rng: SafeRng,
     corpus_hash: [u8; 32],
     created_at_unix: u64,
@@ -417,6 +431,8 @@ impl HnswIndex {
             max_level: 0,
             nodes: Vec::new(),
             doc_ids: Vec::new(),
+            tombstones: HashSet::new(),
+            doc_to_node: HashMap::new(),
             rng: SafeRng::new(0x2468ace0_13579bdf),
             corpus_hash: [0u8; 32],
             created_at_unix,
@@ -474,6 +490,79 @@ impl HnswIndex {
         self.created_at_unix
     }
 
+    /// Returns the number of tombstoned (soft-deleted) nodes currently in the graph.
+    pub fn tombstone_count(&self) -> usize {
+        self.tombstones.len()
+    }
+
+    /// Returns the number of live (non-tombstoned) nodes in the graph.
+    pub fn live_count(&self) -> usize {
+        self.nodes.len().saturating_sub(self.tombstones.len())
+    }
+
+    /// Returns `true` if `doc_id` currently points to a tombstoned node.
+    pub fn is_deleted(&self, doc_id: usize) -> bool {
+        self.doc_to_node
+            .get(&doc_id)
+            .is_some_and(|node_id| self.tombstones.contains(node_id))
+    }
+
+    /// Returns `true` if internal graph `node_id` is tombstoned.
+    pub fn is_node_deleted(&self, node_id: usize) -> bool {
+        self.tombstones.contains(&node_id)
+    }
+
+    /// Resolves a live `doc_id` to its internal graph `node_id`, returning `None` if absent or tombstoned.
+    pub fn node_id_for_doc(&self, doc_id: usize) -> Option<usize> {
+        self.doc_to_node
+            .get(&doc_id)
+            .copied()
+            .filter(|node_id| *node_id < self.nodes.len() && !self.tombstones.contains(node_id))
+    }
+
+    /// Returns a snapshot of the live `doc_id -> node_id` mapping.
+    pub fn doc_to_node_map(&self) -> HashMap<usize, usize> {
+        self.doc_to_node
+            .iter()
+            .filter(|&(_, node_id)| !self.tombstones.contains(node_id))
+            .map(|(&doc_id, &node_id)| (doc_id, node_id))
+            .collect()
+    }
+
+    /// Soft-deletes `doc_id` by marking its active node as a tombstone.
+    ///
+    /// Returns `true` if a live node was found and newly tombstoned, or `false` if absent/already deleted.
+    pub fn mark_deleted(&mut self, doc_id: usize) -> bool {
+        if let Some(&node_id) = self.doc_to_node.get(&doc_id)
+            && node_id < self.nodes.len()
+            && self.tombstones.insert(node_id)
+        {
+            return true;
+        }
+        false
+    }
+
+    /// Alias for [`Self::mark_deleted`].
+    pub fn delete(&mut self, doc_id: usize) -> bool {
+        self.mark_deleted(doc_id)
+    }
+
+    /// Remaps `doc_id` values for all live nodes according to `old_to_new_doc_id`.
+    /// Useful when an external store re-packs positional document IDs after compaction.
+    pub fn remap_doc_ids(&mut self, old_to_new_doc_id: &HashMap<usize, usize>) {
+        let mut new_doc_to_node = HashMap::with_capacity(self.live_count());
+        for (idx, node) in self.nodes.iter_mut().enumerate() {
+            if let Some(&new_doc_id) = old_to_new_doc_id.get(&node.doc_id) {
+                node.doc_id = new_doc_id;
+                self.doc_ids[idx] = new_doc_id;
+            }
+            if !self.tombstones.contains(&idx) {
+                new_doc_to_node.insert(node.doc_id, idx);
+            }
+        }
+        self.doc_to_node = new_doc_to_node;
+    }
+
     /// Computes and returns topology statistics for the index.
     pub fn stats(&self) -> HnswIndexStats {
         let node_count = self.nodes.len();
@@ -528,12 +617,18 @@ impl HnswIndex {
     }
 
     /// Greedy single-neighbor descent at layer `level`.
+    /// Deleted (tombstoned) nodes may still act as routing hops so graph connectivity stays intact.
     fn greedy_search_level(&self, query: &HnswVector, mut curr: usize, level: usize) -> usize {
         let mut curr_dist = self.distance_to_node(query, curr);
         loop {
             let mut changed = false;
-            let neighbors = &self.nodes[curr].neighbors[level];
+            let Some(neighbors) = self.nodes.get(curr).and_then(|n| n.neighbors.get(level)) else {
+                break;
+            };
             for &neighbor in neighbors {
+                if neighbor >= self.nodes.len() {
+                    continue;
+                }
                 let d = self.distance_to_node(query, neighbor);
                 if d < curr_dist {
                     curr_dist = d;
@@ -548,7 +643,8 @@ impl HnswIndex {
         curr
     }
 
-    /// Bounded beam search (`SEARCH-LAYER`) finding `ef` nearest candidates at layer `level`.
+    /// Bounded beam search (`SEARCH-LAYER`) finding up to `ef` live nearest candidates at layer `level`.
+    /// Tombstoned nodes are traversed as routing hops but excluded from returned candidates.
     fn search_layer(
         &self,
         query: &HnswVector,
@@ -567,10 +663,15 @@ impl HnswIndex {
                     node_id: ep,
                     distance: d,
                 });
-                results.push(MaxCandidate {
-                    node_id: ep,
-                    distance: d,
-                });
+                if !self.tombstones.contains(&ep) {
+                    results.push(MaxCandidate {
+                        node_id: ep,
+                        distance: d,
+                    });
+                    if results.len() > ef {
+                        results.pop();
+                    }
+                }
             }
         }
 
@@ -603,12 +704,14 @@ impl HnswIndex {
                             node_id: neighbor,
                             distance: d,
                         });
-                        results.push(MaxCandidate {
-                            node_id: neighbor,
-                            distance: d,
-                        });
-                        if results.len() > ef {
-                            results.pop();
+                        if !self.tombstones.contains(&neighbor) {
+                            results.push(MaxCandidate {
+                                node_id: neighbor,
+                                distance: d,
+                            });
+                            if results.len() > ef {
+                                results.pop();
+                            }
                         }
                     }
                 }
@@ -709,6 +812,7 @@ impl HnswIndex {
             };
             self.nodes.push(node);
             self.doc_ids.push(doc_id);
+            self.doc_to_node.insert(doc_id, q_id);
             self.entry_point = Some(q_id);
             self.max_level = l_q;
             return;
@@ -738,6 +842,7 @@ impl HnswIndex {
         };
         self.nodes.push(node);
         self.doc_ids.push(doc_id);
+        self.doc_to_node.insert(doc_id, q_id);
 
         // Phase 2: Connect into layers min(max_l, l_q) down to 0
         let target_top = std::cmp::min(max_l, l_q);
@@ -763,6 +868,7 @@ impl HnswIndex {
                 if self.nodes[n].neighbors[l].len() > m_l {
                     let cand_items: Vec<CandidateItem> = self.nodes[n].neighbors[l]
                         .iter()
+                        .filter(|&&x| !self.tombstones.contains(&x))
                         .map(|&x| CandidateItem {
                             node_id: x,
                             distance: self.distance_between_nodes(n, x),
@@ -779,25 +885,387 @@ impl HnswIndex {
             }
         }
 
-        // Phase 3: Update entry point if newly assigned level is strictly higher
-        if l_q > max_l {
+        // Phase 3: Update entry point if newly assigned level is strictly higher,
+        // or if the existing entry point was tombstoned and this node reaches max_l.
+        let ep_tombstoned = self
+            .entry_point
+            .is_some_and(|existing_ep| self.tombstones.contains(&existing_ep));
+        if l_q > max_l || (l_q == max_l && ep_tombstoned) {
             self.max_level = l_q;
             self.entry_point = Some(q_id);
         }
     }
 
-    /// Performs approximate nearest neighbor search for `top_k` results.
+    /// Incrementally inserts or updates `doc_id` with `vector`.
+    ///
+    /// If `doc_id` currently exists and is live, its previous node is tombstoned and the new
+    /// vector is inserted and mapped in `doc_to_node`. Returns `true` if an existing live
+    /// document was replaced, or `false` if a new document was inserted.
+    pub fn upsert(&mut self, doc_id: usize, vector: HnswVector) -> bool {
+        let replaced = self.mark_deleted(doc_id);
+        self.insert(doc_id, vector);
+        replaced
+    }
+
+    /// Alias for [`Self::upsert`].
+    pub fn update(&mut self, doc_id: usize, vector: HnswVector) -> bool {
+        self.upsert(doc_id, vector)
+    }
+
+    /// Strips all tombstoned nodes, re-packs live nodes into `0..live_len`, updates
+    /// `doc_id -> node_id` mappings, elects a valid live `entry_point` and `max_level`,
+    /// and repairs/heals neighbor lists and disconnected components.
+    pub fn compact(&mut self) -> HnswCompactionReport {
+        let nodes_before = self.nodes.len();
+        let tombstones_removed = self.tombstones.len();
+
+        if tombstones_removed == 0 {
+            self.doc_to_node.clear();
+            for (idx, node) in self.nodes.iter().enumerate() {
+                self.doc_to_node.insert(node.doc_id, idx);
+            }
+            return HnswCompactionReport {
+                nodes_before,
+                nodes_after: nodes_before,
+                tombstones_removed: 0,
+                edges_repaired: 0,
+                nodes_reconnected: 0,
+                new_entry_point: self.entry_point,
+                new_max_level: self.max_level,
+            };
+        }
+
+        let live_len = self.live_count();
+        if live_len == 0 {
+            self.nodes.clear();
+            self.doc_ids.clear();
+            self.tombstones.clear();
+            self.doc_to_node.clear();
+            self.entry_point = None;
+            self.max_level = 0;
+            return HnswCompactionReport {
+                nodes_before,
+                nodes_after: 0,
+                tombstones_removed,
+                edges_repaired: 0,
+                nodes_reconnected: 0,
+                new_entry_point: None,
+                new_max_level: 0,
+            };
+        }
+
+        // 1. Build old_id -> new_id mapping for live nodes
+        let mut old_to_new: Vec<Option<usize>> = vec![None; nodes_before];
+        let mut next_id = 0usize;
+        for (old_id, slot) in old_to_new.iter_mut().enumerate() {
+            if !self.tombstones.contains(&old_id) {
+                *slot = Some(next_id);
+                next_id += 1;
+            }
+        }
+
+        // 2. Re-pack live nodes & strip tombstoned neighbor references
+        let mut new_nodes = Vec::with_capacity(live_len);
+        let mut new_doc_ids = Vec::with_capacity(live_len);
+        let mut new_doc_to_node = HashMap::with_capacity(live_len);
+        let mut nodes_needing_repair: Vec<(usize, usize)> = Vec::new();
+
+        for (old_id, old_node) in self.nodes.iter().enumerate() {
+            let Some(new_id) = old_to_new[old_id] else {
+                continue;
+            };
+            let mut new_neighbors = Vec::with_capacity(old_node.level + 1);
+            for (l, layer_nb) in old_node.neighbors.iter().enumerate() {
+                let mut filtered = Vec::with_capacity(layer_nb.len());
+                let mut lost_any = false;
+                for &old_nb in layer_nb {
+                    if let Some(new_nb) = old_to_new.get(old_nb).copied().flatten() {
+                        if new_nb != new_id && !filtered.contains(&new_nb) {
+                            filtered.push(new_nb);
+                        }
+                    } else {
+                        lost_any = true;
+                    }
+                }
+                if lost_any {
+                    nodes_needing_repair.push((new_id, l));
+                }
+                new_neighbors.push(filtered);
+            }
+            new_doc_ids.push(old_node.doc_id);
+            new_doc_to_node.insert(old_node.doc_id, new_id);
+            new_nodes.push(HnswNode {
+                id: new_id,
+                doc_id: old_node.doc_id,
+                level: old_node.level,
+                vector: old_node.vector.clone(),
+                neighbors: new_neighbors,
+            });
+        }
+
+        // 3. Elect valid live entry_point and max_level
+        let new_max_level = new_nodes.iter().map(|n| n.level).max().unwrap_or(0);
+        let preserved_ep = self
+            .entry_point
+            .and_then(|old_ep| old_to_new.get(old_ep).copied().flatten())
+            .filter(|&new_ep| new_nodes[new_ep].level == new_max_level);
+
+        let new_ep = preserved_ep.unwrap_or_else(|| {
+            new_nodes
+                .iter()
+                .filter(|n| n.level == new_max_level)
+                .max_by_key(|n| n.neighbors.first().map_or(0, |v| v.len()))
+                .map_or(0, |n| n.id)
+        });
+
+        self.nodes = new_nodes;
+        self.doc_ids = new_doc_ids;
+        self.doc_to_node = new_doc_to_node;
+        self.tombstones.clear();
+        self.entry_point = Some(new_ep);
+        self.max_level = new_max_level;
+
+        let mut edges_repaired = 0usize;
+        let mut nodes_reconnected = 0usize;
+
+        // 4. Repair nodes that lost tombstoned neighbors via 2-hop / beam neighborhood healing
+        for (node_id, l) in nodes_needing_repair {
+            let m_l = if l == 0 {
+                self.config.m_max_0
+            } else {
+                self.config.m
+            };
+            if self.nodes[node_id].neighbors[l].len() >= m_l {
+                continue;
+            }
+
+            let mut candidate_ids: HashSet<usize> =
+                self.nodes[node_id].neighbors[l].iter().copied().collect();
+            let existing = self.nodes[node_id].neighbors[l].clone();
+            for &nb in &existing {
+                if let Some(two_hop) = self.nodes.get(nb).and_then(|n| n.neighbors.get(l)) {
+                    for &cand in two_hop {
+                        if cand != node_id {
+                            candidate_ids.insert(cand);
+                        }
+                    }
+                }
+            }
+
+            if self.nodes[node_id].neighbors[l].is_empty() && self.nodes.len() > 1 {
+                let mut curr = new_ep;
+                if self.max_level > l {
+                    for upper in ((l + 1)..=self.max_level).rev() {
+                        curr = self.greedy_search_level(&self.nodes[node_id].vector, curr, upper);
+                    }
+                }
+                let beam = self.search_layer(
+                    &self.nodes[node_id].vector,
+                    &[curr],
+                    self.config.ef_construction,
+                    l,
+                );
+                for item in beam {
+                    if item.node_id != node_id {
+                        candidate_ids.insert(item.node_id);
+                    }
+                }
+            }
+
+            if candidate_ids.len() > existing.len() {
+                let cand_items: Vec<CandidateItem> = candidate_ids
+                    .into_iter()
+                    .map(|cid| CandidateItem {
+                        node_id: cid,
+                        distance: self.distance_between_nodes(node_id, cid),
+                    })
+                    .collect();
+                let selected = self.select_neighbors_heuristic(node_id, &cand_items, m_l, l, true);
+                let added: Vec<usize> = selected
+                    .iter()
+                    .copied()
+                    .filter(|nb| !existing.contains(nb))
+                    .collect();
+                edges_repaired += added.len();
+                self.nodes[node_id].neighbors[l] = selected;
+
+                for nb in added {
+                    if l < self.nodes[nb].neighbors.len()
+                        && !self.nodes[nb].neighbors[l].contains(&node_id)
+                    {
+                        self.nodes[nb].neighbors[l].push(node_id);
+                        if self.nodes[nb].neighbors[l].len() > m_l {
+                            let nb_cands: Vec<CandidateItem> = self.nodes[nb].neighbors[l]
+                                .iter()
+                                .map(|&x| CandidateItem {
+                                    node_id: x,
+                                    distance: self.distance_between_nodes(nb, x),
+                                })
+                                .collect();
+                            self.nodes[nb].neighbors[l] =
+                                self.select_neighbors_heuristic(nb, &nb_cands, m_l, l, true);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Heal any nodes disconnected from entry_point at layer 0
+        if self.nodes.len() > 1 {
+            if self.nodes[new_ep].neighbors[0].is_empty() {
+                let cands: Vec<CandidateItem> = (0..self.nodes.len())
+                    .filter(|&id| id != new_ep)
+                    .map(|id| CandidateItem {
+                        node_id: id,
+                        distance: self.distance_between_nodes(new_ep, id),
+                    })
+                    .collect();
+                let selected =
+                    self.select_neighbors_heuristic(new_ep, &cands, self.config.m_max_0, 0, true);
+                edges_repaired += selected.len();
+                self.nodes[new_ep].neighbors[0] = selected.clone();
+                for nb in selected {
+                    if !self.nodes[nb].neighbors[0].contains(&new_ep) {
+                        self.nodes[nb].neighbors[0].push(new_ep);
+                        if self.nodes[nb].neighbors[0].len() > self.config.m_max_0 {
+                            let nb_cands: Vec<CandidateItem> = self.nodes[nb].neighbors[0]
+                                .iter()
+                                .map(|&x| CandidateItem {
+                                    node_id: x,
+                                    distance: self.distance_between_nodes(nb, x),
+                                })
+                                .collect();
+                            self.nodes[nb].neighbors[0] = self.select_neighbors_heuristic(
+                                nb,
+                                &nb_cands,
+                                self.config.m_max_0,
+                                0,
+                                true,
+                            );
+                        }
+                    }
+                }
+            }
+
+            let mut visited = vec![false; self.nodes.len()];
+            let mut queue = VecDeque::new();
+            visited[new_ep] = true;
+            queue.push_back(new_ep);
+            while let Some(curr) = queue.pop_front() {
+                for &nb in &self.nodes[curr].neighbors[0] {
+                    if nb < self.nodes.len() && !visited[nb] {
+                        visited[nb] = true;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+
+            for u in 0..self.nodes.len() {
+                if visited[u] {
+                    continue;
+                }
+                let u_vec = self.nodes[u].vector.clone();
+                let u_level = self.nodes[u].level;
+                let mut curr = new_ep;
+                if self.max_level > u_level {
+                    for l in ((u_level + 1)..=self.max_level).rev() {
+                        curr = self.greedy_search_level(&u_vec, curr, l);
+                    }
+                }
+                let target_top = std::cmp::min(self.max_level, u_level);
+                let mut ep_vec = vec![curr];
+                for l in (0..=target_top).rev() {
+                    let m_l = if l == 0 {
+                        self.config.m_max_0
+                    } else {
+                        self.config.m
+                    };
+                    let beam = self.search_layer(&u_vec, &ep_vec, self.config.ef_construction, l);
+                    let mut cand_map: HashSet<usize> =
+                        self.nodes[u].neighbors[l].iter().copied().collect();
+                    for item in &beam {
+                        if item.node_id != u {
+                            cand_map.insert(item.node_id);
+                        }
+                    }
+                    let cand_items: Vec<CandidateItem> = cand_map
+                        .into_iter()
+                        .map(|cid| CandidateItem {
+                            node_id: cid,
+                            distance: self.distance_between_nodes(u, cid),
+                        })
+                        .collect();
+                    let selected = self.select_neighbors_heuristic(u, &cand_items, m_l, l, true);
+                    let added: Vec<usize> = selected
+                        .iter()
+                        .copied()
+                        .filter(|nb| !self.nodes[u].neighbors[l].contains(nb))
+                        .collect();
+                    edges_repaired += added.len();
+                    self.nodes[u].neighbors[l] = selected;
+                    for nb in added {
+                        if l < self.nodes[nb].neighbors.len()
+                            && !self.nodes[nb].neighbors[l].contains(&u)
+                        {
+                            self.nodes[nb].neighbors[l].push(u);
+                            if self.nodes[nb].neighbors[l].len() > m_l {
+                                let nb_cands: Vec<CandidateItem> = self.nodes[nb].neighbors[l]
+                                    .iter()
+                                    .map(|&x| CandidateItem {
+                                        node_id: x,
+                                        distance: self.distance_between_nodes(nb, x),
+                                    })
+                                    .collect();
+                                self.nodes[nb].neighbors[l] =
+                                    self.select_neighbors_heuristic(nb, &nb_cands, m_l, l, true);
+                            }
+                        }
+                    }
+                    if !beam.is_empty() {
+                        ep_vec = beam.into_iter().map(|c| c.node_id).collect();
+                    }
+                }
+                nodes_reconnected += 1;
+
+                visited[u] = true;
+                queue.push_back(u);
+                while let Some(curr_bfs) = queue.pop_front() {
+                    for &nb in &self.nodes[curr_bfs].neighbors[0] {
+                        if nb < self.nodes.len() && !visited[nb] {
+                            visited[nb] = true;
+                            queue.push_back(nb);
+                        }
+                    }
+                }
+            }
+        }
+
+        HnswCompactionReport {
+            nodes_before,
+            nodes_after: self.nodes.len(),
+            tombstones_removed,
+            edges_repaired,
+            nodes_reconnected,
+            new_entry_point: self.entry_point,
+            new_max_level: self.max_level,
+        }
+    }
+
+    /// Performs approximate nearest neighbor search for `top_k` live results.
+    /// Tombstoned nodes may be traversed as routing hops but are strictly excluded from output.
     pub fn search(
         &self,
         query: &HnswVector,
         top_k: usize,
         ef_search: usize,
     ) -> Vec<HnswSearchResult> {
-        if self.nodes.is_empty() || top_k == 0 {
+        let live_total = self.live_count();
+        if live_total == 0 || top_k == 0 {
             return Vec::new();
         }
 
-        let ef = ef_search.max(top_k);
+        let target_k = top_k.min(live_total);
+        let ef = ef_search.max(target_k);
         let mut curr = match self.entry_point {
             Some(ep) => ep,
             None => return Vec::new(),
@@ -810,10 +1278,28 @@ impl HnswIndex {
             }
         }
 
-        // Layer 0 bounded beam search
-        let candidates = self.search_layer(query, &[curr], ef, 0);
+        // Layer 0 bounded beam search (returns only live candidates)
+        let mut candidates = self.search_layer(query, &[curr], ef, 0);
 
-        let limit = top_k.min(candidates.len());
+        // Defensive fallback if heavy pre-compaction tombstoning fragmented layer 0
+        if candidates.len() < target_k {
+            let mut seen: HashSet<usize> = candidates.iter().map(|c| c.node_id).collect();
+            for (nid, _) in self.nodes.iter().enumerate() {
+                if !self.tombstones.contains(&nid) && seen.insert(nid) {
+                    candidates.push(CandidateItem {
+                        node_id: nid,
+                        distance: self.distance_to_node(query, nid),
+                    });
+                }
+            }
+            candidates.sort_by(|a, b| {
+                a.distance
+                    .partial_cmp(&b.distance)
+                    .unwrap_or(Ordering::Equal)
+            });
+        }
+
+        let limit = target_k.min(candidates.len());
         candidates[..limit]
             .iter()
             .map(|item| {
@@ -830,7 +1316,15 @@ impl HnswIndex {
     }
 
     /// Serializes the HNSW graph into the binary `PVHN` v1 format.
+    ///
+    /// If uncompacted tombstones are present, compacts a transient clone prior to serialization
+    /// so the serialized artifact remains 100% compatible with `PVHN` v1 readers.
     pub fn to_pvhn_bytes(&self) -> Result<Vec<u8>, HnswError> {
+        if !self.tombstones.is_empty() {
+            let mut compacted = self.clone();
+            compacted.compact();
+            return compacted.to_pvhn_bytes();
+        }
         let mut buf = Vec::new();
 
         let vector_type = if self.nodes.is_empty() {
@@ -1121,10 +1615,12 @@ impl HnswIndex {
 
         let mut nodes = Vec::with_capacity(node_count);
         let mut doc_ids = Vec::with_capacity(node_count);
+        let mut doc_to_node = HashMap::with_capacity(node_count);
         let mut vec_iter = vectors.into_iter();
         let mut nb_iter = all_neighbors.into_iter();
         for (i, meta) in metas.into_iter().enumerate() {
             doc_ids.push(meta.doc_id);
+            doc_to_node.insert(meta.doc_id, i);
             let vector = vec_iter
                 .next()
                 .ok_or_else(|| HnswError::InvalidData("vector missing for node".into()))?;
@@ -1146,6 +1642,8 @@ impl HnswIndex {
             max_level,
             nodes,
             doc_ids,
+            tombstones: HashSet::new(),
+            doc_to_node,
             rng: SafeRng::new(0x2468ace0_13579bdf),
             corpus_hash,
             created_at_unix,
@@ -1475,6 +1973,186 @@ mod tests {
         assert_eq!(
             HnswIndex::from_pvhn_bytes(truncated),
             Err(HnswError::TruncatedData)
+        );
+    }
+
+    #[test]
+    fn test_hnsw_tombstone_delete_and_search_exclusion() {
+        let mut index = HnswIndex::new(HnswConfig::default()).with_seed(101);
+        let mut vectors = Vec::new();
+        for doc_id in 0..40 {
+            let v = HnswVector::F32(generate_deterministic_vector(doc_id * 5 + 3));
+            vectors.push((doc_id, v.clone()));
+            index.insert(doc_id, v);
+        }
+
+        assert_eq!(index.live_count(), 40);
+        assert_eq!(index.tombstone_count(), 0);
+
+        // Delete entry point's doc_id plus 14 others
+        let ep_doc = index.nodes()[index.entry_point().unwrap()].doc_id;
+        assert!(index.mark_deleted(ep_doc));
+        assert!(!index.mark_deleted(ep_doc)); // idempotent
+        assert!(index.is_deleted(ep_doc));
+        assert!(!index.is_deleted(999_999));
+
+        let mut deleted_docs = HashSet::new();
+        deleted_docs.insert(ep_doc);
+        for d in 0..40 {
+            if deleted_docs.len() >= 15 {
+                break;
+            }
+            if deleted_docs.insert(d) {
+                assert!(index.mark_deleted(d));
+            }
+        }
+
+        assert_eq!(index.tombstone_count(), 15);
+        assert_eq!(index.live_count(), 25);
+        assert!(index.node_id_for_doc(ep_doc).is_none());
+
+        for &(doc_id, ref vec) in &vectors {
+            let results = index.search(vec, 10, 64);
+            assert_eq!(results.len(), 10);
+            for r in &results {
+                assert!(
+                    !deleted_docs.contains(&r.doc_id),
+                    "deleted doc {} leaked into search results",
+                    r.doc_id
+                );
+            }
+            if !deleted_docs.contains(&doc_id) {
+                assert_eq!(results[0].doc_id, doc_id);
+            }
+        }
+    }
+
+    #[test]
+    fn test_hnsw_incremental_upsert_replaces_old_vector() {
+        let mut index = HnswIndex::new(HnswConfig::default()).with_seed(202);
+        for doc_id in 0..20 {
+            index.insert(
+                doc_id,
+                HnswVector::F32(generate_deterministic_vector(doc_id)),
+            );
+        }
+
+        let old_vec = HnswVector::F32(generate_deterministic_vector(5));
+        let new_vec = HnswVector::F32(generate_deterministic_vector(555));
+        let replaced = index.upsert(5, new_vec.clone());
+        assert!(replaced, "upserting existing live doc_id must return true");
+        assert!(!index.is_deleted(5));
+        assert_eq!(index.tombstone_count(), 1);
+        assert_eq!(index.live_count(), 20);
+
+        let inserted = index.upsert(99, HnswVector::F32(generate_deterministic_vector(556)));
+        assert!(!inserted, "upserting brand new doc_id must return false");
+        assert_eq!(index.live_count(), 21);
+
+        let res = index.search(&new_vec, 5, 64);
+        assert_eq!(res[0].doc_id, 5);
+        assert!(res[0].similarity > 0.99);
+
+        let old_res = index.search(&old_vec, 5, 64);
+        assert!(
+            old_res.iter().all(|r| r.doc_id != 5 || r.similarity < 0.99),
+            "tombstoned old vector for doc 5 must not match at similarity ~1.0"
+        );
+    }
+
+    #[test]
+    fn test_hnsw_compact_repacks_heals_and_preserves_recall() {
+        let cfg = HnswConfig::new(8, 32, 64);
+        let mut index = HnswIndex::new(cfg).with_seed(303);
+        let mut doc_vecs = Vec::new();
+        for doc_id in 0..80 {
+            let raw = generate_deterministic_vector(doc_id * 7 + 1);
+            let tv = HnswVector::Tropical(TropicalVector::from_dense_fallback(&raw));
+            doc_vecs.push((doc_id, tv.clone()));
+            index.insert(doc_id, tv);
+        }
+
+        // Delete 25 docs including the entry point
+        let ep_doc = index.nodes()[index.entry_point().unwrap()].doc_id;
+        let mut removed = HashSet::new();
+        removed.insert(ep_doc);
+        index.mark_deleted(ep_doc);
+        for d in (0..80).step_by(3) {
+            if removed.len() >= 25 {
+                break;
+            }
+            if removed.insert(d) {
+                index.mark_deleted(d);
+            }
+        }
+
+        // Upsert 10 surviving docs
+        let mut upserted = 0usize;
+        for (d, slot) in doc_vecs.iter_mut().enumerate().take(80) {
+            if !removed.contains(&d) && upserted < 10 {
+                let raw = generate_deterministic_vector(5000 + d * 13);
+                let tv = HnswVector::Tropical(TropicalVector::from_dense_fallback(&raw));
+                assert!(index.upsert(d, tv.clone()));
+                *slot = (d, tv);
+                upserted += 1;
+            }
+        }
+
+        // PVHN round-trip on uncompacted graph preserves live nodes & excludes tombstones
+        let pvhn_bytes = index.to_pvhn_bytes().expect("serialize with tombstones");
+        let pvhn_loaded = HnswIndex::from_pvhn_bytes(&pvhn_bytes).expect("deserialize pvhn");
+        assert_eq!(pvhn_loaded.live_count(), 80 - removed.len());
+        assert_eq!(pvhn_loaded.tombstone_count(), 0);
+
+        let report = index.compact();
+        assert_eq!(report.nodes_before, 80 + upserted);
+        assert_eq!(report.nodes_after, 80 - removed.len());
+        assert_eq!(report.tombstones_removed, removed.len() + upserted);
+        assert_eq!(index.tombstone_count(), 0);
+        assert_eq!(index.len(), report.nodes_after);
+
+        let ep = index.entry_point().expect("valid entry point");
+        assert_eq!(index.nodes()[ep].level, index.max_level());
+        for (i, node) in index.nodes().iter().enumerate() {
+            assert_eq!(node.id, i);
+            assert_eq!(index.node_id_for_doc(node.doc_id), Some(i));
+            assert!(node.neighbors[0].len() <= cfg.m_max_0);
+            for l in 1..=node.level {
+                assert!(node.neighbors[l].len() <= cfg.m);
+            }
+        }
+
+        // Recall@5 vs exact scan over live docs
+        let live_vecs: Vec<(usize, HnswVector)> = doc_vecs
+            .into_iter()
+            .filter(|(id, _)| !removed.contains(id))
+            .collect();
+        let mut total_recall = 0.0f32;
+        let queries = 12usize;
+        let k = 5usize;
+        for q in 0..queries {
+            let raw_q = generate_deterministic_vector(9100 + q * 19);
+            let qv = HnswVector::Tropical(TropicalVector::from_dense_fallback(&raw_q));
+            let mut exact: Vec<(usize, f32)> = live_vecs
+                .iter()
+                .map(|(id, v)| (*id, cosine_distance(&qv, v)))
+                .collect();
+            exact.sort_by(|a, b| a.1.total_cmp(&b.1));
+            let truth: HashSet<usize> = exact.iter().take(k).map(|(id, _)| *id).collect();
+            let got: HashSet<usize> = index
+                .search(&qv, k, 64)
+                .into_iter()
+                .map(|r| r.doc_id)
+                .collect();
+            for id in &got {
+                assert!(!removed.contains(id));
+            }
+            total_recall += truth.intersection(&got).count() as f32 / k as f32;
+        }
+        let avg_recall = total_recall / queries as f32;
+        assert!(
+            avg_recall >= 0.85,
+            "post-compaction recall@{k} too low: {avg_recall}"
         );
     }
 }

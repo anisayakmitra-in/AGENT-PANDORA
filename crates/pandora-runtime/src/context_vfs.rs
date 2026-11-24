@@ -16,14 +16,16 @@ use pandora_types::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const VFS_INDEX_MAGIC: &[u8; 4] = b"PVFS";
+pub const PVFS_TOMBSTONE_MAGIC: &[u8; 4] = b"TOMB";
 pub const VFS_INDEX_VERSION_V1: u32 = 1;
 pub const VFS_INDEX_VERSION_V2: u32 = 2;
 pub const VFS_INDEX_VERSION_V3: u32 = 3;
@@ -33,6 +35,8 @@ pub const VFS_INDEX_TRAILER_SIZE: usize = 32;
 pub const VFS_DENSE_DIMENSION: u32 = 128;
 pub const VFS_QUANTIZED_VECTOR_SIZE: usize = 132; // 4 bytes scale + 128 bytes i8 data
 pub const VFS_HNSW_INDEX_PATH_DEFAULT: &str = ".pandora/indices/vfs_hnsw.idx";
+pub const DEFAULT_AUTO_COMPACT_MIN_TOMBSTONES: usize = 8;
+pub const DEFAULT_AUTO_COMPACT_MAX_RATIO: f64 = 0.25;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VfsError {
@@ -81,6 +85,27 @@ pub struct VfsIndexStats {
     pub vector_bytes_saved: u64,
     pub cache_hits: u64,
     pub cache_misses: u64,
+    #[serde(default)]
+    pub tombstone_count: u32,
+    #[serde(default)]
+    pub tombstone_ratio: f64,
+    #[serde(default)]
+    pub compaction_count: u32,
+    #[serde(default)]
+    pub last_compacted_unix: u64,
+}
+
+/// Summary report returned by [`ContextVfs::compact_index`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VfsCompactionReport {
+    pub docs_before: usize,
+    pub docs_after: usize,
+    pub tombstones_purged: usize,
+    pub hnsw_compacted: bool,
+    pub hnsw_edges_repaired: usize,
+    pub hnsw_nodes_reconnected: usize,
+    pub compaction_count: u32,
+    pub compacted_at_unix: u64,
 }
 
 /// A mounted virtual document ready for indexing.
@@ -146,6 +171,9 @@ pub struct DeserializedVfsIndex {
     pub doc_vectors: Vec<(usize, QuantizedVector)>,
     pub tropical_vectors: Vec<(usize, TropicalVector)>,
     pub bm25: SparseBm25Index,
+    pub tombstoned_uris: Vec<String>,
+    pub compaction_count: u32,
+    pub last_compacted_unix: u64,
 }
 
 pub struct ContextVfs {
@@ -159,11 +187,18 @@ pub struct ContextVfs {
     index_path: RwLock<Option<PathBuf>>,
     cached_index: RwLock<Option<Arc<DeserializedVfsIndex>>>,
     diff_cache: RwLock<HashMap<String, CachedBufferEntry>>,
-    cache_hits: std::sync::atomic::AtomicU64,
-    cache_misses: std::sync::atomic::AtomicU64,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
     hnsw_index_path: RwLock<Option<PathBuf>>,
     cached_hnsw_index: RwLock<Option<Arc<HnswIndex>>>,
-    last_modified_unix: std::sync::atomic::AtomicU64,
+    hnsw_docs: RwLock<Vec<Option<VfsDoc>>>,
+    hnsw_uri_to_doc_id: RwLock<HashMap<String, usize>>,
+    tombstoned_uris: RwLock<BTreeSet<String>>,
+    auto_compact_min_tombstones: AtomicUsize,
+    auto_compact_max_ratio_bits: AtomicU64,
+    compaction_count: AtomicU32,
+    last_compacted_unix: AtomicU64,
+    last_modified_unix: AtomicU64,
 }
 
 impl Default for ContextVfs {
@@ -204,11 +239,18 @@ impl ContextVfs {
             index_path: RwLock::new(Some(PathBuf::from(".pandora/indices/vfs.idx"))),
             cached_index: RwLock::new(None),
             diff_cache: RwLock::new(HashMap::new()),
-            cache_hits: std::sync::atomic::AtomicU64::new(0),
-            cache_misses: std::sync::atomic::AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
             hnsw_index_path: RwLock::new(Some(PathBuf::from(VFS_HNSW_INDEX_PATH_DEFAULT))),
             cached_hnsw_index: RwLock::new(None),
-            last_modified_unix: std::sync::atomic::AtomicU64::new(now_unix),
+            hnsw_docs: RwLock::new(Vec::new()),
+            hnsw_uri_to_doc_id: RwLock::new(HashMap::new()),
+            tombstoned_uris: RwLock::new(BTreeSet::new()),
+            auto_compact_min_tombstones: AtomicUsize::new(DEFAULT_AUTO_COMPACT_MIN_TOMBSTONES),
+            auto_compact_max_ratio_bits: AtomicU64::new(DEFAULT_AUTO_COMPACT_MAX_RATIO.to_bits()),
+            compaction_count: AtomicU32::new(0),
+            last_compacted_unix: AtomicU64::new(0),
+            last_modified_unix: AtomicU64::new(now_unix),
         }
     }
 
@@ -248,33 +290,303 @@ impl ContextVfs {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        self.last_modified_unix
-            .store(now, std::sync::atomic::Ordering::Relaxed);
-        if let Ok(mut guard) = self.cached_hnsw_index.write() {
-            *guard = None;
+        self.last_modified_unix.store(now, Ordering::Relaxed);
+    }
+
+    /// Configures the automated tombstone compaction thresholds (builder pattern).
+    ///
+    /// Compaction triggers automatically during [`Self::save_index_to_disk`] or
+    /// [`Self::run_index_maintenance`] when `tombstone_count >= min_tombstones` and the
+    /// tombstone ratio `tombstones / (live + tombstones)` is at least `max_ratio`
+    /// (or when `tombstone_count >= (min_tombstones * 4).max(64)`).
+    pub fn with_auto_compact_threshold(self, min_tombstones: usize, max_ratio: f64) -> Self {
+        self.set_auto_compact_threshold(min_tombstones, max_ratio);
+        self
+    }
+
+    /// Updates the automated tombstone compaction thresholds in-place.
+    pub fn set_auto_compact_threshold(&self, min_tombstones: usize, max_ratio: f64) {
+        let clamped_min = min_tombstones.max(1);
+        let clamped_ratio = if max_ratio.is_finite() {
+            max_ratio.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_AUTO_COMPACT_MAX_RATIO
+        };
+        self.auto_compact_min_tombstones
+            .store(clamped_min, Ordering::Relaxed);
+        self.auto_compact_max_ratio_bits
+            .store(clamped_ratio.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Returns `(min_tombstones, max_ratio)` configured for automated compaction.
+    pub fn auto_compact_threshold(&self) -> (usize, f64) {
+        (
+            self.auto_compact_min_tombstones.load(Ordering::Relaxed),
+            f64::from_bits(self.auto_compact_max_ratio_bits.load(Ordering::Relaxed)),
+        )
+    }
+
+    /// Returns the number of tombstoned URIs currently tracked by this `ContextVfs`.
+    pub fn tombstone_count(&self) -> usize {
+        self.tombstoned_uris.read().map(|g| g.len()).unwrap_or(0)
+    }
+
+    /// Returns `true` if `uri` (exact or L1/L2 shorthand) is currently tombstoned.
+    pub fn is_tombstoned(&self, uri: &str) -> bool {
+        self.tombstoned_uris
+            .read()
+            .map(|g| g.contains(uri) || self.matches_shorthand_tombstone(&g, uri))
+            .unwrap_or(false)
+    }
+
+    /// Returns a deterministic sorted list of currently tombstoned URIs.
+    pub fn tombstoned_uris(&self) -> Vec<String> {
+        self.tombstoned_uris
+            .read()
+            .map(|g| g.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns the cumulative number of compactions executed on this `ContextVfs`.
+    pub fn compaction_count(&self) -> u32 {
+        self.compaction_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the Unix timestamp of the most recent compaction (`0` if never compacted).
+    pub fn last_compacted_unix(&self) -> u64 {
+        self.last_compacted_unix.load(Ordering::Relaxed)
+    }
+
+    /// Returns `true` when tracked tombstones exceed the configured auto-compaction threshold.
+    pub fn should_auto_compact(&self) -> bool {
+        let tombstones = self.tombstone_count();
+        if tombstones == 0 {
+            return false;
+        }
+        let (min_tombstones, max_ratio) = self.auto_compact_threshold();
+        let live_docs = self.collect_all_documents().map(|d| d.len()).unwrap_or(0);
+        let total = live_docs.saturating_add(tombstones);
+        let ratio = if total == 0 {
+            0.0
+        } else {
+            tombstones as f64 / total as f64
+        };
+        (tombstones >= min_tombstones && ratio >= max_ratio)
+            || tombstones >= min_tombstones.saturating_mul(4).max(64)
+    }
+
+    fn matches_shorthand_tombstone(&self, tombstones: &BTreeSet<String>, uri: &str) -> bool {
+        if let Some(rest) = uri.strip_prefix("pandora://facts/")
+            && !rest.contains('/')
+        {
+            return tombstones
+                .iter()
+                .any(|t| t.starts_with("pandora://facts/") && t.ends_with(&format!("/{rest}")));
+        }
+        if let Some(rest) = uri.strip_prefix("pandora://index/")
+            && !rest.contains('/')
+        {
+            return tombstones
+                .iter()
+                .any(|t| t.starts_with("pandora://index/") && t.ends_with(&format!("/{rest}")));
+        }
+        false
+    }
+
+    fn clear_tombstone_for_uri(&self, canonical_uri: &str) {
+        if let Ok(mut tombstones) = self.tombstoned_uris.write() {
+            tombstones.remove(canonical_uri);
+        }
+    }
+
+    fn populate_hnsw_doc_mapping(&self, docs: &[VfsDoc]) {
+        if let Ok(mut hnsw_docs) = self.hnsw_docs.write()
+            && let Ok(mut uri_map) = self.hnsw_uri_to_doc_id.write()
+        {
+            hnsw_docs.clear();
+            uri_map.clear();
+            hnsw_docs.reserve(docs.len());
+            uri_map.reserve(docs.len());
+            for (idx, doc) in docs.iter().enumerate() {
+                uri_map.insert(doc.uri.as_str().to_string(), idx);
+                hnsw_docs.push(Some(doc.clone()));
+            }
+        }
+    }
+
+    fn sync_hnsw_on_upsert(&self, doc: &VfsDoc) {
+        let has_cached = self.cached_hnsw_index.read().is_ok_and(|g| g.is_some());
+        if !has_cached {
+            return;
+        }
+
+        let Ok(all_docs) = self.collect_all_documents() else {
+            return;
+        };
+        let new_corpus_hash = compute_corpus_hash(&all_docs);
+
+        let uses_tropical = self
+            .cached_hnsw_index
+            .read()
+            .ok()
+            .and_then(|g| {
+                g.as_ref()
+                    .map(|idx| idx.nodes().iter().any(|n| n.vector.is_tropical()) || idx.is_empty())
+            })
+            .unwrap_or(true);
+
+        let fp = compute_doc_fingerprint(doc);
+        let (doc_len, term_freqs) = extract_term_frequencies(&doc.content);
+        let hasher = DenseFeatureHasher::new();
+        let f32_vec = hasher.vectorize(&doc.content);
+        let qv = QuantizedVector::quantize(&f32_vec);
+        let tv = TropicalProjector::project(&doc.content);
+
+        if let Ok(mut cache) = self.diff_cache.write() {
+            cache.insert(
+                doc.uri.as_str().to_string(),
+                CachedBufferEntry {
+                    uri: doc.uri.clone(),
+                    fingerprint: fp,
+                    vector: qv,
+                    tropical_vector: tv,
+                    doc_length: doc_len,
+                    term_frequencies: term_freqs,
+                },
+            );
+        }
+
+        let hnsw_vec = if uses_tropical {
+            HnswVector::Tropical(tv)
+        } else {
+            HnswVector::Quantized(qv)
+        };
+
+        if let Ok(mut hnsw_guard) = self.cached_hnsw_index.write()
+            && let Some(arc_hnsw) = hnsw_guard.as_mut()
+            && let Ok(mut docs_vec) = self.hnsw_docs.write()
+            && let Ok(mut uri_map) = self.hnsw_uri_to_doc_id.write()
+        {
+            if docs_vec.is_empty() && !arc_hnsw.is_empty() {
+                for (idx, d) in all_docs.iter().enumerate() {
+                    if d.uri.as_str() != doc.uri.as_str() {
+                        uri_map.insert(d.uri.as_str().to_string(), idx);
+                    }
+                }
+                *docs_vec = all_docs
+                    .iter()
+                    .map(|d| {
+                        if d.uri.as_str() == doc.uri.as_str() {
+                            None
+                        } else {
+                            Some(d.clone())
+                        }
+                    })
+                    .collect();
+            }
+
+            let uri_key = doc.uri.as_str().to_string();
+            let doc_id = if let Some(&existing_id) = uri_map.get(&uri_key) {
+                if existing_id < docs_vec.len() {
+                    docs_vec[existing_id] = Some(doc.clone());
+                } else {
+                    while docs_vec.len() < existing_id {
+                        docs_vec.push(None);
+                    }
+                    docs_vec.push(Some(doc.clone()));
+                }
+                existing_id
+            } else {
+                let next_id = docs_vec.len().max(
+                    arc_hnsw
+                        .nodes()
+                        .iter()
+                        .map(|n| n.doc_id + 1)
+                        .max()
+                        .unwrap_or(0),
+                );
+                while docs_vec.len() < next_id {
+                    docs_vec.push(None);
+                }
+                docs_vec.push(Some(doc.clone()));
+                uri_map.insert(uri_key, next_id);
+                next_id
+            };
+
+            let hnsw_mut = Arc::make_mut(arc_hnsw);
+            hnsw_mut.upsert(doc_id, hnsw_vec);
+            hnsw_mut.set_corpus_hash(new_corpus_hash);
+        }
+    }
+
+    fn sync_hnsw_on_delete(&self, canonical_uri: &str) {
+        let has_cached = self.cached_hnsw_index.read().is_ok_and(|g| g.is_some());
+        if !has_cached {
+            return;
+        }
+
+        let Ok(all_docs) = self.collect_all_documents() else {
+            return;
+        };
+        let new_corpus_hash = compute_corpus_hash(&all_docs);
+
+        if let Ok(mut hnsw_guard) = self.cached_hnsw_index.write()
+            && let Some(arc_hnsw) = hnsw_guard.as_mut()
+            && let Ok(mut docs_vec) = self.hnsw_docs.write()
+            && let Ok(mut uri_map) = self.hnsw_uri_to_doc_id.write()
+        {
+            let hnsw_mut = Arc::make_mut(arc_hnsw);
+            if let Some(doc_id) = uri_map.remove(canonical_uri) {
+                hnsw_mut.mark_deleted(doc_id);
+                if doc_id < docs_vec.len() {
+                    docs_vec[doc_id] = None;
+                }
+            }
+            hnsw_mut.set_corpus_hash(new_corpus_hash);
         }
     }
 
     pub fn add_meta_rule(&self, rule: ContextFragment) {
+        let maybe_doc = meta_rule_to_doc(&rule);
         if let Ok(mut rules) = self.meta_rules.write() {
             rules.retain(|r| r.id() != rule.id());
             rules.push(rule);
+        }
+        if let Some(doc) = maybe_doc {
+            self.clear_tombstone_for_uri(doc.uri.as_str());
+            self.mark_buffer_modified();
+            self.sync_hnsw_on_upsert(&doc);
+        } else {
             self.mark_buffer_modified();
         }
     }
 
     pub fn add_sop(&self, sop: StoredSop) {
+        let maybe_doc = sop_to_doc(&sop);
         if let Ok(mut sops) = self.sops.write() {
             sops.retain(|s| s.sop.id != sop.sop.id);
             sops.push(sop);
+        }
+        if let Some(doc) = maybe_doc {
+            self.clear_tombstone_for_uri(doc.uri.as_str());
+            self.mark_buffer_modified();
+            self.sync_hnsw_on_upsert(&doc);
+        } else {
             self.mark_buffer_modified();
         }
     }
 
     pub fn add_archive(&self, archive: SessionArchiveRecord) {
+        let maybe_doc = archive_to_doc(&archive);
         if let Ok(mut archives) = self.archives.write() {
             archives.retain(|a| a.archive_id != archive.archive_id);
             archives.push(archive);
+        }
+        if let Some(doc) = maybe_doc {
+            self.clear_tombstone_for_uri(doc.uri.as_str());
+            self.mark_buffer_modified();
+            self.sync_hnsw_on_upsert(&doc);
+        } else {
             self.mark_buffer_modified();
         }
     }
@@ -282,16 +594,30 @@ impl ContextVfs {
     pub fn add_memory_record(&self, record: MemoryRecord) {
         match record.tier() {
             MemoryTier::L1 => {
+                let maybe_doc = l1_record_to_doc(&record);
                 if let Ok(mut list) = self.l1_records.write() {
                     list.retain(|r| r.id() != record.id());
                     list.push(record);
+                }
+                if let Some(doc) = maybe_doc {
+                    self.clear_tombstone_for_uri(doc.uri.as_str());
+                    self.mark_buffer_modified();
+                    self.sync_hnsw_on_upsert(&doc);
+                } else {
                     self.mark_buffer_modified();
                 }
             }
             MemoryTier::L2 => {
+                let maybe_doc = l2_record_to_doc(&record);
                 if let Ok(mut list) = self.l2_records.write() {
                     list.retain(|r| r.id() != record.id());
                     list.push(record);
+                }
+                if let Some(doc) = maybe_doc {
+                    self.clear_tombstone_for_uri(doc.uri.as_str());
+                    self.mark_buffer_modified();
+                    self.sync_hnsw_on_upsert(&doc);
+                } else {
                     self.mark_buffer_modified();
                 }
             }
@@ -301,18 +627,381 @@ impl ContextVfs {
 
     pub fn add_feature_map(&self, name: impl Into<String>, feature_map: FeatureMap) {
         let name = name.into();
+        let maybe_doc = feature_map_to_doc(&name, &feature_map);
         if let Ok(mut maps) = self.feature_maps.write() {
             maps.retain(|(n, _)| n != &name);
             maps.push((name, feature_map));
+        }
+        if let Some(doc) = maybe_doc {
+            self.clear_tombstone_for_uri(doc.uri.as_str());
+            self.mark_buffer_modified();
+            self.sync_hnsw_on_upsert(&doc);
+        } else {
             self.mark_buffer_modified();
         }
     }
 
     pub fn add_skill(&self, skill: SkillManifest) {
+        let maybe_doc = skill_to_doc(&skill);
         if let Ok(mut skills) = self.skills.write() {
             skills.retain(|s| s.id() != skill.id());
             skills.push(skill);
+        }
+        if let Some(doc) = maybe_doc {
+            self.clear_tombstone_for_uri(doc.uri.as_str());
             self.mark_buffer_modified();
+            self.sync_hnsw_on_upsert(&doc);
+        } else {
+            self.mark_buffer_modified();
+        }
+    }
+
+    fn resolve_canonical_uri(&self, uri: &str) -> Option<String> {
+        if let Ok(rules) = self.meta_rules.read() {
+            for rule in rules.iter() {
+                if let Some(doc) = meta_rule_to_doc(rule)
+                    && doc.uri.as_str() == uri
+                {
+                    return Some(doc.uri.as_str().to_string());
+                }
+            }
+        }
+        if let Ok(l1) = self.l1_records.read() {
+            for rec in l1.iter() {
+                if let Some(doc) = l1_record_to_doc(rec) {
+                    let shorthand = format!("pandora://index/{}", rec.id().as_str());
+                    if doc.uri.as_str() == uri || shorthand == uri {
+                        return Some(doc.uri.as_str().to_string());
+                    }
+                }
+            }
+        }
+        if let Ok(l2) = self.l2_records.read() {
+            for rec in l2.iter() {
+                if let Some(doc) = l2_record_to_doc(rec) {
+                    let shorthand = format!("pandora://facts/{}", rec.id().as_str());
+                    if doc.uri.as_str() == uri || shorthand == uri {
+                        return Some(doc.uri.as_str().to_string());
+                    }
+                }
+            }
+        }
+        if let Ok(sops) = self.sops.read() {
+            for sop in sops.iter() {
+                if let Some(doc) = sop_to_doc(sop)
+                    && doc.uri.as_str() == uri
+                {
+                    return Some(doc.uri.as_str().to_string());
+                }
+            }
+        }
+        if let Ok(archives) = self.archives.read() {
+            for arc in archives.iter() {
+                if let Some(doc) = archive_to_doc(arc)
+                    && doc.uri.as_str() == uri
+                {
+                    return Some(doc.uri.as_str().to_string());
+                }
+            }
+        }
+        if let Ok(maps) = self.feature_maps.read() {
+            for (name, map) in maps.iter() {
+                if let Some(doc) = feature_map_to_doc(name, map)
+                    && doc.uri.as_str() == uri
+                {
+                    return Some(doc.uri.as_str().to_string());
+                }
+            }
+        }
+        if let Ok(skills) = self.skills.read() {
+            for skill in skills.iter() {
+                if let Some(doc) = skill_to_doc(skill)
+                    && doc.uri.as_str() == uri
+                {
+                    return Some(doc.uri.as_str().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn purge_backing_records_for_uris(&self, target_uris: &HashSet<String>) {
+        if target_uris.is_empty() {
+            return;
+        }
+        if let Ok(mut rules) = self.meta_rules.write() {
+            rules.retain(|r| {
+                meta_rule_to_doc(r).is_none_or(|d| !target_uris.contains(d.uri.as_str()))
+            });
+        }
+        if let Ok(mut l1) = self.l1_records.write() {
+            l1.retain(|r| {
+                l1_record_to_doc(r).is_none_or(|d| !target_uris.contains(d.uri.as_str()))
+            });
+        }
+        if let Ok(mut l2) = self.l2_records.write() {
+            l2.retain(|r| {
+                l2_record_to_doc(r).is_none_or(|d| !target_uris.contains(d.uri.as_str()))
+            });
+        }
+        if let Ok(mut sops) = self.sops.write() {
+            sops.retain(|s| sop_to_doc(s).is_none_or(|d| !target_uris.contains(d.uri.as_str())));
+        }
+        if let Ok(mut archives) = self.archives.write() {
+            archives.retain(|a| {
+                archive_to_doc(a).is_none_or(|d| !target_uris.contains(d.uri.as_str()))
+            });
+        }
+        if let Ok(mut maps) = self.feature_maps.write() {
+            maps.retain(|(name, map)| {
+                feature_map_to_doc(name, map).is_none_or(|d| !target_uris.contains(d.uri.as_str()))
+            });
+        }
+        if let Ok(mut skills) = self.skills.write() {
+            skills
+                .retain(|s| skill_to_doc(s).is_none_or(|d| !target_uris.contains(d.uri.as_str())));
+        }
+    }
+
+    /// Soft-deletes a mounted document by recording a tombstone for `uri` and
+    /// incrementally marking its node deleted in any cached HNSW graph.
+    ///
+    /// Returns `true` if a live document matched `uri` and was tombstoned, or `false` if absent
+    /// or already tombstoned.
+    pub fn tombstone_document(&self, uri: &str) -> bool {
+        let Some(canonical) = self.resolve_canonical_uri(uri) else {
+            return false;
+        };
+        let newly_tombstoned = self
+            .tombstoned_uris
+            .write()
+            .map(|mut g| g.insert(canonical.clone()))
+            .unwrap_or(false);
+        if !newly_tombstoned {
+            return false;
+        }
+        if let Ok(mut cache) = self.diff_cache.write() {
+            cache.remove(&canonical);
+        }
+        self.mark_buffer_modified();
+        self.sync_hnsw_on_delete(&canonical);
+        true
+    }
+
+    /// Removes a mounted document by purging its backing record, recording an index tombstone
+    /// (until compaction), and incrementally marking its HNSW node deleted.
+    ///
+    /// Returns `true` if a live document was removed, or `false` if not found / already tombstoned.
+    pub fn remove_document(&self, uri: &str) -> bool {
+        let Some(canonical) = self.resolve_canonical_uri(uri) else {
+            return false;
+        };
+        let was_already_tombstoned = self
+            .tombstoned_uris
+            .read()
+            .map(|g| g.contains(&canonical))
+            .unwrap_or(false);
+
+        let mut single = HashSet::new();
+        single.insert(canonical.clone());
+        self.purge_backing_records_for_uris(&single);
+
+        if was_already_tombstoned {
+            return false;
+        }
+
+        if let Ok(mut tombstones) = self.tombstoned_uris.write() {
+            tombstones.insert(canonical.clone());
+        }
+        if let Ok(mut cache) = self.diff_cache.write() {
+            cache.remove(&canonical);
+        }
+        self.mark_buffer_modified();
+        self.sync_hnsw_on_delete(&canonical);
+        true
+    }
+
+    /// Removes an L1 or L2 memory record by `id`, recording a tombstone and syncing HNSW.
+    pub fn remove_memory_record(&self, id: &str) -> bool {
+        let mut target_uri = None;
+        if let Ok(l1) = self.l1_records.read()
+            && let Some(rec) = l1.iter().find(|r| r.id().as_str() == id)
+            && let Some(doc) = l1_record_to_doc(rec)
+        {
+            target_uri = Some(doc.uri.as_str().to_string());
+        }
+        if target_uri.is_none()
+            && let Ok(l2) = self.l2_records.read()
+            && let Some(rec) = l2.iter().find(|r| r.id().as_str() == id)
+            && let Some(doc) = l2_record_to_doc(rec)
+        {
+            target_uri = Some(doc.uri.as_str().to_string());
+        }
+        target_uri.is_some_and(|u| self.remove_document(&u))
+    }
+
+    /// Removes a mounted SOP by `id`, recording a tombstone and syncing HNSW.
+    pub fn remove_sop(&self, id: &str) -> bool {
+        self.remove_document(&format!("pandora://sops/{id}"))
+    }
+
+    /// Removes a mounted session archive by `archive_id`, recording a tombstone and syncing HNSW.
+    pub fn remove_archive(&self, archive_id: &str) -> bool {
+        self.remove_document(&format!("pandora://archives/{archive_id}"))
+    }
+
+    /// Removes a mounted feature map by `name`, recording a tombstone and syncing HNSW.
+    pub fn remove_feature_map(&self, name: &str) -> bool {
+        self.remove_document(&format!("pandora://features/{name}"))
+    }
+
+    /// Removes a mounted skill by `id`, recording a tombstone and syncing HNSW.
+    pub fn remove_skill(&self, id: &str) -> bool {
+        self.remove_document(&format!("pandora://skills/{id}"))
+    }
+
+    /// Compacts all tombstoned documents, strips tombstones from `PVFS` state, compacts the
+    /// cached `HnswIndex` with neighbor/entry-point repair and re-packed `doc_id`s, and
+    /// refreshes any already-persisted on-disk index files.
+    pub fn compact_index(&self) -> Result<VfsCompactionReport, VfsError> {
+        let tombstones_snapshot: HashSet<String> = self
+            .tombstoned_uris
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?
+            .iter()
+            .cloned()
+            .collect();
+        let tombstones_purged = tombstones_snapshot.len();
+        let live_before = self.collect_all_documents()?.len();
+        let docs_before = live_before.saturating_add(tombstones_purged);
+
+        self.purge_backing_records_for_uris(&tombstones_snapshot);
+        if let Ok(mut tombstones) = self.tombstoned_uris.write() {
+            tombstones.clear();
+        }
+
+        let live_docs = self.collect_all_documents()?;
+        let docs_after = live_docs.len();
+        let live_uris: HashSet<String> = live_docs
+            .iter()
+            .map(|d| d.uri.as_str().to_string())
+            .collect();
+
+        if let Ok(mut cache) = self.diff_cache.write() {
+            cache.retain(|uri, _| live_uris.contains(uri));
+        }
+
+        let (bm25, tropical_vectors, doc_vectors) =
+            self.build_index_differential_tropical(&live_docs)?;
+        let corpus_hash = compute_corpus_hash(&live_docs);
+        let compacted_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let new_compaction_count = self.compaction_count.fetch_add(1, Ordering::Relaxed) + 1;
+        self.last_compacted_unix
+            .store(compacted_at_unix, Ordering::Relaxed);
+        self.mark_buffer_modified();
+
+        let mut hnsw_compacted = false;
+        let mut hnsw_edges_repaired = 0usize;
+        let mut hnsw_nodes_reconnected = 0usize;
+
+        if let Ok(mut hnsw_guard) = self.cached_hnsw_index.write()
+            && let Some(arc_hnsw) = hnsw_guard.as_mut()
+        {
+            let hnsw_mut = Arc::make_mut(arc_hnsw);
+            let old_uri_map = self
+                .hnsw_uri_to_doc_id
+                .read()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+
+            let mut old_to_new_doc_id = HashMap::with_capacity(live_docs.len());
+            let mut missing_docs = Vec::new();
+            for (new_idx, doc) in live_docs.iter().enumerate() {
+                if let Some(&old_doc_id) = old_uri_map.get(doc.uri.as_str()) {
+                    old_to_new_doc_id.insert(old_doc_id, new_idx);
+                } else {
+                    missing_docs.push((new_idx, doc));
+                }
+            }
+
+            let hnsw_report = hnsw_mut.compact();
+            hnsw_edges_repaired = hnsw_report.edges_repaired;
+            hnsw_nodes_reconnected = hnsw_report.nodes_reconnected;
+            hnsw_mut.remap_doc_ids(&old_to_new_doc_id);
+
+            let uses_tropical =
+                hnsw_mut.nodes().iter().any(|n| n.vector.is_tropical()) || hnsw_mut.is_empty();
+            for (new_idx, _doc) in missing_docs {
+                let vec = if uses_tropical {
+                    HnswVector::Tropical(tropical_vectors[new_idx].1)
+                } else {
+                    HnswVector::Quantized(doc_vectors[new_idx].1)
+                };
+                hnsw_mut.upsert(new_idx, vec);
+            }
+            hnsw_mut.set_corpus_hash(corpus_hash);
+            hnsw_compacted = true;
+            self.populate_hnsw_doc_mapping(&live_docs);
+        }
+
+        let deserialized = DeserializedVfsIndex {
+            magic: *VFS_INDEX_MAGIC,
+            version: VFS_INDEX_VERSION,
+            created_at: compacted_at_unix,
+            doc_count: docs_after as u32,
+            dense_dim: VFS_DENSE_DIMENSION,
+            total_tokens: bm25.total_tokens() as u64,
+            vocab_size: bm25.postings().len() as u32,
+            corpus_hash,
+            docs: live_docs,
+            doc_vectors,
+            tropical_vectors,
+            bm25,
+            tombstoned_uris: Vec::new(),
+            compaction_count: new_compaction_count,
+            last_compacted_unix: compacted_at_unix,
+        };
+        if let Ok(mut cache) = self.cached_index.write() {
+            *cache = Some(Arc::new(deserialized));
+        }
+
+        if let Some(p) = self.index_path()
+            && p.is_file()
+        {
+            self.write_index_to_disk_inner(&p)?;
+        }
+        if hnsw_compacted
+            && let Some(hp) = self.hnsw_index_path()
+            && hp.is_file()
+            && let Some(hnsw_arc) = self.cached_hnsw_index()
+        {
+            hnsw_arc.save_to_file(&hp).map_err(|e| {
+                VfsError::BackendError(format!("failed to save compacted HNSW index: {e}"))
+            })?;
+        }
+
+        Ok(VfsCompactionReport {
+            docs_before,
+            docs_after,
+            tombstones_purged,
+            hnsw_compacted,
+            hnsw_edges_repaired,
+            hnsw_nodes_reconnected,
+            compaction_count: new_compaction_count,
+            compacted_at_unix,
+        })
+    }
+
+    /// Executes threshold-based automated index maintenance, compacting only when tombstones
+    /// exceed [`Self::auto_compact_threshold`].
+    pub fn run_index_maintenance(&self) -> Result<Option<VfsCompactionReport>, VfsError> {
+        if self.should_auto_compact() {
+            Ok(Some(self.compact_index()?))
+        } else {
+            Ok(None)
         }
     }
 
@@ -372,6 +1061,11 @@ impl ContextVfs {
             ]);
         }
 
+        let tombstones = self
+            .tombstoned_uris
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
+
         match segments[0] {
             "meta" => {
                 if segments.len() == 1 {
@@ -382,6 +1076,14 @@ impl ContextVfs {
                     let mut entries = Vec::new();
                     for rule in rules.iter() {
                         let name = rule.id().strip_prefix("meta:").unwrap_or_else(|| rule.id());
+                        let entry_uri_str = if rule.id() == "meta:rules" || rule.id() == "rules" {
+                            "pandora://meta/rules".to_string()
+                        } else {
+                            format!("pandora://meta/{name}")
+                        };
+                        if tombstones.contains(&entry_uri_str) {
+                            continue;
+                        }
                         entries.push(VfsDirectoryEntry::new(
                             ContextUri::new(format!("pandora://meta/{name}"))
                                 .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
@@ -403,9 +1105,13 @@ impl ContextVfs {
                         .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
                     let mut entries = Vec::new();
                     for sop in sops.iter() {
+                        let entry_uri = format!("pandora://sops/{}", sop.sop.id);
+                        if tombstones.contains(&entry_uri) {
+                            continue;
+                        }
                         let json = serde_json::to_string(&sop.sop).unwrap_or_default();
                         entries.push(VfsDirectoryEntry::new(
-                            ContextUri::new(format!("pandora://sops/{}", sop.sop.id))
+                            ContextUri::new(entry_uri)
                                 .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
                             sop.sop.id.clone(),
                             VfsNodeKind::Sop,
@@ -425,9 +1131,13 @@ impl ContextVfs {
                         .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
                     let mut entries = Vec::new();
                     for arc in archives.iter() {
+                        let entry_uri = format!("pandora://archives/{}", arc.archive_id);
+                        if tombstones.contains(&entry_uri) {
+                            continue;
+                        }
                         let json = serde_json::to_string(arc).unwrap_or_default();
                         entries.push(VfsDirectoryEntry::new(
-                            ContextUri::new(format!("pandora://archives/{}", arc.archive_id))
+                            ContextUri::new(entry_uri)
                                 .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
                             arc.archive_id.clone(),
                             VfsNodeKind::Archive,
@@ -447,9 +1157,13 @@ impl ContextVfs {
                         .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
                     let mut entries = Vec::new();
                     for (name, map) in maps.iter() {
+                        let entry_uri = format!("pandora://features/{name}");
+                        if tombstones.contains(&entry_uri) {
+                            continue;
+                        }
                         let json = serde_json::to_string(map).unwrap_or_default();
                         entries.push(VfsDirectoryEntry::new(
-                            ContextUri::new(format!("pandora://features/{name}"))
+                            ContextUri::new(entry_uri)
                                 .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
                             name.clone(),
                             VfsNodeKind::FeatureMap,
@@ -469,6 +1183,10 @@ impl ContextVfs {
                         .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
                     let mut entries = Vec::new();
                     for skill in skills.iter() {
+                        let entry_uri = format!("pandora://skills/{}", skill.id().as_str());
+                        if tombstones.contains(&entry_uri) {
+                            continue;
+                        }
                         let content = format!(
                             "id: {}\nname: {}\nversion: {}\ndescription: {}\n",
                             skill.id().as_str(),
@@ -477,7 +1195,7 @@ impl ContextVfs {
                             skill.description()
                         );
                         entries.push(VfsDirectoryEntry::new(
-                            ContextUri::new(format!("pandora://skills/{}", skill.id().as_str()))
+                            ContextUri::new(entry_uri)
                                 .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
                             skill.id().as_str().to_owned(),
                             VfsNodeKind::Fragment,
@@ -499,6 +1217,10 @@ impl ContextVfs {
                     let mut seen_intents = std::collections::HashSet::new();
                     for r in records.iter() {
                         let intent_str = r.intent().as_str();
+                        let canonical = format!("pandora://index/{intent_str}/{}", r.id().as_str());
+                        if tombstones.contains(&canonical) {
+                            continue;
+                        }
                         if seen_intents.insert(intent_str) {
                             entries.push(VfsDirectoryEntry::new(
                                 ContextUri::new(format!("pandora://index/{intent_str}"))
@@ -515,13 +1237,14 @@ impl ContextVfs {
                     let mut entries = Vec::new();
                     for r in records.iter() {
                         if r.intent().as_str() == target_intent {
+                            let canonical =
+                                format!("pandora://index/{target_intent}/{}", r.id().as_str());
+                            if tombstones.contains(&canonical) {
+                                continue;
+                            }
                             entries.push(VfsDirectoryEntry::new(
-                                ContextUri::new(format!(
-                                    "pandora://index/{}/{}",
-                                    target_intent,
-                                    r.id().as_str()
-                                ))
-                                .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
+                                ContextUri::new(canonical)
+                                    .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
                                 r.id().as_str().to_owned(),
                                 VfsNodeKind::Fragment,
                                 r.summary().len(),
@@ -541,6 +1264,14 @@ impl ContextVfs {
                 if segments.len() == 1 {
                     let mut entries = Vec::new();
                     for r in records.iter() {
+                        let canonical = format!(
+                            "pandora://facts/{}/{}",
+                            r.intent().as_str(),
+                            r.id().as_str()
+                        );
+                        if tombstones.contains(&canonical) {
+                            continue;
+                        }
                         entries.push(VfsDirectoryEntry::new(
                             ContextUri::new(format!("pandora://facts/{}", r.id().as_str()))
                                 .map_err(|e| VfsError::InvalidUri(e.to_string()))?,
@@ -562,6 +1293,9 @@ impl ContextVfs {
         let segments = uri.segments();
         if segments.is_empty() {
             return Err(VfsError::IsADirectory(uri.as_str().to_owned()));
+        }
+        if self.is_tombstoned(uri.as_str()) {
+            return Err(VfsError::NotFound(uri.as_str().to_owned()));
         }
 
         match segments[0] {
@@ -592,6 +1326,11 @@ impl ContextVfs {
                             }
                         })
                         .ok_or_else(|| VfsError::NotFound(uri.as_str().to_owned()))?;
+                    if let Some(doc) = meta_rule_to_doc(rule)
+                        && self.is_tombstoned(doc.uri.as_str())
+                    {
+                        return Err(VfsError::NotFound(uri.as_str().to_owned()));
+                    }
                     Ok(rule.clone())
                 } else {
                     Err(VfsError::NotFound(uri.as_str().to_owned()))
@@ -747,6 +1486,11 @@ impl ContextVfs {
                     records.iter().find(|r| r.id().as_str() == id)
                 }
                 .ok_or_else(|| VfsError::NotFound(uri.as_str().to_owned()))?;
+                if let Some(doc) = l1_record_to_doc(record)
+                    && self.is_tombstoned(doc.uri.as_str())
+                {
+                    return Err(VfsError::NotFound(uri.as_str().to_owned()));
+                }
                 let content = record.summary().to_owned();
                 let token_cost = (content.len() / 4).max(1) as u32;
                 ContextFragment::new_with_origin(
@@ -776,6 +1520,11 @@ impl ContextVfs {
                     .iter()
                     .find(|r| r.id().as_str() == topic_or_id || r.intent().as_str() == topic_or_id)
                     .ok_or_else(|| VfsError::NotFound(uri.as_str().to_owned()))?;
+                if let Some(doc) = l2_record_to_doc(record)
+                    && self.is_tombstoned(doc.uri.as_str())
+                {
+                    return Err(VfsError::NotFound(uri.as_str().to_owned()));
+                }
                 let content = record.summary().to_owned();
                 let token_cost = (content.len() / 4).max(1) as u32;
                 ContextFragment::new_with_origin(
@@ -834,15 +1583,19 @@ impl ContextVfs {
         if let Ok(mut cache) = self.diff_cache.write() {
             cache.clear();
         }
-        if let Ok(mut guard) = self.cached_hnsw_index.write() {
-            *guard = None;
-        }
+        self.clear_cached_hnsw_index();
     }
 
     /// Clears the in-memory cached HNSW graph index.
     pub fn clear_cached_hnsw_index(&self) {
         if let Ok(mut guard) = self.cached_hnsw_index.write() {
             *guard = None;
+        }
+        if let Ok(mut docs) = self.hnsw_docs.write() {
+            docs.clear();
+        }
+        if let Ok(mut map) = self.hnsw_uri_to_doc_id.write() {
+            map.clear();
         }
     }
 
@@ -1015,9 +1768,14 @@ impl ContextVfs {
         Ok((bm25, tropical_vectors, doc_vectors))
     }
 
-    /// Collects all mounted virtual documents across constitutional rules,
-    /// L1/L2 memory records, SOPs, session archives, feature maps, and active skills.
+    /// Collects all live mounted virtual documents across constitutional rules,
+    /// L1/L2 memory records, SOPs, session archives, feature maps, and active skills,
+    /// excluding any URIs currently tombstoned.
     pub fn collect_all_documents(&self) -> Result<Vec<VfsDoc>, VfsError> {
+        let tombstones = self
+            .tombstoned_uris
+            .read()
+            .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         let mut docs = Vec::new();
 
         // 1. Meta rules (Tier L0)
@@ -1026,19 +1784,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for rule in rules.iter() {
-            let uri_str = if rule.id() == "meta:rules" || rule.id() == "rules" {
-                "pandora://meta/rules".to_string()
-            } else {
-                format!("pandora://meta/{}", rule.id().trim_start_matches("meta:"))
-            };
-            if let Ok(uri) = ContextUri::new(uri_str) {
-                docs.push(VfsDoc {
-                    uri,
-                    title: rule.id().to_string(),
-                    content: rule.content().to_string(),
-                    tier: Some(MemoryTier::L0),
-                    intent: None,
-                });
+            if let Some(doc) = meta_rule_to_doc(rule)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1048,18 +1797,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for rec in l1.iter() {
-            let intent_str = rec.intent().as_str();
-            if let Ok(uri) = ContextUri::new(format!(
-                "pandora://index/{intent_str}/{}",
-                rec.id().as_str()
-            )) {
-                docs.push(VfsDoc {
-                    uri,
-                    title: rec.id().as_str().to_string(),
-                    content: format!("{} {}", rec.id().as_str(), rec.summary()),
-                    tier: Some(MemoryTier::L1),
-                    intent: Some(rec.intent()),
-                });
+            if let Some(doc) = l1_record_to_doc(rec)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1069,18 +1810,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for rec in l2.iter() {
-            let intent_str = rec.intent().as_str();
-            if let Ok(uri) = ContextUri::new(format!(
-                "pandora://facts/{intent_str}/{}",
-                rec.id().as_str()
-            )) {
-                docs.push(VfsDoc {
-                    uri,
-                    title: rec.id().as_str().to_string(),
-                    content: format!("{} {}", rec.id().as_str(), rec.summary()),
-                    tier: Some(MemoryTier::L2),
-                    intent: Some(rec.intent()),
-                });
+            if let Some(doc) = l2_record_to_doc(rec)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1090,29 +1823,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for stored in sops.iter() {
-            if let Ok(uri) = ContextUri::new(format!("pandora://sops/{}", stored.sop.id)) {
-                let steps_text = stored
-                    .sop
-                    .steps
-                    .iter()
-                    .map(|s| format!("{} {}", s.name, s.command))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let verif = stored
-                    .sop
-                    .verification_command
-                    .as_deref()
-                    .unwrap_or_default();
-                docs.push(VfsDoc {
-                    uri,
-                    title: stored.sop.name.clone(),
-                    content: format!(
-                        "{} {} {} {}",
-                        stored.sop.id, stored.sop.name, steps_text, verif
-                    ),
-                    tier: Some(MemoryTier::L3),
-                    intent: Some(stored.sop.trigger_intent),
-                });
+            if let Some(doc) = sop_to_doc(stored)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1122,14 +1836,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for arc in archives.iter() {
-            if let Ok(uri) = ContextUri::new(format!("pandora://archives/{}", arc.archive_id)) {
-                docs.push(VfsDoc {
-                    uri,
-                    title: arc.archive_id.clone(),
-                    content: format!("{} {}", arc.archive_id, arc.summary),
-                    tier: Some(MemoryTier::L4),
-                    intent: None,
-                });
+            if let Some(doc) = archive_to_doc(arc)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1139,15 +1849,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for (name, map) in maps.iter() {
-            if let Ok(uri) = ContextUri::new(format!("pandora://features/{name}")) {
-                let map_json = serde_json::to_string(map).unwrap_or_default();
-                docs.push(VfsDoc {
-                    uri,
-                    title: format!("Feature Map: {name}"),
-                    content: format!("{name} {map_json}"),
-                    tier: None,
-                    intent: None,
-                });
+            if let Some(doc) = feature_map_to_doc(name, map)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1157,20 +1862,10 @@ impl ContextVfs {
             .read()
             .map_err(|_| VfsError::BackendError("lock poisoned".into()))?;
         for skill in skills.iter() {
-            if let Ok(uri) = ContextUri::new(format!("pandora://skills/{}", skill.id().as_str())) {
-                docs.push(VfsDoc {
-                    uri,
-                    title: skill.name().to_string(),
-                    content: format!(
-                        "{} {} {} {}",
-                        skill.id().as_str(),
-                        skill.name(),
-                        skill.description(),
-                        skill.resources().join(" ")
-                    ),
-                    tier: None,
-                    intent: None,
-                });
+            if let Some(doc) = skill_to_doc(skill)
+                && !tombstones.contains(doc.uri.as_str())
+            {
+                docs.push(doc);
             }
         }
 
@@ -1179,7 +1874,17 @@ impl ContextVfs {
 
     /// Serializes and writes the current BM25 inverted index and 128-d dense embeddings
     /// atomically to disk at the specified path using differential indexing.
+    ///
+    /// Automatically triggers [`Self::compact_index`] beforehand if tracked tombstones
+    /// exceed [`Self::auto_compact_threshold`].
     pub fn save_index_to_disk(&self, index_path: &Path) -> Result<(), VfsError> {
+        if self.should_auto_compact() {
+            self.compact_index()?;
+        }
+        self.write_index_to_disk_inner(index_path)
+    }
+
+    fn write_index_to_disk_inner(&self, index_path: &Path) -> Result<(), VfsError> {
         let docs = self.collect_all_documents()?;
         let (bm25, tropical_vectors, doc_vectors) =
             self.build_index_differential_tropical(&docs)?;
@@ -1190,13 +1895,20 @@ impl ContextVfs {
             .unwrap_or_default()
             .as_secs();
 
-        let bytes = serialize_vfs_index_v3(
+        let tombstones = self.tombstoned_uris();
+        let compaction_count = self.compaction_count();
+        let last_compacted_unix = self.last_compacted_unix();
+
+        let bytes = serialize_vfs_index_v3_with_tombstones(
             &docs,
             &bm25,
             &doc_vectors,
             &tropical_vectors,
             corpus_hash,
             created_at_unix,
+            &tombstones,
+            compaction_count,
+            last_compacted_unix,
         )?;
 
         if let Some(parent) = index_path.parent() {
@@ -1232,6 +1944,9 @@ impl ContextVfs {
             doc_vectors,
             tropical_vectors,
             bm25,
+            tombstoned_uris: tombstones,
+            compaction_count,
+            last_compacted_unix,
         };
         if let Ok(mut cache) = self.cached_index.write() {
             *cache = Some(Arc::new(deserialized));
@@ -1379,10 +2094,7 @@ impl ContextVfs {
             };
 
             if let Some(hnsw_idx) = maybe_hnsw {
-                let uses_tropical = hnsw_idx
-                    .nodes()
-                    .first()
-                    .is_some_and(|n| n.vector.is_tropical());
+                let uses_tropical = hnsw_idx.nodes().iter().any(|n| n.vector.is_tropical());
                 let q_hnsw = if uses_tropical {
                     HnswVector::Tropical(TropicalProjector::project(query))
                 } else {
@@ -1391,9 +2103,37 @@ impl ContextVfs {
                 let ef = (options.limit * 2).max(64);
                 let top_k = (options.limit * 5).max(32).min(index_docs.len());
                 let hnsw_res = hnsw_idx.search(&q_hnsw, top_k, ef);
+                let hnsw_docs_guard = self.hnsw_docs.read().ok();
+                let has_hnsw_map = hnsw_docs_guard.as_ref().is_some_and(|g| !g.is_empty());
+                let uri_to_idx: Option<HashMap<String, usize>> = if has_hnsw_map {
+                    Some(
+                        index_docs
+                            .iter()
+                            .enumerate()
+                            .map(|(i, d)| (d.uri.as_str().to_string(), i))
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
                 hnsw_res
                     .into_iter()
-                    .map(|r| (r.doc_id, r.similarity))
+                    .filter_map(|r| {
+                        let mapped_id = if has_hnsw_map {
+                            let hdoc = hnsw_docs_guard
+                                .as_ref()?
+                                .get(r.doc_id)
+                                .and_then(|opt| opt.as_ref())?;
+                            if index_docs.get(r.doc_id).is_some_and(|d| d.uri == hdoc.uri) {
+                                r.doc_id
+                            } else {
+                                *uri_to_idx.as_ref()?.get(hdoc.uri.as_str())?
+                            }
+                        } else {
+                            r.doc_id
+                        };
+                        Some((mapped_id, r.similarity))
+                    })
                     .collect()
             } else {
                 hasher.score_quantized_docs(&query_vec, &doc_vectors)
@@ -1550,6 +2290,7 @@ impl ContextVfs {
         if let Ok(mut guard) = self.cached_hnsw_index.write() {
             *guard = Some(arc_idx);
         }
+        self.populate_hnsw_doc_mapping(&docs);
 
         Ok(stats)
     }
@@ -1575,6 +2316,7 @@ impl ContextVfs {
         if let Ok(mut guard) = self.cached_hnsw_index.write() {
             *guard = Some(arc_idx);
         }
+        self.populate_hnsw_doc_mapping(&docs);
 
         Ok(stats)
     }
@@ -1583,6 +2325,9 @@ impl ContextVfs {
     /// (or `.pandora/indices/vfs_hnsw.idx` if unspecified) using safe atomic disk write.
     #[allow(clippy::collapsible_if)]
     pub fn save_hnsw_index(&self, path: Option<&Path>) -> Result<PathBuf, VfsError> {
+        if self.should_auto_compact() {
+            self.compact_index()?;
+        }
         let target_path = match path {
             Some(p) => p.to_path_buf(),
             None => self
@@ -1660,6 +2405,7 @@ impl ContextVfs {
                         if let Ok(mut guard) = self.cached_hnsw_index.write() {
                             *guard = Some(Arc::clone(&arc_idx));
                         }
+                        self.populate_hnsw_doc_mapping(&docs);
                         return Ok(arc_idx);
                     }
                 }
@@ -1700,10 +2446,7 @@ impl ContextVfs {
 
         let index = self.load_or_build_hnsw_index()?;
 
-        let uses_tropical = index
-            .nodes()
-            .first()
-            .is_some_and(|n| n.vector.is_tropical());
+        let uses_tropical = index.nodes().iter().any(|n| n.vector.is_tropical());
         let query_vector = if uses_tropical {
             HnswVector::Tropical(TropicalProjector::project(query))
         } else {
@@ -1719,13 +2462,26 @@ impl ContextVfs {
             limit
         };
         let hnsw_results = index.search(&query_vector, candidate_limit, ef_search);
+        let hnsw_docs_guard = self.hnsw_docs.read().ok();
+        let has_hnsw_map = hnsw_docs_guard.as_ref().is_some_and(|g| !g.is_empty());
 
         let mut results = Vec::with_capacity(hnsw_results.len());
         for res in hnsw_results {
-            if res.doc_id >= docs.len() {
-                continue;
-            }
-            let doc = &docs[res.doc_id];
+            let doc = if has_hnsw_map {
+                let Some(d) = hnsw_docs_guard
+                    .as_ref()
+                    .and_then(|g| g.get(res.doc_id))
+                    .and_then(|opt| opt.as_ref())
+                else {
+                    continue;
+                };
+                d
+            } else {
+                let Some(d) = docs.get(res.doc_id) else {
+                    continue;
+                };
+                d
+            };
             let snippet = generate_snippet(&doc.content, query);
             let tier_bias = if uses_tropical {
                 match doc.tier {
@@ -1889,6 +2645,9 @@ pub fn serialize_vfs_index(
         &[],
         corpus_hash,
         created_at_unix,
+        &[],
+        0,
+        0,
     )
 }
 
@@ -1910,9 +2669,41 @@ pub fn serialize_vfs_index_v3(
         tropical_vectors,
         corpus_hash,
         created_at_unix,
+        &[],
+        0,
+        0,
     )
 }
 
+/// Serializes a `PVFS` Version 3 index along with optional tombstone & compaction metadata,
+/// preserving byte-level compatibility with legacy v3 payloads when no tombstones/compactions exist.
+#[allow(clippy::too_many_arguments)]
+pub fn serialize_vfs_index_v3_with_tombstones(
+    docs: &[VfsDoc],
+    bm25: &SparseBm25Index,
+    doc_vectors: &[(usize, QuantizedVector)],
+    tropical_vectors: &[(usize, TropicalVector)],
+    corpus_hash: [u8; 32],
+    created_at_unix: u64,
+    tombstoned_uris: &[String],
+    compaction_count: u32,
+    last_compacted_unix: u64,
+) -> Result<Vec<u8>, VfsError> {
+    serialize_vfs_index_with_version(
+        VFS_INDEX_VERSION_V3,
+        docs,
+        bm25,
+        doc_vectors,
+        tropical_vectors,
+        corpus_hash,
+        created_at_unix,
+        tombstoned_uris,
+        compaction_count,
+        last_compacted_unix,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn serialize_vfs_index_with_version(
     version: u32,
     docs: &[VfsDoc],
@@ -1921,6 +2712,9 @@ fn serialize_vfs_index_with_version(
     tropical_vectors: &[(usize, TropicalVector)],
     corpus_hash: [u8; 32],
     created_at_unix: u64,
+    tombstoned_uris: &[String],
+    compaction_count: u32,
+    last_compacted_unix: u64,
 ) -> Result<Vec<u8>, VfsError> {
     let mut buffer = Vec::new();
 
@@ -2024,6 +2818,24 @@ fn serialize_vfs_index_with_version(
                 .unwrap_or_else(|| TropicalProjector::project(&doc.content));
             buffer.extend_from_slice(&tv.to_bytes());
         }
+
+        // 3c. Optional Version 3 Tombstone & Compaction Extension Block
+        if !tombstoned_uris.is_empty() || compaction_count > 0 || last_compacted_unix > 0 {
+            buffer.extend_from_slice(PVFS_TOMBSTONE_MAGIC);
+            buffer.extend_from_slice(&(tombstoned_uris.len() as u32).to_le_bytes());
+            for uri in tombstoned_uris {
+                let uri_bytes = uri.as_bytes();
+                if uri_bytes.len() > u16::MAX as usize {
+                    return Err(VfsError::BackendError(
+                        "tombstone URI exceeds maximum u16 length".into(),
+                    ));
+                }
+                buffer.extend_from_slice(&(uri_bytes.len() as u16).to_le_bytes());
+                buffer.extend_from_slice(uri_bytes);
+            }
+            buffer.extend_from_slice(&compaction_count.to_le_bytes());
+            buffer.extend_from_slice(&last_compacted_unix.to_le_bytes());
+        }
     }
 
     // 4. Trailer (32 bytes): SHA-256 checksum over byte 0..end of payload
@@ -2034,7 +2846,8 @@ fn serialize_vfs_index_with_version(
 }
 
 /// Deserializes a binary VFS index from byte slice, validating the 32-byte SHA-256 trailer checksum.
-/// Supports Version 1 (512 bytes per doc), Version 2 (132 bytes per doc), and Version 3 (Quantized + Tropical).
+/// Supports Version 1 (512 bytes per doc), Version 2 (132 bytes per doc), and Version 3 (Quantized + Tropical,
+/// with optional backward-compatible `TOMB` tombstone & compaction metadata block).
 pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsError> {
     if bytes.len() < VFS_INDEX_HEADER_SIZE + VFS_INDEX_TRAILER_SIZE {
         return Err(VfsError::BackendError(
@@ -2288,6 +3101,56 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
             .collect()
     };
 
+    let mut tombstoned_uris = Vec::new();
+    let mut compaction_count = 0u32;
+    let mut last_compacted_unix = 0u64;
+
+    if version == VFS_INDEX_VERSION_V3
+        && cursor + 4 <= payload_len
+        && &bytes[cursor..cursor + 4] == PVFS_TOMBSTONE_MAGIC
+    {
+        cursor += 4;
+        if cursor + 4 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading tombstone_count".into(),
+            ));
+        }
+        let tomb_count = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+        cursor += 4;
+        tombstoned_uris.reserve(tomb_count);
+        for _ in 0..tomb_count {
+            if cursor + 2 > payload_len {
+                return Err(VfsError::BackendError(
+                    "unexpected EOF reading tombstone URI length".into(),
+                ));
+            }
+            let uri_len =
+                u16::from_le_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as usize;
+            cursor += 2;
+            if cursor + uri_len > payload_len {
+                return Err(VfsError::BackendError(
+                    "unexpected EOF reading tombstone URI".into(),
+                ));
+            }
+            let uri = std::str::from_utf8(&bytes[cursor..cursor + uri_len])
+                .map_err(|e| {
+                    VfsError::BackendError(format!("invalid UTF-8 in tombstone URI: {e}"))
+                })?
+                .to_string();
+            cursor += uri_len;
+            tombstoned_uris.push(uri);
+        }
+        if cursor + 12 > payload_len {
+            return Err(VfsError::BackendError(
+                "unexpected EOF reading compaction metadata".into(),
+            ));
+        }
+        compaction_count = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+        cursor += 4;
+        last_compacted_unix = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+        cursor += 8;
+    }
+
     if cursor != payload_len {
         return Err(VfsError::BackendError(format!(
             "index parsing incomplete: cursor at {cursor}, expected {payload_len}"
@@ -2314,6 +3177,9 @@ pub fn deserialize_vfs_index(bytes: &[u8]) -> Result<DeserializedVfsIndex, VfsEr
         doc_vectors,
         tropical_vectors,
         bm25,
+        tombstoned_uris,
+        compaction_count,
+        last_compacted_unix,
     })
 }
 
@@ -2387,6 +3253,24 @@ pub fn read_index_stats(
         (0, 0)
     };
 
+    let (tombstone_count, compaction_count, last_compacted_unix) =
+        if checksum_valid && let Ok(parsed) = deserialize_vfs_index(&bytes) {
+            (
+                parsed.tombstoned_uris.len() as u32,
+                parsed.compaction_count,
+                parsed.last_compacted_unix,
+            )
+        } else {
+            (0, 0, 0)
+        };
+
+    let total_slots = (doc_count as u64).saturating_add(tombstone_count as u64);
+    let tombstone_ratio = if total_slots == 0 {
+        0.0
+    } else {
+        tombstone_count as f64 / total_slots as f64
+    };
+
     Ok(VfsIndexStats {
         path: index_path.to_path_buf(),
         size_bytes,
@@ -2403,7 +3287,132 @@ pub fn read_index_stats(
         vector_bytes_saved,
         cache_hits,
         cache_misses,
+        tombstone_count,
+        tombstone_ratio,
+        compaction_count,
+        last_compacted_unix,
     })
+}
+
+fn meta_rule_to_doc(rule: &ContextFragment) -> Option<VfsDoc> {
+    let uri_str = if rule.id() == "meta:rules" || rule.id() == "rules" {
+        "pandora://meta/rules".to_string()
+    } else {
+        format!("pandora://meta/{}", rule.id().trim_start_matches("meta:"))
+    };
+    ContextUri::new(uri_str).ok().map(|uri| VfsDoc {
+        uri,
+        title: rule.id().to_string(),
+        content: rule.content().to_string(),
+        tier: Some(MemoryTier::L0),
+        intent: None,
+    })
+}
+
+fn l1_record_to_doc(rec: &MemoryRecord) -> Option<VfsDoc> {
+    let intent_str = rec.intent().as_str();
+    ContextUri::new(format!(
+        "pandora://index/{intent_str}/{}",
+        rec.id().as_str()
+    ))
+    .ok()
+    .map(|uri| VfsDoc {
+        uri,
+        title: rec.id().as_str().to_string(),
+        content: format!("{} {}", rec.id().as_str(), rec.summary()),
+        tier: Some(MemoryTier::L1),
+        intent: Some(rec.intent()),
+    })
+}
+
+fn l2_record_to_doc(rec: &MemoryRecord) -> Option<VfsDoc> {
+    let intent_str = rec.intent().as_str();
+    ContextUri::new(format!(
+        "pandora://facts/{intent_str}/{}",
+        rec.id().as_str()
+    ))
+    .ok()
+    .map(|uri| VfsDoc {
+        uri,
+        title: rec.id().as_str().to_string(),
+        content: format!("{} {}", rec.id().as_str(), rec.summary()),
+        tier: Some(MemoryTier::L2),
+        intent: Some(rec.intent()),
+    })
+}
+
+fn sop_to_doc(stored: &StoredSop) -> Option<VfsDoc> {
+    ContextUri::new(format!("pandora://sops/{}", stored.sop.id))
+        .ok()
+        .map(|uri| {
+            let steps_text = stored
+                .sop
+                .steps
+                .iter()
+                .map(|s| format!("{} {}", s.name, s.command))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let verif = stored
+                .sop
+                .verification_command
+                .as_deref()
+                .unwrap_or_default();
+            VfsDoc {
+                uri,
+                title: stored.sop.name.clone(),
+                content: format!(
+                    "{} {} {} {}",
+                    stored.sop.id, stored.sop.name, steps_text, verif
+                ),
+                tier: Some(MemoryTier::L3),
+                intent: Some(stored.sop.trigger_intent),
+            }
+        })
+}
+
+fn archive_to_doc(arc: &SessionArchiveRecord) -> Option<VfsDoc> {
+    ContextUri::new(format!("pandora://archives/{}", arc.archive_id))
+        .ok()
+        .map(|uri| VfsDoc {
+            uri,
+            title: arc.archive_id.clone(),
+            content: format!("{} {}", arc.archive_id, arc.summary),
+            tier: Some(MemoryTier::L4),
+            intent: None,
+        })
+}
+
+fn feature_map_to_doc(name: &str, map: &FeatureMap) -> Option<VfsDoc> {
+    ContextUri::new(format!("pandora://features/{name}"))
+        .ok()
+        .map(|uri| {
+            let map_json = serde_json::to_string(map).unwrap_or_default();
+            VfsDoc {
+                uri,
+                title: format!("Feature Map: {name}"),
+                content: format!("{name} {map_json}"),
+                tier: None,
+                intent: None,
+            }
+        })
+}
+
+fn skill_to_doc(skill: &SkillManifest) -> Option<VfsDoc> {
+    ContextUri::new(format!("pandora://skills/{}", skill.id().as_str()))
+        .ok()
+        .map(|uri| VfsDoc {
+            uri,
+            title: skill.name().to_string(),
+            content: format!(
+                "{} {} {} {}",
+                skill.id().as_str(),
+                skill.name(),
+                skill.description(),
+                skill.resources().join(" ")
+            ),
+            tier: None,
+            intent: None,
+        })
 }
 
 #[cfg(test)]
@@ -3440,16 +4449,21 @@ mod tests {
 
         assert!(
             !vfs.is_hnsw_index_fresh(),
-            "HNSW index must report stale after buffer modification"
+            "Disk HNSW index must report stale after buffer modification"
         );
-        assert!(vfs.cached_hnsw_index().is_none());
+        let synced = vfs
+            .cached_hnsw_index()
+            .expect("cached HNSW index must stay incrementally synchronized");
+        let live_docs = vfs.collect_all_documents().unwrap();
+        assert_eq!(synced.live_count(), live_docs.len());
+        assert_eq!(synced.corpus_hash(), &compute_corpus_hash(&live_docs));
 
-        // Rebuilding and saving restores freshness
+        // Saving synced index restores on-disk freshness
         vfs.save_hnsw_index(None).unwrap();
         assert!(vfs.is_hnsw_index_fresh());
 
         let stats = vfs.hnsw_index_stats().unwrap();
-        assert_eq!(stats.node_count, vfs.collect_all_documents().unwrap().len());
+        assert_eq!(stats.node_count, live_docs.len());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -3568,6 +4582,302 @@ mod tests {
             .unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].title, "trop-hnsw-mcts");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_vfs_tombstone_remove_and_pvfs_v3_persistence() {
+        let vfs = ContextVfs::new().with_auto_compact_threshold(10, 0.9);
+        for i in 0..8 {
+            vfs.add_memory_record(make_test_record(
+                &format!("tomb-rec-{i}"),
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                &format!("Rust async tokio channel pattern document {i}"),
+            ));
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_pvfs_tomb_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+
+        // Legacy v3 payload (0 tombstones) backward-compatibility check
+        vfs.save_index_to_disk(&index_path).unwrap();
+        let initial_bytes = std::fs::read(&index_path).unwrap();
+        let parsed_initial = deserialize_vfs_index(&initial_bytes).unwrap();
+        assert!(parsed_initial.tombstoned_uris.is_empty());
+        assert_eq!(parsed_initial.compaction_count, 0);
+
+        // Soft-tombstone one document and hard-remove another
+        assert!(vfs.tombstone_document("pandora://index/coding/tomb-rec-1"));
+        assert!(!vfs.tombstone_document("pandora://index/coding/tomb-rec-1"));
+        assert!(vfs.remove_document("pandora://index/coding/tomb-rec-2"));
+        assert!(!vfs.remove_document("pandora://index/coding/does-not-exist"));
+        assert_eq!(vfs.tombstone_count(), 2);
+        assert!(vfs.is_tombstoned("pandora://index/coding/tomb-rec-1"));
+        assert!(vfs.is_tombstoned("pandora://index/coding/tomb-rec-2"));
+
+        // Tombstoned URIs are hidden from resolve, list, and search
+        let tomb_uri = ContextUri::new("pandora://index/coding/tomb-rec-1").unwrap();
+        assert!(matches!(vfs.resolve(&tomb_uri), Err(VfsError::NotFound(_))));
+        let listed = vfs
+            .list(&ContextUri::new("pandora://index/coding").unwrap())
+            .unwrap();
+        assert!(
+            !listed
+                .iter()
+                .any(|e| e.name == "tomb-rec-1" || e.name == "tomb-rec-2")
+        );
+
+        // Persist PVFS v3 with tombstones below auto-compact threshold
+        vfs.save_index_to_disk(&index_path).unwrap();
+        let stats = read_index_stats(&index_path, Some(&vfs)).unwrap();
+        assert!(stats.checksum_valid);
+        assert!(stats.is_fresh);
+        assert_eq!(stats.tombstone_count, 2);
+        assert!(stats.tombstone_ratio > 0.0);
+        assert_eq!(stats.compaction_count, 0);
+
+        let disk_bytes = std::fs::read(&index_path).unwrap();
+        let decoded = deserialize_vfs_index(&disk_bytes).unwrap();
+        assert_eq!(decoded.tombstoned_uris.len(), 2);
+        assert_eq!(decoded.doc_count, 7); // 1 meta rule + 6 remaining L1 records
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_vfs_auto_compaction_threshold_and_manual_compact() {
+        let vfs = ContextVfs::new().with_auto_compact_threshold(3, 0.25);
+        for i in 0..9 {
+            vfs.add_memory_record(make_test_record(
+                &format!("auto-rec-{i}"),
+                MemoryTier::L2,
+                MemoryIntent::Repo,
+                &format!("Deterministic repository architecture fact {i}"),
+            ));
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_pvfs_autocompact_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let index_path = temp_dir.join("vfs.idx");
+        vfs.set_index_path(&index_path);
+
+        // 2 tombstones < min_tombstones(3) -> no auto-compaction yet
+        assert!(vfs.tombstone_document("pandora://facts/repo/auto-rec-0"));
+        assert!(vfs.tombstone_document("pandora://facts/repo/auto-rec-1"));
+        assert!(!vfs.should_auto_compact());
+        vfs.save_index_to_disk(&index_path).unwrap();
+        assert_eq!(vfs.tombstone_count(), 2);
+        assert_eq!(vfs.compaction_count(), 0);
+
+        // 3rd tombstone crosses min_tombstones(3) & ratio(3/10 >= 0.25) -> save triggers auto-compact
+        assert!(vfs.tombstone_document("pandora://facts/repo/auto-rec-2"));
+        assert!(vfs.should_auto_compact());
+        vfs.save_index_to_disk(&index_path).unwrap();
+
+        assert_eq!(vfs.tombstone_count(), 0);
+        assert_eq!(vfs.compaction_count(), 1);
+        assert!(vfs.last_compacted_unix() > 0);
+        let stats = read_index_stats(&index_path, Some(&vfs)).unwrap();
+        assert_eq!(stats.tombstone_count, 0);
+        assert_eq!(stats.compaction_count, 1);
+        assert_eq!(stats.doc_count, 7); // 1 default meta rule + 6 remaining facts
+
+        // Manual compaction works even for a single tombstone
+        assert!(vfs.remove_memory_record("auto-rec-3"));
+        assert_eq!(vfs.tombstone_count(), 1);
+        let report = vfs.compact_index().unwrap();
+        assert_eq!(report.tombstones_purged, 1);
+        assert_eq!(report.docs_after, 6);
+        assert_eq!(report.compaction_count, 2);
+        assert_eq!(vfs.tombstone_count(), 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_vfs_incremental_hnsw_sync_and_post_compaction_query_equivalence() {
+        let vfs = ContextVfs::new().with_auto_compact_threshold(20, 0.8);
+        let clean_vfs = ContextVfs::new();
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pandora_vfs_hnsw_equiv_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        vfs.set_index_path(temp_dir.join("vfs.idx"));
+        vfs.set_hnsw_index_path(temp_dir.join("vfs_hnsw.idx"));
+        clean_vfs.set_index_path(temp_dir.join("clean_vfs.idx"));
+        clean_vfs.set_hnsw_index_path(temp_dir.join("clean_vfs_hnsw.idx"));
+
+        let corpus = [
+            ("doc-00", "Tropical semiring max-plus algebra optimization"),
+            ("doc-01", "Kubernetes pod autoscaling horizontal metrics"),
+            (
+                "doc-02",
+                "Ed25519 cryptographic attestation signature verification",
+            ),
+            (
+                "doc-03",
+                "PostgreSQL vacuum analyze query planner statistics",
+            ),
+            ("doc-04", "Rust zero-copy parser lifetime borrow checker"),
+            ("doc-05", "Monte Carlo tree search PUCT exploration bonus"),
+            (
+                "doc-06",
+                "Sinkhorn entropic optimal transport Wasserstein drift",
+            ),
+            ("doc-07", "Martingale e-value anytime valid canary gate"),
+            ("doc-08", "HNSW hierarchical navigable small world graph"),
+            ("doc-09", "BM25 inverted index term frequency saturation"),
+            ("doc-10", "WebAssembly sandbox deterministic fuel metering"),
+            ("doc-11", "GraphQL schema federation resolver batching"),
+        ];
+
+        for (id, summary) in &corpus {
+            vfs.add_memory_record(make_test_record(
+                id,
+                MemoryTier::L1,
+                MemoryIntent::Coding,
+                summary,
+            ));
+        }
+
+        // Build initial tropical HNSW index
+        vfs.build_hnsw_index_tropical(Some(HnswConfig::new(8, 32, 64)))
+            .unwrap();
+        assert!(vfs.cached_hnsw_index().is_some());
+
+        // Incrementally delete 4 docs, update 2 docs, and insert 2 new docs
+        assert!(vfs.remove_document("pandora://index/coding/doc-01"));
+        assert!(vfs.tombstone_document("pandora://index/coding/doc-03"));
+        assert!(vfs.remove_document("pandora://index/coding/doc-07"));
+        assert!(vfs.tombstone_document("pandora://index/coding/doc-11"));
+
+        vfs.add_memory_record(make_test_record(
+            "doc-04",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "Rust async tokio runtime work-stealing scheduler",
+        ));
+        vfs.add_memory_record(make_test_record(
+            "doc-09",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "PVFS v3 tombstone compaction incremental HNSW update",
+        ));
+        vfs.add_memory_record(make_test_record(
+            "doc-12",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "LatsPrefixMemoCache 4-bit quantized decision memoization",
+        ));
+        vfs.add_memory_record(make_test_record(
+            "doc-13",
+            MemoryTier::L1,
+            MemoryIntent::Coding,
+            "DPO preference pair cross-session memory capsule distillation",
+        ));
+
+        // Cached HNSW index remained warm and synchronized incrementally
+        let pre_compact_hnsw = vfs
+            .cached_hnsw_index()
+            .expect("cached HNSW must stay incrementally synced without dropping to None");
+        assert_eq!(pre_compact_hnsw.tombstone_count(), 6); // 4 deletes + 2 replaced upserts
+
+        // Pre-compaction search excludes deleted docs and surfaces newly upserted docs
+        let pre_hits = vfs
+            .search_hnsw("LatsPrefixMemoCache quantized memoization", 5, 64)
+            .unwrap();
+        assert!(!pre_hits.is_empty());
+        assert_eq!(pre_hits[0].title, "doc-12");
+        assert!(
+            !pre_hits
+                .iter()
+                .any(|h| ["doc-01", "doc-03", "doc-07", "doc-11"].contains(&h.title.as_str()))
+        );
+
+        // Compact VFS + HNSW
+        let report = vfs.compact_index().unwrap();
+        assert!(report.hnsw_compacted);
+        assert_eq!(report.tombstones_purged, 4);
+        assert_eq!(vfs.tombstone_count(), 0);
+        let post_compact_hnsw = vfs.cached_hnsw_index().unwrap();
+        assert_eq!(post_compact_hnsw.tombstone_count(), 0);
+        assert_eq!(
+            post_compact_hnsw.live_count(),
+            vfs.collect_all_documents().unwrap().len()
+        );
+
+        // Build clean reference VFS with exact same final live corpus
+        for doc in vfs.collect_all_documents().unwrap() {
+            if doc.uri.as_str().starts_with("pandora://index/") {
+                let id = doc.title.clone();
+                let summary = doc
+                    .content
+                    .strip_prefix(&format!("{id} "))
+                    .unwrap_or(&doc.content)
+                    .to_string();
+                clean_vfs.add_memory_record(make_test_record(
+                    &id,
+                    MemoryTier::L1,
+                    MemoryIntent::Coding,
+                    &summary,
+                ));
+            }
+        }
+        clean_vfs
+            .build_hnsw_index_tropical(Some(HnswConfig::new(8, 32, 64)))
+            .unwrap();
+
+        let queries = [
+            "Tropical semiring max-plus algebra",
+            "Ed25519 attestation signature",
+            "PVFS v3 tombstone compaction",
+            "LatsPrefixMemoCache quantized decision",
+            "Sinkhorn Wasserstein drift",
+        ];
+        for q in &queries {
+            let got_hnsw = vfs.search_hnsw(q, 3, 64).unwrap();
+            let ref_hnsw = clean_vfs.search_hnsw(q, 3, 64).unwrap();
+            assert!(!got_hnsw.is_empty());
+            assert_eq!(got_hnsw[0].uri, ref_hnsw[0].uri, "top-1 mismatch for '{q}'");
+
+            let got_hybrid = vfs.search(q, 3).unwrap();
+            let ref_hybrid = clean_vfs.search(q, 3).unwrap();
+            assert_eq!(
+                got_hybrid
+                    .iter()
+                    .map(|r| r.uri.as_str())
+                    .collect::<Vec<_>>(),
+                ref_hybrid
+                    .iter()
+                    .map(|r| r.uri.as_str())
+                    .collect::<Vec<_>>(),
+                "hybrid search mismatch after compaction for '{q}'"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

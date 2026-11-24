@@ -1013,7 +1013,7 @@ pub fn compute_calibration_commitment(
     format!("{:x}", hasher.finalize())
 }
 
-/// Tamper-evident, hash-chained `.pnn` calibration attestation receipt (Phase 8).
+/// Tamper-evident, hash-chained `.pnn` calibration attestation receipt (Phase 8 + M2 Ed25519).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CalibrationAttestationReceipt {
     pub sequence: u64,
@@ -1026,6 +1026,20 @@ pub struct CalibrationAttestationReceipt {
     pub commitment: String,
     pub chain_hash: String,
     pub promoted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capsule_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_public_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sinkhorn_divergence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasserstein_2_distance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub martingale_e_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub martingale_verdict: Option<String>,
 }
 
 impl CalibrationAttestationReceipt {
@@ -1067,7 +1081,31 @@ impl CalibrationAttestationReceipt {
             commitment,
             chain_hash,
             promoted,
+            capsule_digest: None,
+            signer_public_key: None,
+            signature: None,
+            sinkhorn_divergence: None,
+            wasserstein_2_distance: None,
+            martingale_e_value: None,
+            martingale_verdict: None,
         }
+    }
+
+    /// Attaches optional capsule digest and Phase 13/14 telemetry fields prior to signing.
+    pub fn with_distillation_metadata(
+        mut self,
+        capsule_digest: Option<String>,
+        sinkhorn_divergence: Option<f64>,
+        wasserstein_2_distance: Option<f64>,
+        martingale_e_value: Option<f64>,
+        martingale_verdict: Option<String>,
+    ) -> Self {
+        self.capsule_digest = capsule_digest;
+        self.sinkhorn_divergence = sinkhorn_divergence;
+        self.wasserstein_2_distance = wasserstein_2_distance;
+        self.martingale_e_value = martingale_e_value;
+        self.martingale_verdict = martingale_verdict;
+        self
     }
 
     /// Computes the hash-chain digest linking `(sequence, prev_receipt_hash, commitment, promoted)`.
@@ -1133,6 +1171,168 @@ impl CalibrationAttestationReceipt {
             }
         }
         true
+    }
+
+    /// Builds the canonical domain-separated byte payload covered by the Ed25519 signature.
+    pub fn signing_payload(&self) -> Vec<u8> {
+        fn push_len_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
+            buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+            buf.extend_from_slice(bytes);
+        }
+        fn push_opt_str(buf: &mut Vec<u8>, opt: Option<&str>) {
+            match opt {
+                Some(val) => {
+                    buf.push(1);
+                    push_len_bytes(buf, val.as_bytes());
+                }
+                None => buf.push(0),
+            }
+        }
+        fn push_opt_f64(buf: &mut Vec<u8>, opt: Option<f64>) {
+            match opt {
+                Some(val) => {
+                    buf.push(1);
+                    buf.extend_from_slice(&val.to_bits().to_le_bytes());
+                }
+                None => buf.push(0),
+            }
+        }
+
+        let mut buf = Vec::with_capacity(512);
+        buf.extend_from_slice(b"pandora-calibration-attestation:v2\n");
+        buf.extend_from_slice(&self.sequence.to_le_bytes());
+        push_len_bytes(&mut buf, self.prev_receipt_hash.as_bytes());
+        push_len_bytes(&mut buf, self.baseline_digest.as_bytes());
+        push_len_bytes(&mut buf, self.candidate_digest.as_bytes());
+        push_len_bytes(&mut buf, self.dpo_dataset_digest.as_bytes());
+        buf.extend_from_slice(&self.lower_bound_95_bits.to_le_bytes());
+        push_len_bytes(&mut buf, self.commitment.as_bytes());
+        push_len_bytes(&mut buf, self.chain_hash.as_bytes());
+        buf.push(u8::from(self.promoted));
+        push_opt_str(&mut buf, self.capsule_digest.as_deref());
+        push_opt_str(&mut buf, self.signer_public_key.as_deref());
+        push_opt_f64(&mut buf, self.sinkhorn_divergence);
+        push_opt_f64(&mut buf, self.wasserstein_2_distance);
+        push_opt_f64(&mut buf, self.martingale_e_value);
+        push_opt_str(&mut buf, self.martingale_verdict.as_deref());
+        buf
+    }
+
+    /// Signs the canonical receipt payload using Ed25519 and records `signer_public_key` + `signature`.
+    pub fn sign_ed25519(&mut self, signing_key: &ed25519_dalek::SigningKey) {
+        use ed25519_dalek::Signer;
+        let verifying_key = signing_key.verifying_key();
+        self.signer_public_key = Some(encode_lower_hex(&verifying_key.to_bytes()));
+        let payload = self.signing_payload();
+        let sig = signing_key.sign(&payload);
+        self.signature = Some(encode_lower_hex(&sig.to_bytes()));
+    }
+
+    /// Strictly verifies hash-chain integrity, finite Phase 13/14 fields, optional expected public key,
+    /// and the Ed25519 signature over the canonical domain-separated payload.
+    pub fn verify_ed25519(&self, expected_pubkey_hex: Option<&str>) -> bool {
+        use ed25519_dalek::{Signature, VerifyingKey};
+        use subtle::ConstantTimeEq;
+
+        if !self.verify() {
+            return false;
+        }
+        if self
+            .sinkhorn_divergence
+            .is_some_and(|v| !v.is_finite() || v < 0.0)
+            || self
+                .wasserstein_2_distance
+                .is_some_and(|v| !v.is_finite() || v < 0.0)
+            || self
+                .martingale_e_value
+                .is_some_and(|v| !v.is_finite() || v < 0.0)
+        {
+            return false;
+        }
+
+        let (Some(pk_hex), Some(sig_hex)) =
+            (self.signer_public_key.as_deref(), self.signature.as_deref())
+        else {
+            return false;
+        };
+
+        let Some(pk_bytes) = decode_fixed_hex::<32>(pk_hex) else {
+            return false;
+        };
+        if let Some(expected) = expected_pubkey_hex {
+            let Some(expected_bytes) = decode_fixed_hex::<32>(expected) else {
+                return false;
+            };
+            if !bool::from(pk_bytes.ct_eq(&expected_bytes)) {
+                return false;
+            }
+        }
+
+        let Ok(verifying_key) = VerifyingKey::from_bytes(&pk_bytes) else {
+            return false;
+        };
+        let Some(sig_bytes) = decode_fixed_hex::<64>(sig_hex) else {
+            return false;
+        };
+        let signature = Signature::from_bytes(&sig_bytes);
+
+        verifying_key
+            .verify_strict(&self.signing_payload(), &signature)
+            .is_ok()
+    }
+
+    /// Verifies a non-empty ordered sequence of Ed25519-signed hash-chained calibration receipts.
+    pub fn verify_signed_chain(receipts: &[Self], expected_pubkey_hex: Option<&str>) -> bool {
+        if receipts.is_empty() {
+            return false;
+        }
+        for (idx, r) in receipts.iter().enumerate() {
+            if !r.verify_ed25519(expected_pubkey_hex) || r.sequence != idx as u64 {
+                return false;
+            }
+            if idx == 0 {
+                if r.prev_receipt_hash != Self::GENESIS_PREV_HASH {
+                    return false;
+                }
+            } else if r.prev_receipt_hash != receipts[idx - 1].chain_hash {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn encode_lower_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use fmt::Write;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+fn decode_fixed_hex<const N: usize>(hex: &str) -> Option<[u8; N]> {
+    let hex = hex.trim();
+    if hex.len() != N * 2 {
+        return None;
+    }
+    let mut out = [0u8; N];
+    let bytes = hex.as_bytes();
+    for i in 0..N {
+        let hi = hex_nibble(bytes[i * 2])?;
+        let lo = hex_nibble(bytes[i * 2 + 1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+#[inline]
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 

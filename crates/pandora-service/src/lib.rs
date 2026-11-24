@@ -17,6 +17,7 @@ use pandora_runtime::{
     DeviceProofRequest, IdentityStore, RuntimeService, RuntimeServiceError, RuntimeServiceScope,
     ServiceTokenStore, verify_device_proof,
 };
+use pandora_types::service::{ServiceFleetDistillRequest, ServiceVerifyAttestationRequest};
 use pandora_types::{
     ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceEventPageRequest, ServiceRequest,
     ServiceResponse, ServiceRunRequest, ServiceRunResumeRequest, Timestamp,
@@ -562,6 +563,7 @@ fn is_mutating_method(method: &str) -> bool {
             | "evolution.activate"
             | "evolution.rollback"
             | "evolution.rollout.transition"
+            | "fleet.distill"
             | "run.execute"
             | "run.resume"
             | "agent.execute"
@@ -606,6 +608,35 @@ fn service_request(request: &JsonRpcRequest) -> Result<Option<ServiceRequest>, (
             } else {
                 return Err(());
             }
+        }
+        "cockpit.telemetry" => {
+            if params.is_null() || params == &Value::Object(Default::default()) {
+                ServiceRequest::cockpit_telemetry()
+            } else {
+                return Err(());
+            }
+        }
+        "fleet.distill" => {
+            let effective = if params.is_null() {
+                Value::Object(Default::default())
+            } else {
+                params.clone()
+            };
+            let params: ServiceFleetDistillRequest = deserialize_params(&effective)?;
+            let req = ServiceRequest::fleet_distill(params);
+            req.validate().map_err(|_| ())?;
+            req
+        }
+        "attestation.verify" | "fleet.verify_attestation" => {
+            let effective = if params.is_null() {
+                Value::Object(Default::default())
+            } else {
+                params.clone()
+            };
+            let params: ServiceVerifyAttestationRequest = deserialize_params(&effective)?;
+            let req = ServiceRequest::verify_calibration_attestation(params);
+            req.validate().map_err(|_| ())?;
+            req
         }
         "orchestration.list" => {
             let params: OrchestrationListParams = deserialize_params(params)?;
@@ -901,6 +932,64 @@ struct JsonRpcError {
 #[derive(Deserialize, Serialize)]
 struct JsonRpcErrorData {
     code: String,
+}
+
+#[cfg(test)]
+mod m3_rpc_routing_tests {
+    use super::*;
+
+    #[test]
+    fn json_rpc_routes_cockpit_fleet_distill_and_verify_attestation() {
+        assert!(is_mutating_method("fleet.distill"));
+        assert!(!is_mutating_method("cockpit.telemetry"));
+        assert!(!is_mutating_method("attestation.verify"));
+        assert!(!is_mutating_method("fleet.verify_attestation"));
+
+        let rpc_telemetry = JsonRpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(1),
+            method: "cockpit.telemetry".to_owned(),
+            params: Value::Null,
+            idempotency_key: None,
+        };
+        assert!(matches!(
+            service_request(&rpc_telemetry),
+            Ok(Some(ServiceRequest::CockpitTelemetry { .. }))
+        ));
+
+        let rpc_distill = JsonRpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(2),
+            method: "fleet.distill".to_owned(),
+            params: serde_json::json!({ "dry_run": true, "drift_threshold": 0.4 }),
+            idempotency_key: Some(serde_json::json!("idem-1")),
+        };
+        assert!(matches!(
+            service_request(&rpc_distill),
+            Ok(Some(ServiceRequest::FleetDistill { .. }))
+        ));
+
+        let rpc_bad_distill = JsonRpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(3),
+            method: "fleet.distill".to_owned(),
+            params: serde_json::json!({ "martingale_alpha": 1.5 }),
+            idempotency_key: Some(serde_json::json!("idem-2")),
+        };
+        assert!(service_request(&rpc_bad_distill).is_err());
+
+        let rpc_verify = JsonRpcRequest {
+            jsonrpc: "2.0".to_owned(),
+            id: serde_json::json!(4),
+            method: "attestation.verify".to_owned(),
+            params: serde_json::json!({ "require_signature": true }),
+            idempotency_key: None,
+        };
+        assert!(matches!(
+            service_request(&rpc_verify),
+            Ok(Some(ServiceRequest::VerifyCalibrationAttestation { .. }))
+        ));
+    }
 }
 
 #[cfg(test)]

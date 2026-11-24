@@ -30,6 +30,7 @@ pub mod cron_engine;
 pub mod curator;
 pub mod decision_engine;
 pub mod device_trust;
+pub mod distillation;
 pub mod distributed_swarm;
 pub mod efficiency_engine;
 pub mod efficiency_store;
@@ -228,6 +229,13 @@ pub use decision_engine::{
 };
 pub use device_trust::{
     DeviceKeyError, DeviceKeyStore, DeviceProofRequest, device_proof_message, verify_device_proof,
+};
+pub use distillation::{
+    AggregatedDpoDataset, AttestationVerificationReport, AttestationVerifyConfig,
+    CrossSessionDistillConfig, CrossSessionDistillResult, DistillationError, aggregate_dpo_pairs,
+    attestation_receipt_path, default_capsule_path, default_telemetry_path, discover_dpo_sources,
+    distill_cross_session_checkpoint, load_telemetry_snapshot, save_telemetry_snapshot,
+    verify_pnn_and_capsule_attestation,
 };
 pub use distributed_swarm::{
     DistributedConsensusDecision, DistributedConsensusVote, DistributedFederatedEngine,

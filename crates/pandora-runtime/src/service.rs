@@ -3,6 +3,10 @@ use crate::agent_loop::{
 };
 use crate::approvals::{ApprovalError, ApprovalRequest, ApprovalStore, PendingApproval};
 use crate::artifact_catalog::{ArtifactCatalog, ArtifactCatalogError};
+use crate::distillation::{
+    AttestationVerifyConfig, CrossSessionDistillConfig, DistillationError, default_telemetry_path,
+    distill_cross_session_checkpoint, load_telemetry_snapshot, verify_pnn_and_capsule_attestation,
+};
 use crate::evaluation_engine::EvaluationEngine;
 use crate::evolution::{EvolutionEngine, EvolutionError, EvolutionRecord};
 use crate::execution_controller::{ExecutionController, RunStatus, RunSummary, RuntimeError};
@@ -19,11 +23,15 @@ use crate::research_artifact::{ResearchArtifactError, ResearchArtifactStore};
 use crate::sessions::{SessionError, SessionStore};
 use crate::tool_engine::ToolEngine;
 use pandora_provider::{ModelId, Provider};
+use pandora_types::service::{
+    ServiceAttestationVerificationReport, ServiceFleetDistillRequest, ServiceFleetDistillResult,
+    ServiceVerifyAttestationRequest,
+};
 use pandora_types::{
     ContextClassification, ContextFragment, ContextOrigin, ContextSource, ContextTrust,
-    EvaluationContractError, EvaluationReceipt, EvaluationRequest, EventPayload, EventType,
-    IdError, MemoryTier, PrincipalId, ProposalId, RequestDigest, ResearchArtifactKind,
-    ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceAgentRunResult,
+    DistillationTelemetrySnapshot, EvaluationContractError, EvaluationReceipt, EvaluationRequest,
+    EventPayload, EventType, IdError, MemoryTier, PrincipalId, ProposalId, RequestDigest,
+    ResearchArtifactKind, ServiceAgentResumeRequest, ServiceAgentRunRequest, ServiceAgentRunResult,
     ServiceApprovalSummary, ServiceArtifactActivation, ServiceContextAttachment,
     ServiceContractError, ServiceEngineSummary, ServiceEventPage, ServiceEvolutionApproval,
     ServiceEvolutionCanary, ServiceEvolutionCandidate, ServiceEvolutionEvaluation,
@@ -117,6 +125,7 @@ pub enum RuntimeServiceError {
     Approval(ApprovalError),
     Session(SessionError),
     Fleet(FleetError),
+    Distillation(DistillationError),
     Forbidden,
 }
 
@@ -170,6 +179,19 @@ impl RuntimeServiceError {
             Self::Fleet(_) => "fleet_registry_failed",
             Self::Session(SessionError::ScopeViolation) => "session_scope_violation",
             Self::Session(_) => "session_store_failed",
+            Self::Distillation(DistillationError::VerificationFailed(_)) => {
+                "attestation_verification_failed"
+            }
+            Self::Distillation(
+                DistillationError::NoDpoSources | DistillationError::EmptyDataset,
+            ) => "distillation_no_dpo_sources",
+            Self::Distillation(
+                DistillationError::InvalidConfig(_)
+                | DistillationError::InvalidSourcePath(_)
+                | DistillationError::InvalidDpoPair { .. }
+                | DistillationError::InvalidKeyFile(_),
+            ) => "invalid_distillation_request",
+            Self::Distillation(_) => "distillation_failed",
             Self::Forbidden => "forbidden",
         }
     }
@@ -218,6 +240,7 @@ impl fmt::Display for RuntimeServiceError {
             Self::Approval(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
             Self::Fleet(error) => error.fmt(formatter),
+            Self::Distillation(error) => error.fmt(formatter),
             Self::Forbidden => formatter.write_str("identity is not authorized for this operation"),
         }
     }
@@ -309,6 +332,12 @@ impl From<FleetError> for RuntimeServiceError {
     }
 }
 
+impl From<DistillationError> for RuntimeServiceError {
+    fn from(error: DistillationError) -> Self {
+        Self::Distillation(error)
+    }
+}
+
 pub struct RuntimeService {
     controller: ExecutionController,
     sessions: SessionStore,
@@ -320,6 +349,7 @@ pub struct RuntimeService {
     evolution: Option<Arc<EvolutionEngine>>,
     artifact_catalog: Option<Arc<ArtifactCatalog>>,
     evolution_data_dir: Option<PathBuf>,
+    telemetry_path: Option<PathBuf>,
     fleet: Option<RuntimeServiceFleet>,
     evolution_gate: RwLock<()>,
     next_session: AtomicU64,
@@ -403,6 +433,7 @@ impl RuntimeService {
             evolution: None,
             artifact_catalog: None,
             evolution_data_dir: None,
+            telemetry_path: None,
             fleet: None,
             evolution_gate: RwLock::new(()),
             next_session: AtomicU64::new(1),
@@ -485,9 +516,16 @@ impl RuntimeService {
                 default_provider,
             ));
         }
-        let loop_engine = AgentLoop::new(max_turns, max_tool_calls)?
+        let mut loop_engine = AgentLoop::new(max_turns, max_tool_calls)?
             .with_context_cache(context_cache_path)?
             .with_runtime_genes(&self.controller)?;
+        if let Some(path) = self.telemetry_path.clone().or_else(|| {
+            self.evolution_data_dir
+                .as_deref()
+                .map(default_telemetry_path)
+        }) {
+            loop_engine.set_telemetry_path(Some(path));
+        }
         self.agent = Some(RuntimeServiceAgent {
             providers: provider_map,
             default_provider,
@@ -509,7 +547,24 @@ impl RuntimeService {
     }
 
     pub fn with_evolution_control(mut self, data_dir: impl Into<PathBuf>) -> Self {
-        self.evolution_data_dir = Some(data_dir.into());
+        let dir = data_dir.into();
+        if self.telemetry_path.is_none()
+            && let Some(ref mut agent) = self.agent
+        {
+            agent
+                .loop_engine
+                .set_telemetry_path(Some(default_telemetry_path(&dir)));
+        }
+        self.evolution_data_dir = Some(dir);
+        self
+    }
+
+    pub fn with_telemetry_path(mut self, telemetry_path: impl Into<PathBuf>) -> Self {
+        let path = telemetry_path.into();
+        if let Some(ref mut agent) = self.agent {
+            agent.loop_engine.set_telemetry_path(Some(path.clone()));
+        }
+        self.telemetry_path = Some(path);
         self
     }
 
@@ -547,6 +602,11 @@ impl RuntimeService {
             }
             ServiceRequest::Engines { .. } => self.engines(),
             ServiceRequest::Tools { .. } => self.tools(),
+            ServiceRequest::CockpitTelemetry { .. } => self.cockpit_telemetry(scope),
+            ServiceRequest::FleetDistill { request, .. } => self.fleet_distill(scope, request),
+            ServiceRequest::VerifyCalibrationAttestation { request, .. } => {
+                self.verify_calibration_attestation(scope, request)
+            }
             ServiceRequest::OrchestrationList { limit, .. } => {
                 self.list_orchestrations(scope, *limit)
             }
@@ -620,6 +680,148 @@ impl RuntimeService {
                 self.resume_agent(scope, request, now)
             }
         }
+    }
+
+    fn resolve_service_path(&self, raw: &str) -> PathBuf {
+        let candidate = PathBuf::from(raw);
+        if candidate.is_absolute() {
+            candidate
+        } else {
+            self.controller.workspace().root().join(candidate)
+        }
+    }
+
+    fn resolved_telemetry_path(&self) -> PathBuf {
+        if let Some(ref path) = self.telemetry_path {
+            path.clone()
+        } else if let Some(ref data_dir) = self.evolution_data_dir {
+            default_telemetry_path(data_dir)
+        } else {
+            self.controller
+                .workspace()
+                .root()
+                .join(".pandora")
+                .join("cockpit_telemetry.json")
+        }
+    }
+
+    fn cockpit_telemetry(
+        &self,
+        scope: &RuntimeServiceScope,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
+        let path = self.resolved_telemetry_path();
+        let snapshot = if path.is_file() {
+            load_telemetry_snapshot(&path)?
+        } else {
+            DistillationTelemetrySnapshot::default()
+        };
+        Ok(ServiceResponse::cockpit_telemetry(snapshot))
+    }
+
+    fn fleet_distill(
+        &self,
+        scope: &RuntimeServiceScope,
+        request: &ServiceFleetDistillRequest,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
+        let workspace = self.controller.workspace().root();
+        let mut config = CrossSessionDistillConfig::new(workspace).with_dry_run(request.dry_run());
+        if let Some(ref data_dir) = self.evolution_data_dir {
+            config = config.with_data_dir(data_dir);
+        }
+        config = config.with_telemetry_path(self.resolved_telemetry_path());
+        if !request.session_paths().is_empty() {
+            let paths = request
+                .session_paths()
+                .iter()
+                .map(|p| self.resolve_service_path(p))
+                .collect();
+            config = config.with_session_paths(paths);
+        }
+        if let Some(pnn_path) = request.pnn_path() {
+            config = config.with_pnn_path(self.resolve_service_path(pnn_path));
+        }
+        if let Some(capsule_out) = request.capsule_out_path() {
+            config = config.with_capsule_out_path(self.resolve_service_path(capsule_out));
+        }
+        if let Some(key_file) = request.key_file() {
+            config = config.with_key_file(self.resolve_service_path(key_file));
+        }
+        if let Some(threshold) = request.drift_threshold() {
+            config = config.with_drift_threshold(threshold);
+        }
+        if let Some(alpha) = request.martingale_alpha() {
+            config = config.with_martingale_alpha(alpha);
+        }
+        let outcome = distill_cross_session_checkpoint(config)?;
+        Ok(ServiceResponse::fleet_distill(ServiceFleetDistillResult {
+            promoted: outcome.promoted,
+            dry_run: outcome.dry_run,
+            pairs_count: outcome.pairs_count,
+            duplicates_removed: outcome.duplicates_removed,
+            dpo_dataset_digest: outcome.dpo_dataset_digest,
+            baseline_digest: outcome.baseline_digest,
+            candidate_digest: outcome.candidate_digest,
+            capsule_id: outcome.capsule_package.capsule.capsule_id,
+            capsule_digest: outcome.capsule_package.capsule.sha256_digest,
+            receipt_commitment: outcome.receipt.commitment,
+            receipt_chain_hash: outcome.receipt.chain_hash,
+            bayesian_lower_bound_95: outcome.bayesian_lower_bound_95,
+            non_regression_passed: outcome.non_regression_passed,
+            telemetry: outcome.telemetry_snapshot,
+        }))
+    }
+
+    fn verify_calibration_attestation(
+        &self,
+        scope: &RuntimeServiceScope,
+        request: &ServiceVerifyAttestationRequest,
+    ) -> Result<ServiceResponse, RuntimeServiceError> {
+        self.ensure_evolution_owner(scope)?;
+        let workspace = self.controller.workspace().root();
+        let pnn_path = request
+            .pnn_path()
+            .map(|p| self.resolve_service_path(p))
+            .unwrap_or_else(|| workspace.join(".pandora").join("model_decision.pnn"));
+        let mut config = AttestationVerifyConfig::new(pnn_path)
+            .with_require_signature(request.require_signature())
+            .with_require_capsule(request.require_capsule());
+        if let Some(receipt_path) = request.receipt_path() {
+            config = config.with_receipt_path(self.resolve_service_path(receipt_path));
+        }
+        if let Some(capsule_path) = request.capsule_path() {
+            config = config.with_capsule_path(self.resolve_service_path(capsule_path));
+        }
+        if let Some(pubkey) = request.expected_pubkey_hex() {
+            config = config.with_expected_pubkey_hex(pubkey);
+        }
+        let report = verify_pnn_and_capsule_attestation(config)?;
+        Ok(ServiceResponse::verify_calibration_attestation(
+            ServiceAttestationVerificationReport {
+                valid: report.valid,
+                pnn_path: report.pnn_path.display().to_string(),
+                receipt_path: report.receipt_path.display().to_string(),
+                capsule_path: report.capsule_path.map(|p| p.display().to_string()),
+                chain_length: report.chain_length,
+                latest_sequence: report.latest_sequence,
+                latest_commitment: report.latest_commitment,
+                latest_chain_hash: report.latest_chain_hash,
+                pnn_digest: report.pnn_digest,
+                expected_candidate_digest: report.expected_candidate_digest,
+                pnn_digest_matches: report.pnn_digest_matches,
+                signature_verified: report.signature_verified,
+                signer_public_key: report.signer_public_key,
+                capsule_digest: report.capsule_digest,
+                capsule_verified: report.capsule_verified,
+                capsule_digest_matches: report.capsule_digest_matches,
+                promoted: report.promoted,
+                sinkhorn_divergence: report.sinkhorn_divergence,
+                wasserstein_2_distance: report.wasserstein_2_distance,
+                martingale_e_value: report.martingale_e_value,
+                martingale_verdict: report.martingale_verdict,
+            },
+        ))
     }
 
     fn orchestration_store(&self) -> Result<&OrchestrationStore, RuntimeServiceError> {
@@ -2753,6 +2955,7 @@ fn authorize_role(role: AccessRole, request: &ServiceRequest) -> Result<(), Runt
         ServiceRequest::ApprovalResolve { .. }
         | ServiceRequest::OrchestrationCancel { .. }
         | ServiceRequest::OrchestrationResume { .. }
+        | ServiceRequest::FleetDistill { .. }
         | ServiceRequest::Run { .. }
         | ServiceRequest::RunResume { .. }
         | ServiceRequest::AgentRun { .. }
@@ -3052,6 +3255,137 @@ fn output_text(output: Option<&[u8]>) -> String {
         .map(String::from_utf8_lossy)
         .unwrap_or_default()
         .into_owned()
+}
+
+#[cfg(test)]
+mod m3_distillation_service_tests {
+    use super::*;
+    use crate::executors::WorkspaceRoot;
+    use pandora_types::DpoPair;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SVC_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_service_dir(label: &str) -> PathBuf {
+        let id = SVC_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "pandora_service_m3_test_{label}_{}_{id}",
+            std::process::id()
+        ))
+    }
+
+    fn build_service(workspace_dir: &Path, data_dir: &Path) -> RuntimeService {
+        std::fs::create_dir_all(workspace_dir).expect("mkdir ws");
+        std::fs::create_dir_all(data_dir).expect("mkdir data");
+        let controller = ExecutionController::new(WorkspaceRoot::new(workspace_dir).expect("ws"));
+        let sessions = SessionStore::open(data_dir.join("sessions.sqlite3")).expect("sessions");
+        let approvals = ApprovalStore::open(data_dir.join("approvals.sqlite3")).expect("approvals");
+        let scope = RuntimeServiceScope::new(
+            PrincipalId::new("user-m3").expect("principal"),
+            TenantId::new("tenant-m3").expect("tenant"),
+            WorkspaceId::new("ws-m3").expect("workspace"),
+        );
+        RuntimeService::new(controller, sessions, approvals, scope).with_evolution_control(data_dir)
+    }
+
+    #[test]
+    fn service_handles_cockpit_telemetry_fleet_distill_and_verify_attestation() {
+        let root = temp_service_dir("rpc");
+        let ws = root.join("workspace");
+        let data = root.join("data");
+        let service = build_service(&ws, &data);
+
+        // Initially CockpitTelemetry returns default snapshot.
+        let initial = service
+            .handle(
+                &ServiceRequest::cockpit_telemetry(),
+                Timestamp::from_unix_seconds(10),
+            )
+            .expect("telemetry");
+        match initial {
+            ServiceResponse::CockpitTelemetry { telemetry, .. } => {
+                assert_eq!(telemetry.pnn_hot_reloads, 0);
+                assert!(!telemetry.last_attestation_verified);
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+
+        // Write DPO pairs into workspace .pandora/dpo_pairs.jsonl.
+        let pandora_dir = ws.join(".pandora");
+        std::fs::create_dir_all(&pandora_dir).expect("mkdir .pandora");
+        let pair = DpoPair {
+            id: "svc-dpo-1".to_owned(),
+            prompt: "tool safety turn 1: workspace.verify {}".to_owned(),
+            chosen: "allow".to_owned(),
+            rejected: "reject".to_owned(),
+            margin: 0.95,
+        };
+        std::fs::write(
+            pandora_dir.join("dpo_pairs.jsonl"),
+            format!("{}\n", serde_json::to_string(&pair).expect("json")),
+        )
+        .expect("write dpo");
+
+        // Viewer cannot run FleetDistill (mutating).
+        let viewer_scope = service.scope().clone().with_role(AccessRole::Viewer);
+        let distill_req = ServiceRequest::fleet_distill(ServiceFleetDistillRequest::new());
+        let err = service
+            .handle_scoped(
+                &viewer_scope,
+                &distill_req,
+                Timestamp::from_unix_seconds(20),
+            )
+            .expect_err("viewer must be forbidden");
+        assert!(matches!(err, RuntimeServiceError::Forbidden));
+
+        // Operator/Admin runs FleetDistill.
+        let distill_resp = service
+            .handle(&distill_req, Timestamp::from_unix_seconds(21))
+            .expect("fleet distill");
+        let promoted = match distill_resp {
+            ServiceResponse::FleetDistill { result, .. } => {
+                assert_eq!(result.pairs_count, 1);
+                result.promoted
+            }
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        if promoted {
+            let verify_req = ServiceRequest::verify_calibration_attestation(
+                ServiceVerifyAttestationRequest::new()
+                    .with_require_signature(true)
+                    .with_require_capsule(true),
+            );
+            let verify_resp = service
+                .handle(&verify_req, Timestamp::from_unix_seconds(22))
+                .expect("verify attestation");
+            match verify_resp {
+                ServiceResponse::VerifyCalibrationAttestation { report, .. } => {
+                    assert!(report.valid);
+                    assert!(report.pnn_digest_matches);
+                    assert!(report.signature_verified);
+                    assert!(report.capsule_verified);
+                }
+                other => panic!("unexpected response: {other:?}"),
+            }
+
+            let telemetry_after = service
+                .handle(
+                    &ServiceRequest::cockpit_telemetry(),
+                    Timestamp::from_unix_seconds(23),
+                )
+                .expect("telemetry after");
+            match telemetry_after {
+                ServiceResponse::CockpitTelemetry { telemetry, .. } => {
+                    assert!(telemetry.last_attestation_verified);
+                    assert!(telemetry.active_pnn_digest.is_some());
+                }
+                other => panic!("unexpected response: {other:?}"),
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 #[cfg(test)]

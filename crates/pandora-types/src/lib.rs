@@ -9,6 +9,7 @@ pub mod containment;
 pub mod context;
 pub mod curator;
 pub mod decision;
+pub mod distillation;
 pub mod dsrs;
 pub mod effect;
 pub mod efficiency;
@@ -76,6 +77,10 @@ pub use decision::{
     DecisionDriverConfig, DecisionDriverKind, DecisionEvolutionRecord, DecisionQuestion,
     DecisionVerdict, DpoPair, DynamicVerdict, FineTuningSample, GoldenEvaluationCase,
     GoldenSuiteDefinition, GoldenTargetRef, IntentTierChoice, QuestionSchema, ToolSafetyChoice,
+};
+pub use distillation::{
+    DistillationContractError, DistillationTelemetrySnapshot, MartingaleTelemetrySummary,
+    WassersteinTelemetrySummary,
 };
 pub use dsrs::{DsrDemonstration, DsrsError, Signature, SignatureField, SignatureFieldKind};
 pub use effect::{

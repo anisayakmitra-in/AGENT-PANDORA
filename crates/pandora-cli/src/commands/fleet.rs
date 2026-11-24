@@ -15,9 +15,11 @@ const MAX_OPERATIONS_DETAIL_RECORDS: usize = 64;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args
         .first()
-        .ok_or_else(|| CliError::usage("fleet requires 'dashboard', 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'supervisor', 'quarantine', 'revoke', 'kill', 'quorum', or 'dag'"))?;
+        .ok_or_else(|| CliError::usage("fleet requires 'dashboard', 'distill', 'verify-attestation', 'list', 'register', 'dispatch', 'lease', 'renew', 'release', 'expire', 'supervisor', 'quarantine', 'revoke', 'kill', 'quorum', or 'dag'"))?;
     match subcommand.as_str() {
         "dashboard" => dashboard(&args[1..]),
+        "distill" => run_distill("fleet distill", &args[1..]),
+        "verify-attestation" => run_verify_attestation("fleet verify-attestation", &args[1..]),
         "list" => list(&args[1..]),
         "register" => register(&args[1..]),
         "dispatch" => dispatch(&args[1..]),
@@ -306,10 +308,23 @@ fn dashboard(args: &[String]) -> Result<CommandResult, CliError> {
         .map(|(_, value)| value)
         .collect::<Vec<_>>();
 
+    let telemetry_path = config.data_dir().join("cockpit_telemetry.json");
+    let telemetry_snapshot =
+        pandora_runtime::distillation::load_telemetry_snapshot(&telemetry_path).ok();
+
     Ok(success(
         "fleet dashboard",
         json!({
             "generated_at": now,
+            "distillation_telemetry": telemetry_snapshot.as_ref().map(|t| json!({
+                "pnn_hot_reloads": t.pnn_hot_reloads,
+                "lats_memo_hits": t.lats_memo_hits,
+                "active_pnn_digest": t.active_pnn_digest,
+                "dpo_pairs_total": t.dpo_pairs_total,
+                "updated_at_unix": t.updated_at_unix,
+                "wasserstein_drift": t.wasserstein_drift,
+                "martingale_canary": t.martingale_canary,
+            })),
             "health": {
                 "status": health,
                 "ready_nodes": ready_nodes,
@@ -1321,5 +1336,268 @@ fn dag_schedule_sim(args: &[String]) -> Result<CommandResult, CliError> {
             "speedup": speedup,
         }),
         summary,
+    ))
+}
+
+pub(crate) const DISTILL_OPTIONS: &[&str] = &[
+    "config",
+    "data-dir",
+    "workspace",
+    "session-path",
+    "pnn",
+    "capsule-out",
+    "capsule",
+    "key-file",
+    "telemetry-path",
+    "drift-threshold",
+    "sinkhorn-epsilon",
+    "alpha",
+    "sigma",
+    "lr",
+    "learning-rate",
+    "dry-run",
+    "author",
+    "min-promote-samples",
+    "json",
+];
+
+pub(crate) const VERIFY_ATTESTATION_OPTIONS: &[&str] = &[
+    "config",
+    "data-dir",
+    "workspace",
+    "pnn",
+    "receipt",
+    "capsule",
+    "pubkey",
+    "require-signature",
+    "require-capsule",
+    "json",
+];
+
+pub(crate) fn run_distill(
+    command_label: &'static str,
+    args: &[String],
+) -> Result<CommandResult, CliError> {
+    use pandora_runtime::distillation::{
+        CrossSessionDistillConfig, distill_cross_session_checkpoint,
+    };
+    use std::path::PathBuf;
+
+    let parsed = parse_options(args, DISTILL_OPTIONS)?;
+    let config = super::load_config_storage(&parsed).ok();
+    let ws = parsed
+        .value("workspace")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            config
+                .as_ref()
+                .map(|c| c.workspace_dir().to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
+    let pnn_path = parsed
+        .value("pnn")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ws.join(".pandora").join("model_decision.pnn"));
+
+    let mut distill_cfg = CrossSessionDistillConfig::new(&ws).with_pnn_path(&pnn_path);
+    if let Some(ref c) = config {
+        distill_cfg = distill_cfg.with_data_dir(c.data_dir());
+    } else if let Some(d) = parsed.value("data-dir") {
+        distill_cfg = distill_cfg.with_data_dir(PathBuf::from(d));
+    }
+
+    let session_paths: Vec<PathBuf> = parsed
+        .values_for("session-path")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if !session_paths.is_empty() {
+        distill_cfg = distill_cfg.with_session_paths(session_paths);
+    }
+
+    if let Some(cap) = parsed
+        .value("capsule-out")
+        .or_else(|| parsed.value("capsule"))
+    {
+        distill_cfg = distill_cfg.with_capsule_out_path(PathBuf::from(cap));
+    }
+    if let Some(kf) = parsed.value("key-file") {
+        distill_cfg = distill_cfg.with_key_file(PathBuf::from(kf));
+    }
+    if let Some(tp) = parsed.value("telemetry-path") {
+        distill_cfg = distill_cfg.with_telemetry_path(PathBuf::from(tp));
+    }
+    if let Some(dt) = parsed.value("drift-threshold") {
+        let val = dt
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("--drift-threshold must be a float"))?;
+        distill_cfg = distill_cfg.with_drift_threshold(val);
+    }
+    if let Some(eps) = parsed.value("sinkhorn-epsilon") {
+        let val = eps
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("--sinkhorn-epsilon must be a float"))?;
+        distill_cfg.sinkhorn_epsilon = val;
+    }
+    if let Some(alpha) = parsed.value("alpha") {
+        let val = alpha
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("--alpha must be a float"))?;
+        distill_cfg = distill_cfg.with_martingale_alpha(val);
+    }
+    if let Some(sig) = parsed.value("sigma") {
+        let val = sig
+            .parse::<f64>()
+            .map_err(|_| CliError::usage("--sigma must be a float"))?;
+        distill_cfg.martingale_sigma = val;
+    }
+    if let Some(lr) = parsed.value("lr").or_else(|| parsed.value("learning-rate")) {
+        let val = lr
+            .parse::<f32>()
+            .map_err(|_| CliError::usage("--lr or --learning-rate must be a float"))?;
+        distill_cfg = distill_cfg.with_learning_rate(val);
+    }
+    if parsed.has_flag("dry-run") {
+        distill_cfg = distill_cfg.with_dry_run(true);
+    }
+    if let Some(author) = parsed.value("author") {
+        distill_cfg = distill_cfg.with_author(author);
+    }
+
+    let res = distill_cross_session_checkpoint(distill_cfg)
+        .map_err(|e| CliError::execution(e.to_string(), json!({ "valid": false })))?;
+
+    let human = format!(
+        "Cross-session distillation complete: {} pairs aggregated ({} duplicates removed). Promoted: {}, Dry run: {}",
+        res.pairs_count, res.duplicates_removed, res.promoted, res.dry_run
+    );
+    Ok(success(
+        command_label,
+        json!({
+            "pnn_path": res.pnn_path,
+            "receipt_path": res.receipt_path,
+            "capsule_path": res.capsule_path,
+            "telemetry_path": res.telemetry_path,
+            "source_paths": res.source_paths,
+            "per_source_counts": res.per_source_counts,
+            "pairs_count": res.pairs_count,
+            "duplicates_removed": res.duplicates_removed,
+            "dpo_dataset_digest": res.dpo_dataset_digest,
+            "baseline_digest": res.baseline_digest,
+            "candidate_digest": res.candidate_digest,
+            "pnn_digest": res.candidate_digest,
+            "capsule_digest": res.capsule_package.capsule.sha256_digest,
+            "baseline_accuracy": res.baseline_accuracy,
+            "candidate_accuracy": res.candidate_accuracy,
+            "baseline_mean_margin": res.baseline_mean_margin,
+            "candidate_mean_margin": res.candidate_mean_margin,
+            "bayesian_lower_bound_95": res.bayesian_lower_bound_95,
+            "bayesian_promoted": res.bayesian_promoted,
+            "non_regression_passed": res.non_regression_passed,
+            "drift_report": res.drift_report,
+            "wasserstein_drift": res.drift_report,
+            "martingale_snapshot": res.martingale_snapshot,
+            "martingale_canary": res.martingale_snapshot,
+            "promoted": res.promoted,
+            "dry_run": res.dry_run,
+            "capsule_package": res.capsule_package,
+            "receipt": res.receipt,
+            "telemetry_snapshot": res.telemetry_snapshot,
+        }),
+        human,
+    ))
+}
+
+pub(crate) fn run_verify_attestation(
+    command_label: &'static str,
+    args: &[String],
+) -> Result<CommandResult, CliError> {
+    use pandora_runtime::distillation::{
+        AttestationVerifyConfig, verify_pnn_and_capsule_attestation,
+    };
+    use std::path::PathBuf;
+
+    let parsed = parse_options(args, VERIFY_ATTESTATION_OPTIONS)?;
+    let config = super::load_config_storage(&parsed).ok();
+    let ws = parsed
+        .value("workspace")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            config
+                .as_ref()
+                .map(|c| c.workspace_dir().to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
+    let pnn_path = parsed
+        .value("pnn")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ws.join(".pandora").join("model_decision.pnn"));
+
+    let mut verify_cfg = AttestationVerifyConfig::new(&pnn_path);
+    if let Some(r) = parsed.value("receipt") {
+        verify_cfg = verify_cfg.with_receipt_path(PathBuf::from(r));
+    }
+    if let Some(c) = parsed.value("capsule") {
+        verify_cfg = verify_cfg.with_capsule_path(PathBuf::from(c));
+    }
+    if let Some(pk) = parsed.value("pubkey") {
+        verify_cfg = verify_cfg.with_expected_pubkey_hex(pk);
+    }
+    if parsed.has_flag("require-signature") {
+        verify_cfg = verify_cfg.with_require_signature(true);
+    }
+    if parsed.has_flag("require-capsule") {
+        verify_cfg = verify_cfg.with_require_capsule(true);
+    }
+
+    let report = match verify_pnn_and_capsule_attestation(verify_cfg) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(CliError::execution(
+                e.to_string(),
+                json!({
+                    "valid": false,
+                    "pnn_path": pnn_path,
+                    "pnn_digest_matches": false,
+                    "error": e.to_string(),
+                }),
+            ));
+        }
+    };
+
+    let human = format!(
+        "Attestation verification PASSED for {}. Chain length: {}, PNN digest matches: {}, Signature verified: {}",
+        report.pnn_path.display(),
+        report.chain_length,
+        report.pnn_digest_matches,
+        report.signature_verified,
+    );
+
+    Ok(success(
+        command_label,
+        json!({
+            "valid": report.valid,
+            "pnn_path": report.pnn_path,
+            "receipt_path": report.receipt_path,
+            "capsule_path": report.capsule_path,
+            "chain_length": report.chain_length,
+            "latest_sequence": report.latest_sequence,
+            "latest_commitment": report.latest_commitment,
+            "latest_chain_hash": report.latest_chain_hash,
+            "pnn_digest": report.pnn_digest,
+            "expected_candidate_digest": report.expected_candidate_digest,
+            "pnn_digest_matches": report.pnn_digest_matches,
+            "signature_verified": report.signature_verified,
+            "signer_public_key": report.signer_public_key,
+            "capsule_digest": report.capsule_digest,
+            "capsule_verified": report.capsule_verified,
+            "capsule_digest_matches": report.capsule_digest_matches,
+            "promoted": report.promoted,
+            "sinkhorn_divergence": report.sinkhorn_divergence,
+            "wasserstein_2_distance": report.wasserstein_2_distance,
+            "martingale_e_value": report.martingale_e_value,
+            "martingale_verdict": report.martingale_verdict,
+        }),
+        human,
     ))
 }

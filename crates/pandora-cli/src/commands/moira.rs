@@ -1019,17 +1019,36 @@ fn verify_attestation_command(
     }
 
     let latest = receipts.last().unwrap();
-    let pnn_digest_matches = if pnn_path.is_file() {
-        let net = TropicalNetwork::load_from_file(&pnn_path).map_err(|e| {
-            CliError::execution(
-                format!("failed to load .pnn weights at {}: {e}", pnn_path.display()),
-                json!({ "path": pnn_path, "valid": false }),
-            )
-        })?;
-        net.sha256_digest == latest.candidate_digest
-    } else {
-        true
-    };
+    if !pnn_path.is_file() {
+        return Err(CliError::execution(
+            format!(
+                "live .pnn weights file not found at {} while verifying {}",
+                pnn_path.display(),
+                receipt_path.display()
+            ),
+            json!({
+                "path": pnn_path,
+                "receipt_path": receipt_path,
+                "latest_sequence": latest.sequence,
+                "expected_candidate_digest": latest.candidate_digest,
+                "pnn_digest_matches": false,
+                "valid": false
+            }),
+        ));
+    }
+
+    let net = TropicalNetwork::load_from_file(&pnn_path).map_err(|e| {
+        CliError::execution(
+            format!("failed to load .pnn weights at {}: {e}", pnn_path.display()),
+            json!({
+                "path": pnn_path,
+                "receipt_path": receipt_path,
+                "pnn_digest_matches": false,
+                "valid": false
+            }),
+        )
+    })?;
+    let pnn_digest_matches = net.sha256_digest == latest.candidate_digest;
 
     if !pnn_digest_matches {
         return Err(CliError::execution(
@@ -1147,6 +1166,85 @@ mod tests {
         let nested = root.join("nested/sub/model_decision.pnn");
         ensure_pnn_parent_dir(&nested).expect("nested parent directory should be created");
         assert!(root.join("nested/sub").is_dir());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn verify_attestation_fails_closed_when_pnn_missing_or_mismatched() {
+        let root = std::env::temp_dir().join(format!(
+            "pandora_moira_verify_attestation_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let pnn_path = root.join(".pandora/model_decision.pnn");
+
+        let write_res = calibrate_command(
+            "model",
+            &[
+                "--workspace".to_string(),
+                root.to_string_lossy().into_owned(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(write_res.data["canary_passed"], true);
+        assert!(pnn_path.is_file());
+
+        // 1. Valid .pnn + .attestation.jsonl passes
+        let ok_res = verify_attestation_command(
+            "model",
+            &["--pnn".to_string(), pnn_path.to_string_lossy().into_owned()],
+        )
+        .unwrap();
+        assert_eq!(ok_res.data["valid"], true);
+        assert_eq!(ok_res.data["pnn_digest_matches"], true);
+
+        // 2. Mismatched .pnn fails closed with pnn_digest_matches = false
+        let original_bytes = fs::read(&pnn_path).unwrap();
+        let mut mismatched_net = TropicalNetwork::load_from_file(&pnn_path).unwrap();
+        let attested_digest = mismatched_net.sha256_digest.clone();
+        mismatched_net.layers[0].weights[0] += 0.1;
+        mismatched_net.sha256_digest = mismatched_net.compute_digest();
+        assert_ne!(mismatched_net.sha256_digest, attested_digest);
+        fs::write(
+            &pnn_path,
+            serde_json::to_string_pretty(&mismatched_net).unwrap(),
+        )
+        .unwrap();
+        let mismatch_err = verify_attestation_command(
+            "model",
+            &["--pnn".to_string(), pnn_path.to_string_lossy().into_owned()],
+        )
+        .err()
+        .expect("mismatched .pnn must fail closed");
+        assert_eq!(mismatch_err.details["valid"], false);
+        assert_eq!(mismatch_err.details["pnn_digest_matches"], false);
+        assert!(
+            mismatch_err.message.contains("does not match"),
+            "unexpected error message: {}",
+            mismatch_err.message
+        );
+
+        // 3. Missing .pnn fails closed with pnn_digest_matches = false
+        fs::write(&pnn_path, original_bytes).unwrap();
+        fs::remove_file(&pnn_path).unwrap();
+        let missing_err = verify_attestation_command(
+            "model",
+            &["--pnn".to_string(), pnn_path.to_string_lossy().into_owned()],
+        )
+        .err()
+        .expect("missing .pnn must fail closed");
+        assert_eq!(missing_err.details["valid"], false);
+        assert_eq!(missing_err.details["pnn_digest_matches"], false);
+        assert!(
+            missing_err.message.contains("not found"),
+            "unexpected error message: {}",
+            missing_err.message
+        );
+
         let _ = fs::remove_dir_all(&root);
     }
 }

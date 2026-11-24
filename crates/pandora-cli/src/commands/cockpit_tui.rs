@@ -29,7 +29,10 @@ use std::io::{IsTerminal, Stdout, stdout};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Run the interactive Cockpit TUI.
-pub fn run_interactive(layout: CockpitLayout) -> Result<CommandResult, CliError> {
+pub fn run_interactive(
+    layout: CockpitLayout,
+    telemetry: Option<&pandora_types::DistillationTelemetrySnapshot>,
+) -> Result<CommandResult, CliError> {
     // If not running in an interactive terminal (e.g. CI, piped, headless), fallback gracefully
     if !stdout().is_terminal() {
         let controller = CockpitController::new(layout);
@@ -37,7 +40,7 @@ pub fn run_interactive(layout: CockpitLayout) -> Result<CommandResult, CliError>
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let snapshot = controller.capture_snapshot(epoch_ms);
+        let snapshot = controller.capture_snapshot_with_telemetry(epoch_ms, telemetry);
         let ascii = controller.render_ascii_grid(&snapshot);
         return Ok(success(
             "cockpit tui",
@@ -46,12 +49,17 @@ pub fn run_interactive(layout: CockpitLayout) -> Result<CommandResult, CliError>
                 "layout": format!("{:?}", layout),
                 "healthy_panels": snapshot.healthy_panels,
                 "panel_count": snapshot.panel_count,
+                "snapshot": snapshot,
+                "pnn_hot_reloads": telemetry.map(|t| t.pnn_hot_reloads).unwrap_or(0),
+                "lats_memo_hits": telemetry.map(|t| t.lats_memo_hits).unwrap_or(0),
+                "active_pnn_digest": telemetry.and_then(|t| t.active_pnn_digest.clone()),
+                "telemetry": telemetry.map(|t| serde_json::to_value(t).unwrap_or(json!({}))),
             }),
             ascii,
         ));
     }
 
-    let mut state = CockpitTuiState::new(layout);
+    let mut state = CockpitTuiState::new(layout, telemetry.cloned());
     state.run()?;
 
     Ok(success(
@@ -72,6 +80,7 @@ pub fn run_interactive(layout: CockpitLayout) -> Result<CommandResult, CliError>
 struct CockpitTuiState {
     layout: CockpitLayout,
     controller: CockpitController,
+    telemetry: Option<pandora_types::DistillationTelemetrySnapshot>,
     active_panel_idx: usize,
     modal_open: bool,
     consensus_modal_open: bool,
@@ -83,17 +92,21 @@ struct CockpitTuiState {
 }
 
 impl CockpitTuiState {
-    fn new(layout: CockpitLayout) -> Self {
+    fn new(
+        layout: CockpitLayout,
+        telemetry: Option<pandora_types::DistillationTelemetrySnapshot>,
+    ) -> Self {
         let controller = CockpitController::new(layout);
         let epoch_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let snapshot = controller.capture_snapshot(epoch_ms);
+        let snapshot = controller.capture_snapshot_with_telemetry(epoch_ms, telemetry.as_ref());
 
         Self {
             layout,
             controller,
+            telemetry,
             active_panel_idx: 0,
             modal_open: false,
             consensus_modal_open: false,
@@ -110,7 +123,9 @@ impl CockpitTuiState {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        self.cached_snapshot = self.controller.capture_snapshot(epoch_ms);
+        self.cached_snapshot = self
+            .controller
+            .capture_snapshot_with_telemetry(epoch_ms, self.telemetry.as_ref());
         self.last_refresh = Instant::now();
     }
 

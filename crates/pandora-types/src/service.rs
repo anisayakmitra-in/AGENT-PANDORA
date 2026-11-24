@@ -1,3 +1,4 @@
+use crate::distillation::DistillationTelemetrySnapshot;
 use crate::effect::{RequestError, Timestamp};
 use crate::events::RuntimeEvent;
 use crate::evolution::EvolutionRollout;
@@ -29,6 +30,7 @@ pub enum ServiceContractError {
     InvalidEvolutionReason,
     InvalidEvolutionRolloutTransition,
     InvalidOrchestrationConfirmation,
+    InvalidDistillationRequest(&'static str),
     InvalidPageLimit { limit: u16, maximum: u16 },
 }
 
@@ -57,6 +59,12 @@ impl fmt::Display for ServiceContractError {
             }
             Self::InvalidOrchestrationConfirmation => formatter
                 .write_str("orchestration confirmation must match the exact run identifier"),
+            Self::InvalidDistillationRequest(reason) => {
+                write!(
+                    formatter,
+                    "distillation service request is invalid: {reason}"
+                )
+            }
             Self::InvalidPageLimit { limit, maximum } => {
                 write!(
                     formatter,
@@ -1286,7 +1294,302 @@ impl ServiceOrchestrationRunSummary {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct ServiceFleetDistillRequest {
+    #[serde(default)]
+    session_paths: Vec<String>,
+    #[serde(default)]
+    pnn_path: Option<String>,
+    #[serde(default)]
+    capsule_out_path: Option<String>,
+    #[serde(default)]
+    key_file: Option<String>,
+    #[serde(default)]
+    drift_threshold: Option<f64>,
+    #[serde(default)]
+    martingale_alpha: Option<f64>,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+impl ServiceFleetDistillRequest {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_session_paths(
+        mut self,
+        session_paths: Vec<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.session_paths = session_paths;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_pnn_path(
+        mut self,
+        pnn_path: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.pnn_path = Some(pnn_path.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_capsule_out_path(
+        mut self,
+        capsule_out_path: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.capsule_out_path = Some(capsule_out_path.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_key_file(
+        mut self,
+        key_file: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.key_file = Some(key_file.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_drift_threshold(mut self, threshold: f64) -> Result<Self, ServiceContractError> {
+        self.drift_threshold = Some(threshold);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_martingale_alpha(mut self, alpha: f64) -> Result<Self, ServiceContractError> {
+        self.martingale_alpha = Some(alpha);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub const fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
+    pub fn session_paths(&self) -> &[String] {
+        &self.session_paths
+    }
+
+    pub fn pnn_path(&self) -> Option<&str> {
+        self.pnn_path.as_deref()
+    }
+
+    pub fn capsule_out_path(&self) -> Option<&str> {
+        self.capsule_out_path.as_deref()
+    }
+
+    pub fn key_file(&self) -> Option<&str> {
+        self.key_file.as_deref()
+    }
+
+    pub const fn drift_threshold(&self) -> Option<f64> {
+        self.drift_threshold
+    }
+
+    pub const fn martingale_alpha(&self) -> Option<f64> {
+        self.martingale_alpha
+    }
+
+    pub const fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        if self.session_paths.len() > 64 {
+            return Err(ServiceContractError::InvalidDistillationRequest(
+                "too many session paths (max 64)",
+            ));
+        }
+        for path in &self.session_paths {
+            validate_service_path(path, "session path")?;
+        }
+        if let Some(path) = self.pnn_path.as_deref() {
+            validate_service_path(path, "pnn path")?;
+        }
+        if let Some(path) = self.capsule_out_path.as_deref() {
+            validate_service_path(path, "capsule output path")?;
+        }
+        if let Some(path) = self.key_file.as_deref() {
+            validate_service_path(path, "key file path")?;
+        }
+        if let Some(threshold) = self.drift_threshold
+            && (!threshold.is_finite() || threshold < 0.0)
+        {
+            return Err(ServiceContractError::InvalidDistillationRequest(
+                "drift_threshold must be finite and >= 0",
+            ));
+        }
+        if let Some(alpha) = self.martingale_alpha
+            && (!alpha.is_finite() || alpha <= 0.0 || alpha >= 1.0)
+        {
+            return Err(ServiceContractError::InvalidDistillationRequest(
+                "martingale_alpha must be finite and in (0, 1)",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ServiceFleetDistillResult {
+    pub promoted: bool,
+    pub dry_run: bool,
+    pub pairs_count: usize,
+    pub duplicates_removed: usize,
+    pub dpo_dataset_digest: String,
+    pub baseline_digest: String,
+    pub candidate_digest: String,
+    pub capsule_id: String,
+    pub capsule_digest: String,
+    pub receipt_commitment: String,
+    pub receipt_chain_hash: String,
+    pub bayesian_lower_bound_95: f64,
+    pub non_regression_passed: bool,
+    pub telemetry: DistillationTelemetrySnapshot,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceVerifyAttestationRequest {
+    #[serde(default)]
+    pnn_path: Option<String>,
+    #[serde(default)]
+    receipt_path: Option<String>,
+    #[serde(default)]
+    capsule_path: Option<String>,
+    #[serde(default)]
+    expected_pubkey_hex: Option<String>,
+    #[serde(default)]
+    require_signature: bool,
+    #[serde(default)]
+    require_capsule: bool,
+}
+
+impl ServiceVerifyAttestationRequest {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_pnn_path(
+        mut self,
+        pnn_path: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.pnn_path = Some(pnn_path.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_receipt_path(
+        mut self,
+        receipt_path: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.receipt_path = Some(receipt_path.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_capsule_path(
+        mut self,
+        capsule_path: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.capsule_path = Some(capsule_path.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_expected_pubkey_hex(
+        mut self,
+        pubkey_hex: impl Into<String>,
+    ) -> Result<Self, ServiceContractError> {
+        self.expected_pubkey_hex = Some(pubkey_hex.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub const fn with_require_signature(mut self, require: bool) -> Self {
+        self.require_signature = require;
+        self
+    }
+
+    pub const fn with_require_capsule(mut self, require: bool) -> Self {
+        self.require_capsule = require;
+        self
+    }
+
+    pub fn pnn_path(&self) -> Option<&str> {
+        self.pnn_path.as_deref()
+    }
+
+    pub fn receipt_path(&self) -> Option<&str> {
+        self.receipt_path.as_deref()
+    }
+
+    pub fn capsule_path(&self) -> Option<&str> {
+        self.capsule_path.as_deref()
+    }
+
+    pub fn expected_pubkey_hex(&self) -> Option<&str> {
+        self.expected_pubkey_hex.as_deref()
+    }
+
+    pub const fn require_signature(&self) -> bool {
+        self.require_signature
+    }
+
+    pub const fn require_capsule(&self) -> bool {
+        self.require_capsule
+    }
+
+    pub fn validate(&self) -> Result<(), ServiceContractError> {
+        if let Some(path) = self.pnn_path.as_deref() {
+            validate_service_path(path, "pnn path")?;
+        }
+        if let Some(path) = self.receipt_path.as_deref() {
+            validate_service_path(path, "receipt path")?;
+        }
+        if let Some(path) = self.capsule_path.as_deref() {
+            validate_service_path(path, "capsule path")?;
+        }
+        if let Some(pubkey) = self.expected_pubkey_hex.as_deref()
+            && !valid_hex_64(pubkey)
+        {
+            return Err(ServiceContractError::InvalidDistillationRequest(
+                "expected_pubkey_hex must be 64 hex characters",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ServiceAttestationVerificationReport {
+    pub valid: bool,
+    pub pnn_path: String,
+    pub receipt_path: String,
+    pub capsule_path: Option<String>,
+    pub chain_length: usize,
+    pub latest_sequence: u64,
+    pub latest_commitment: String,
+    pub latest_chain_hash: String,
+    pub pnn_digest: String,
+    pub expected_candidate_digest: String,
+    pub pnn_digest_matches: bool,
+    pub signature_verified: bool,
+    pub signer_public_key: Option<String>,
+    pub capsule_digest: Option<String>,
+    pub capsule_verified: bool,
+    pub capsule_digest_matches: Option<bool>,
+    pub promoted: bool,
+    pub sinkhorn_divergence: Option<f64>,
+    pub wasserstein_2_distance: Option<f64>,
+    pub martingale_e_value: Option<f64>,
+    pub martingale_verdict: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServiceRequest {
     Health {
@@ -1303,6 +1606,17 @@ pub enum ServiceRequest {
     },
     Tools {
         protocol_version: u16,
+    },
+    CockpitTelemetry {
+        protocol_version: u16,
+    },
+    FleetDistill {
+        protocol_version: u16,
+        request: ServiceFleetDistillRequest,
+    },
+    VerifyCalibrationAttestation {
+        protocol_version: u16,
+        request: ServiceVerifyAttestationRequest,
     },
     OrchestrationList {
         protocol_version: u16,
@@ -1429,6 +1743,26 @@ impl ServiceRequest {
     pub const fn tools() -> Self {
         Self::Tools {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+        }
+    }
+
+    pub const fn cockpit_telemetry() -> Self {
+        Self::CockpitTelemetry {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+        }
+    }
+
+    pub const fn fleet_distill(request: ServiceFleetDistillRequest) -> Self {
+        Self::FleetDistill {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            request,
+        }
+    }
+
+    pub const fn verify_calibration_attestation(request: ServiceVerifyAttestationRequest) -> Self {
+        Self::VerifyCalibrationAttestation {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            request,
         }
     }
 
@@ -1642,6 +1976,13 @@ impl ServiceRequest {
             | Self::Providers { protocol_version }
             | Self::Engines { protocol_version }
             | Self::Tools { protocol_version }
+            | Self::CockpitTelemetry { protocol_version }
+            | Self::FleetDistill {
+                protocol_version, ..
+            }
+            | Self::VerifyCalibrationAttestation {
+                protocol_version, ..
+            }
             | Self::OrchestrationList {
                 protocol_version, ..
             }
@@ -1717,8 +2058,11 @@ impl ServiceRequest {
             Self::Health { .. }
             | Self::Capabilities { .. }
             | Self::Providers { .. }
-            | Self::Engines { .. } => Ok(()),
-            Self::Tools { .. } => Ok(()),
+            | Self::Engines { .. }
+            | Self::Tools { .. }
+            | Self::CockpitTelemetry { .. } => Ok(()),
+            Self::FleetDistill { request, .. } => request.validate(),
+            Self::VerifyCalibrationAttestation { request, .. } => request.validate(),
             Self::OrchestrationList { limit, .. } => {
                 validate_page_limit(*limit, MAX_SERVICE_SESSION_PAGE)
             }
@@ -2347,7 +2691,7 @@ impl ServiceAgentRunResult {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServiceResponse {
     Health {
@@ -2369,6 +2713,18 @@ pub enum ServiceResponse {
     Tools {
         protocol_version: u16,
         tools: Vec<ServiceToolSummary>,
+    },
+    CockpitTelemetry {
+        protocol_version: u16,
+        telemetry: DistillationTelemetrySnapshot,
+    },
+    FleetDistill {
+        protocol_version: u16,
+        result: ServiceFleetDistillResult,
+    },
+    VerifyCalibrationAttestation {
+        protocol_version: u16,
+        report: ServiceAttestationVerificationReport,
     },
     OrchestrationList {
         protocol_version: u16,
@@ -2481,6 +2837,29 @@ impl ServiceResponse {
         Self::Tools {
             protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
             tools,
+        }
+    }
+
+    pub const fn cockpit_telemetry(telemetry: DistillationTelemetrySnapshot) -> Self {
+        Self::CockpitTelemetry {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            telemetry,
+        }
+    }
+
+    pub const fn fleet_distill(result: ServiceFleetDistillResult) -> Self {
+        Self::FleetDistill {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            result,
+        }
+    }
+
+    pub const fn verify_calibration_attestation(
+        report: ServiceAttestationVerificationReport,
+    ) -> Self {
+        Self::VerifyCalibrationAttestation {
+            protocol_version: LOCAL_SERVICE_PROTOCOL_VERSION,
+            report,
         }
     }
 
@@ -2642,6 +3021,15 @@ impl ServiceResponse {
             | Self::Tools {
                 protocol_version, ..
             }
+            | Self::CockpitTelemetry {
+                protocol_version, ..
+            }
+            | Self::FleetDistill {
+                protocol_version, ..
+            }
+            | Self::VerifyCalibrationAttestation {
+                protocol_version, ..
+            }
             | Self::OrchestrationList {
                 protocol_version, ..
             }
@@ -2702,6 +3090,19 @@ fn validate_page_limit(limit: u16, maximum: u16) -> Result<(), ServiceContractEr
         return Err(ServiceContractError::InvalidPageLimit { limit, maximum });
     }
     Ok(())
+}
+
+fn validate_service_path(path: &str, _label: &'static str) -> Result<(), ServiceContractError> {
+    if path.trim().is_empty() || path.len() > 1024 || path.chars().any(char::is_control) {
+        return Err(ServiceContractError::InvalidDistillationRequest(
+            "path must be 1..=1024 chars without control characters",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_hex_64(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn valid_sha256_digest(value: &str) -> bool {

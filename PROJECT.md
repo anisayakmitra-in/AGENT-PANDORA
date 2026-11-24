@@ -1,155 +1,136 @@
-# Project: AGENT-PANDORA v3.0.2 Advanced Capabilities
+# Project: AGENT-PANDORA (HEAD `5c0ca6f` / `v3.1.5` Release Verification, Cross-Session Distillation & PVFS/HNSW Optimization)
 
 ## Architecture
-AGENT-PANDORA v3.0.2 is an autonomous software engineering agent running across 7 workspace crates:
-- `pandora-types`: Core schemas, protocols, errors, URIs, and validation contracts.
-- `pandora-runtime`: Execution engine, tool runtime, session store, ContextVfs, git executors, and agent loop.
-- `pandora-harnesses`: Verification genes (Contract, Golden, Property, Guide, Visual) and test harnesses.
-- `pandora-provider`: LLM providers and reasoning models.
-- `pandora-service`: Daemon and background service management.
-- `pandora-sandbox`: Isolated job execution (OS handle management under `#![deny(unsafe_code)]`).
-- `pandora-cli`: Terminal UI, CLI commands, completions, and launchers.
+AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
+- `pandora-types` (`#![forbid(unsafe_code)]`): Core schemas, protocols, errors, URIs, distillation/telemetry contracts, and service RPC types.
+- `pandora-runtime` (`#![forbid(unsafe_code)]`): Execution engine (`AgentLoop`), `LatsPrefixMemoCache`, `MoiraDecisionDriver` / `CalibrationAttestationReceipt`, `SinkhornDriftDetector` (Phase 13), `MartingaleCanaryGate` (Phase 14), `ContextVfs` (`PVFS` v3), `HnswIndex` (`PVHN` v1 / tropical HNSW), `CockpitController`, `CockpitWebServer`, and `RuntimeService`.
+- `pandora-harnesses` (`#![forbid(unsafe_code)]`): Verification genes, `DecisionBenchmarkSuite`, and `BayesianCanaryGate`.
+- `pandora-provider` (`#![forbid(unsafe_code)]`): LLM providers and reasoning models.
+- `pandora-service` (`#![forbid(unsafe_code)]`): Daemon and background service HTTP/RPC management.
+- `pandora-sandbox`: Isolated job execution (helper uses Windows Job Objects; library is safe).
+- `pandora-cli` (`#![forbid(unsafe_code)]`): Terminal UI (`tui.rs`, `cockpit_tui.rs`), CLI commands (`moira`, `fleet`, `cockpit`, `run`, `memory`), completions, and launchers.
 
-Supported ecosystem bindings:
-- `npm/pandora-cli`: TypeScript client and type definitions.
-- `indexable-inc/blaze`: In-memory incremental compilation engine for accelerated build/verify cycles.
-- C++ FFI: Native modules compiled with `w64devkit` GCC 16.2.0 under clean safe C ABI boundaries.
+Ecosystem bindings & docs:
+- `npm/pandora-cli`: TypeScript client (`PandoraClient`) and compiled definitions in `npm/pandora-cli/lib/`.
+- `docs/`: CLI reference (`docs/CLI_COMMANDS_REFERENCE.md`), TypeScript SDK docs (`docs/TYPESCRIPT.md`), math specs (`docs/math/phase13_wasserstein_drift.md`, `docs/math/phase14_martingale_canary_gate.md`).
 
-Platform & Toolchain Invariants:
-- Rust toolchain: `stable-x86_64-pc-windows-gnu`
-- MinGW GCC: `w64devkit` (GCC 16.2.0)
-- Python embed: Portable Python 3.11.9 (`sandbox-workspace/python-embed/python.exe`)
-- Active version: `3.0.2`
-- `#![forbid(unsafe_code)]`: Enforced across all crates (`pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`).
+Platform, Toolchain & Delivery Invariants:
+- Rust toolchain: `1.97.1` (`rust-toolchain.toml`, `stable-x86_64-pc-windows-gnu`, MinGW GCC in `w64devkit/bin`)
+- Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
+- Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
+- `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
+- **Versioning & Release Constraint (R4)**: Active workspace version MUST remain `3.1.5` (NO bump to `v3.2.0`, NO git push, NO git tag creation, NO release publication, NO modification to remote `v3.1.5` release).
+- **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
 
 ## Feature Inventory
+Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
+
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | LSP Stdio Client | Lightweight JSON-RPC 2.0 client for rust-analyzer, tsserver, pyright, gopls | M1 | ORIGINAL_REQUEST §R1 |
-| 2 | LSP Goto Definition | Symbol navigation via `textDocument/definition` | M1 | ORIGINAL_REQUEST §R1 |
-| 3 | LSP Find References | Reference resolution via `textDocument/references` | M1 | ORIGINAL_REQUEST §R1 |
-| 4 | LSP Type Definition | Type lookup via `textDocument/typeDefinition` | M1 | ORIGINAL_REQUEST §R1 |
-| 5 | LSP Pre-test Diagnostics | Real-time compiler diagnostics extraction (`textDocument/publishDiagnostics`) | M1 | ORIGINAL_REQUEST §R1 |
-| 6 | LSP CLI & Tool Engine | `pandora lsp` command, completion parity, and `lsp.*` tools in `ToolEngine` | M1 | ORIGINAL_REQUEST §R1 |
-| 7 | TUI Execution Interruption | Non-destructive `Esc` or `Ctrl+K` handler during active tool executions | M2 | ORIGINAL_REQUEST §R2 |
-| 8 | TUI In-flight Inspection | Modal dialog viewing active step, tool input, and execution timeline | M2 | ORIGINAL_REQUEST §R2 |
-| 9 | TUI Guidance Injection | Interactive operator prompt injection into active agent context | M2 | ORIGINAL_REQUEST §R2 |
-| 10 | TUI Step Skipping | Operator ability to bypass an in-flight tool step with synthetic feedback | M2 | ORIGINAL_REQUEST §R2 |
-| 11 | TUI Clean Rollback | Safe cancellation restoring previous stable state without corrupting transcript | M2 | ORIGINAL_REQUEST §R2 |
-| 12 | Pure-Rust Okapi BM25 Index | Zero-network sparse inverted index over `pandora://` ContextVfs | M3 | ORIGINAL_REQUEST §R3 |
-| 13 | Local Dense Feature Hashing | Deterministic subword n-gram embedding vectorizer ($d=128$) | M3 | ORIGINAL_REQUEST §R3 |
-| 14 | Hybrid RRF Search | Reciprocal Rank Fusion combining BM25 and dense cosine similarity | M3 | ORIGINAL_REQUEST §R3 |
-| 15 | Error Pattern Lessons Index | Indexing and querying resolved error patterns (`eval-lesson-*`) and past sessions | M3 | ORIGINAL_REQUEST §R3 |
-| 16 | Mock CDP JSON-RPC Server | Self-contained server implementing Page, DOM, Runtime, Input, Emulation | M4 | ORIGINAL_REQUEST §R4 |
-| 17 | Virtual DOM Automation | DOM tree parsing, node selection, click, fill, evaluate in headless harness | M4 | ORIGINAL_REQUEST §R4 |
-| 18 | Synthetic PNG Canvas | Pure safe Rust PNG screenshot encoder (Deflate + Adler32/CRC32, no external deps) | M4 | ORIGINAL_REQUEST §R4 |
-| 19 | Visual Verification Gene | Playwright Wasm Gene integrating visual assertions into `VerificationGeneRole::Visual` | M4 | ORIGINAL_REQUEST §R4 |
-| 20 | Worktree Isolation Manager | Ephemeral worktree manager at `.pandora/worktrees/<task-id>` for `/goal` | M5 | ORIGINAL_REQUEST §R5 |
-| 21 | PRP Validation Pipeline | Automated Syntax, Unit, Integration, ReceiptCheck gate evaluation | M5 | ORIGINAL_REQUEST §R5 |
-| 22 | Auto Squash-Merge & PR | Automatic branch squash-merge or PR branch creation upon gate completion | M5 | ORIGINAL_REQUEST §R5 |
-| 23 | Branch & PR CLI & TUI | `pandora branch` and `pandora pr` subcommands, slash commands, shell completions | M5 | ORIGINAL_REQUEST §R5 |
-| 24 | In-Memory Blaze Compiler | `indexable-inc/blaze` build acceleration engine wired to verify/build pipeline | M6 | ORIGINAL_REQUEST §R6 |
-| 25 | TypeScript Client Validation | Build and test parity for `npm/pandora-cli` | M6 | ORIGINAL_REQUEST §R6 |
-| 26 | C++ Integration & FFI | Native C++ modules compiled with GCC 16.2.0 with safe memory boundaries | M6 | ORIGINAL_REQUEST §R6 |
-| 27 | Invariants & Quality Gates | Strict `#![forbid(unsafe_code)]`, GNU toolchain, Python embed, scripts passing | M6 | ORIGINAL_REQUEST §R6 |
-| 28 | Full E2E Test Suite Pass | 100% pass across Tiers 1-4 opaque-box tests & Tier 5 adversarial hardening | M7 | ORIGINAL_REQUEST Acceptance |
-| 29 | Rust Core Runtime | Core execution engine, tool runtime, sandbox, and governance engine | M6 | ORIGINAL_REQUEST Follow-up |
-| 30 | Go Client SDK & Bindings | Native Go SDK/harness bindings for JSON-RPC/IPC communication | M6 | ORIGINAL_REQUEST Follow-up |
-| 31 | TypeScript SDK & Bindings | Complete typing contracts and client bindings in `npm/pandora-cli` | M6 | ORIGINAL_REQUEST Follow-up |
-| 32 | C++20 RAII Client Wrapper | C++20 header-only wrapper/client (`include/pandora.hpp` / `bindings/cpp/`) | M6 | ORIGINAL_REQUEST Follow-up |
-| 33 | Stable C ABI FFI Header | Universal FFI export header (`include/pandora.h` / `bindings/c/`) | M6 | ORIGINAL_REQUEST Follow-up |
-| 34 | Assembly SIMD Acceleration | Low-level architecture SIMD/CPUID vector acceleration for tokenization & hashing | M6 | ORIGINAL_REQUEST Follow-up |
+| F1 | `v3.1.5` CI & Release Verification | Verify GitHub Actions `CI` (`45367206163`) & `Release` (`45367215407`) runs and published `v3.1.5` binaries/checksums (report exact blocking/failure status without modifying remote `v3.1.5`) | M1 | ORIGINAL_REQUEST §R1 |
+| F2 | `verify-attestation` Missing-PNN Fix | Fix `crates/pandora-cli/src/commands/moira.rs` so missing `.pnn` file does not falsely report `pnn_digest_matches: true` | M1 | ORIGINAL_REQUEST §R1 / Survey 1 |
+| F3 | TypeScript SDK Telemetry Parity | Sync `npm/pandora-cli/src/client.ts` (`LatsTurnTelemetry`, `LatsMetrics`, `modelVerifyAttestation`) and rebuild `npm/pandora-cli/lib/` | M1 | ORIGINAL_REQUEST §R1 / Survey 1 |
+| F4 | Reference Docs Synchronization | Sync `docs/CLI_COMMANDS_REFERENCE.md` and `docs/TYPESCRIPT.md` with `verify-attestation`, `modelVerifyAttestation`, `with_auto_calibrate`, `LatsPrefixMemoCache`, `PandoraClient`, `runWithLats`, `memoryVfsTropicalSearch` | M1 | ORIGINAL_REQUEST §R1 |
+| F5 | Distillation & Telemetry Contracts | Add `DistillationTelemetrySnapshot`, `WassersteinTelemetrySummary`, `MartingaleTelemetrySummary`, and `ServiceRequest`/`ServiceResponse` RPC contracts in `pandora-types` | M2 | ORIGINAL_REQUEST §R2 |
+| F6 | Cross-Session DPO Aggregation | Discover and aggregate `.pandora/dpo_pairs.jsonl` across local defaults and explicitly configured session paths with deterministic deduplication and digesting | M2 | ORIGINAL_REQUEST §R2 |
+| F7 | Signed `MemoryCapsule` & `.pnn` Distillation | Calibrate `.pnn` from aggregated DPO pairs, gate via Phase 13 `SinkhornDriftDetector` + Phase 14 `MartingaleCanaryGate` + `BayesianCanaryGate`, and emit Ed25519-signed `MemoryCapsule` (`SignedCapsulePackage`) + `.pnn` | M2 | ORIGINAL_REQUEST §R2 |
+| F8 | Signed `CalibrationAttestationReceipt` & Tamper Rejection | Extend `CalibrationAttestationReceipt` with Ed25519 signature, capsule digest binding, and Phase 13/14 metrics; reject invalid/tampered/unsigned/mismatched receipts | M2 | ORIGINAL_REQUEST §R2 |
+| F9 | Runtime & Service Telemetry Wiring | Update `AgentLoop` (`check_control` telemetry + snapshot persistence), `CockpitController` (live telemetry replacing mock strings), `CockpitWebServer`, and `RuntimeService` / `pandora-service` | M3 | ORIGINAL_REQUEST §R2 |
+| F10 | CLI, Fleet, Cockpit & TUI Integration | Add `distill` and `verify-attestation` to `pandora fleet` & `pandora cockpit`; surface `pnn_hot_reloads`, `lats_memo_hits`, `active_pnn_digest`, Phase 13/14 metrics across `fleet dashboard`, `cockpit status`, `cockpit_tui`, main `tui`, `run`, and completions | M4 | ORIGINAL_REQUEST §R2 |
+| F11 | `HnswIndex` Tombstones, Incremental Updates & Compaction | Add `delete`/`mark_deleted`, `doc_id -> node_id` map, `update`/`upsert`, `compact()` with entry_point & neighbor repair, tombstone-safe traversal, and `PVHN` compatibility | M5 | ORIGINAL_REQUEST §R3 |
+| F12 | `PVFS` v3 Tombstone Compaction & Incremental HNSW Sync | Add `ContextVfs` deletion/tombstone APIs, `PVFS` v3 tombstone persistence & automated threshold-triggered compaction, and incremental HNSW sync with post-compaction query equivalence | M5 | ORIGINAL_REQUEST §R3 |
+| F13 | `LatsPrefixMemoCache` & Tropical HNSW Benchmarks | Add reproducible offline `--locked` pure-`std` `[[bench]]` target (`cargo bench -p pandora-runtime --locked`) and benchmark helpers reporting throughput for `LatsPrefixMemoCache` and tropical HNSW | M5 | ORIGINAL_REQUEST §R3 |
+| F14 | Version & Quality Gate Compliance | Maintain `3.1.5` workspace version, `#![forbid(unsafe_code)]`, `fmt`, `clippy`, `cargo test --workspace --locked`, `validate_docs.py`, `validate_repo.py` | M6 | ORIGINAL_REQUEST §R4 |
+| F15 | Opaque-Box E2E Suite & Tier 5 Hardening | Independent 4-tier E2E test suite (`TEST_READY.md`), 100% pass gate, and Tier 5 adversarial coverage hardening | E2E + M6 | Project Pattern |
 
 ---
 
 ## Milestones
+
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Language Server Protocol Engine | `pandora-runtime/src/lsp_engine.rs`, `pandora-cli/src/commands/lsp.rs`, tool registration, completions | None | DONE (worker_m1: 150+686+147 tests passed) |
-| M2 | Steerable TUI Execution Loop | `pandora-cli/src/commands/tui.rs`, `SteerableRunControl`, modal steering UI, rollback | None | DONE (worker_m2: 153 unit + 43 E2E tests passed) |
-| M3 | Semantic Memory & Hybrid RAG | `pandora-runtime/src/semantic_memory.rs`, BM25 + dense hashing, ContextVfs search | None | DONE (worker_m3: 686 tests passed) |
-| M4 | Headless Browser & Mock CDP Engine | `pandora-runtime/src/mock_cdp.rs`, synthetic PNG canvas, `VerificationGeneRole::Visual` | None | DONE (worker_m4: 78+5 tests passed) |
-| M5 | Ephemeral Git Worktree Isolation | `pandora-runtime/src/worktree_isolation.rs`, `/goal` isolation, squash-merge, `branch`/`pr` CLI | None | DONE (worker_m5: 154 CLI + 688 runtime + 6 integration tests passed) |
-| M6 | Architecture & Invariant Enforcement | `blaze` acceleration, multi-language bindings (Rust, Go, TypeScript, C++, C, Assembly SIMD), gates validation | M1, M2, M3, M4, M5 | DONE (worker_m6: C/C++ GCC 16.2.0, TS build, cargo test workspace passed) |
-| M7 | E2E Verification & Adversarial Hardening | Pass 100% E2E test suite (Tiers 1-4) & adversarial test hardening (Tier 5) | M1, M2, M3, M4, M5, M6 | DONE (111/111 E2E passed, auditor CLEAN, reviewer APPROVE) |
+| M1 | `v3.1.5` Release Verification, TS SDK & Docs (R1) | Re-verify `CI`/`Release` runs & `v3.1.5` artifacts; fix `moira.rs` `verify-attestation`; sync `npm/pandora-cli/src/client.ts` + `lib/`; sync `docs/CLI_COMMANDS_REFERENCE.md` & `docs/TYPESCRIPT.md` | None | COMPLETED |
+| M2 | Cross-Session Distillation & Signed Attestation Core (R2) | `pandora-types` telemetry contracts; `pandora-runtime/src/distillation.rs`; `CalibrationAttestationReceipt` Ed25519 signing + tamper rejection; `lib.rs` exports | None | COMPLETED |
+| M3 | Runtime, Service & Cockpit Controller Telemetry Wiring (R2) | `pandora-types/src/service.rs`; `AgentLoop` telemetry/persistence; `CockpitController` live Phase 13/14 + reload/memo metrics; `CockpitWebServer` rendering; `RuntimeService` & `pandora-service` handlers | M2 | COMPLETED |
+| M4 | Fleet, Cockpit, Run & TUI CLI Integration (R2 + R3 CLI) | `pandora fleet distill/verify-attestation/dashboard`, `pandora cockpit distill/verify-attestation/status`, `cockpit_tui`, `tui`, `run` flags/metrics, `memory vfs` compaction/bench CLI (if exposed), `mod.rs` & `completions.rs` | M1, M2, M3, M5 | COMPLETED |
+| M5 | `PVFS` v3 Compaction, Incremental HNSW & Benchmarks (R3) | `hnsw.rs` tombstones/incremental/compact; `context_vfs.rs` PVFS v3 deletion/compaction/incremental HNSW sync; `[[bench]]` pure-`std` throughput benchmarks for `LatsPrefixMemoCache` & tropical HNSW | None | COMPLETED |
+| E2E | E2E Testing Track (Tiers 1-4) | Requirement-driven opaque-box E2E test suite covering F1–F14, publishing `TEST_INFRA.md` & `TEST_READY.md` | None (runs parallel) | COMPLETED |
+| M6 | Final Milestone: E2E Pass & Quality Verification | 100% E2E pass on 52 tests; reproducible pure-std throughput benchmarks; full fmt/clippy/test/doc/repo validation gates; version/commit invariants preserved | M1, M2, M3, M4, M5, E2E | COMPLETED |
 
 ---
 
 ## Interface Contracts
 
-### M1 (LSP Engine) ↔ Runtime & CLI
-- Structs: `LspClientConfig`, `LspServerKind` (`RustAnalyzer`, `TsServer`, `Pyright`, `Gopls`), `LspDiagnostic`, `LspLocation`, `LspDefinitionResult`.
-- Methods on `LspEngine`:
-  - `start_server(kind: LspServerKind, root_path: &Path) -> Result<LspSession, LspError>`
-  - `goto_definition(session: &LspSession, file: &Path, line: u32, col: u32) -> Result<Vec<LspLocation>, LspError>`
-  - `find_references(session: &LspSession, file: &Path, line: u32, col: u32) -> Result<Vec<LspLocation>, LspError>`
-  - `type_definition(session: &LspSession, file: &Path, line: u32, col: u32) -> Result<Vec<LspLocation>, LspError>`
-  - `compiler_diagnostics(session: &LspSession, file: &Path) -> Result<Vec<LspDiagnostic>, LspError>`
-- CLI Command: `pandora lsp [status|servers|definition|references|type-definition|diagnostics]`.
+### M2 (`pandora-types` & `pandora-runtime::distillation`) ↔ M3 & M4
+- `pandora_types::distillation`:
+  - `DistillationTelemetrySnapshot`:
+    - `pnn_hot_reloads: u32`
+    - `lats_memo_hits: u64`
+    - `active_pnn_digest: Option<String>`
+    - `dpo_pairs_total: usize`
+    - `last_capsule_id: Option<String>`
+    - `last_capsule_digest: Option<String>`
+    - `last_attestation_commitment: Option<String>`
+    - `last_attestation_verified: bool`
+    - `wasserstein_drift: Option<WassersteinTelemetrySummary>` (`sinkhorn_divergence`, `wasserstein_2_distance`, `birkhoff_contraction_factor`, `theoretical_entropic_bias_bound`, `drift_threshold`, `drift_detected`, `iterations`, `final_dual_residual`, `marginal_conservation_error`)
+    - `martingale_canary: Option<MartingaleTelemetrySummary>` (`step_t`, `e_value`, `peak_e_value`, `anytime_p_value`, `ville_rejection_threshold`, `empirical_mean`, `confidence_radius`, `lower_confidence_bound`, `upper_confidence_bound`, `betting_fraction_lambda`, `verdict`)
+    - `updated_at_unix: u64`
+  - `DistillationTelemetrySnapshot::load_from_file(path)` / `save_to_file(path)` (atomic write via `atomic-write-file` in runtime helper or `serde_json`).
+- `pandora_runtime::decision_engine::CalibrationAttestationReceipt`:
+  - Backward-compatible `#[serde(default)]` fields: `capsule_digest: Option<String>`, `signer_public_key: Option<String>`, `signature: Option<String>`, `sinkhorn_divergence: Option<f64>`, `wasserstein_2_distance: Option<f64>`, `martingale_e_value: Option<f64>`, `martingale_verdict: Option<String>`.
+  - Methods: `sign_ed25519(&mut self, signing_key: &SigningKey)`, `verify_ed25519(&self, expected_pubkey_hex: Option<&str>) -> bool`, `verify_signed_chain(receipts: &[Self], expected_pubkey_hex: Option<&str>) -> bool`.
+- `pandora_runtime::distillation`:
+  - `discover_dpo_sources(workspace: &Path, data_dir: Option<&Path>, explicit_paths: &[PathBuf]) -> Vec<PathBuf>`
+  - `aggregate_dpo_pairs(paths: &[PathBuf]) -> Result<AggregatedDpoDataset, DistillationError>`
+  - `distill_cross_session_checkpoint(config: CrossSessionDistillConfig) -> Result<CrossSessionDistillResult, DistillationError>`
+  - `verify_pnn_and_capsule_attestation(config: AttestationVerifyConfig) -> Result<AttestationVerificationReport, DistillationError>`
+  - `default_telemetry_path(data_dir: &Path) -> PathBuf` (`<data_dir>/cockpit_telemetry.json`), `load_telemetry_snapshot(path: &Path)`, `save_telemetry_snapshot(path: &Path, snap: &DistillationTelemetrySnapshot)`.
 
-### M2 (Steerable TUI Loop) ↔ Runtime Agent Loop
-- Structs: `SteerControlState` (`Running`, `Paused(Checkpoint)`, `Steering(SteerAction)`), `SteerAction` (`Resume`, `InjectGuidance(String)`, `SkipStep`, `Rollback`).
-- Handler: `SteerableRunControl` implementing `AgentRunControl` hooks (`before_effect_authorization`, `after_effect`, `before_turn`).
-- Key bindings: `Esc` or `Ctrl+K` during active tool execution invokes `pause()`, opens Steer Modal in TUI, and cleanly applies `SteerAction`.
+### M3 (`CockpitController`, `AgentLoop`, `RuntimeService`) ↔ M4 (`CLI`, `TUI`)
+- `CockpitController`:
+  - `with_telemetry_path(layout, telemetry_path)` / `capture_snapshot_with_telemetry(timestamp_ms, telemetry: Option<&DistillationTelemetrySnapshot>)`
+  - Surfaces `pnn_hot_reloads`, `lats_memo_hits`, `active_pnn_digest`, Phase 13 Sinkhorn/Wasserstein metrics, and Phase 14 Martingale metrics in `PanelKind::GenesEvolution` & `PanelKind::DriftConformal`.
+- `pandora-cli` commands:
+  - `pandora fleet distill [--session-path <dir|file>]... [--pnn <path>] [--capsule-out <path>] [--key-file <path>] [--drift-threshold <f64>] [--alpha <f64>] [--dry-run]`
+  - `pandora fleet verify-attestation [--pnn <path>] [--capsule <path>] [--pubkey <hex>] [--require-signature]`
+  - `pandora cockpit distill ...` & `pandora cockpit verify-attestation ...` (consistent JSON/text output contract with `fleet`).
+  - `pandora run`: `--auto-calibrate <k>`, `--dpo-output <path>`, JSON `lats_metrics` includes `pnn_hot_reloads`, `active_pnn_digest`, `lats_memo_hits` (plus `memo_hits`).
 
-### M3 (Semantic Memory / Hybrid RAG) ↔ ContextVfs & SessionStore
-- Structs: `HybridSearchResult`, `SearchResultItem`, `SparseBm25Index`, `DenseFeatureHasher`.
-- Signatures:
-  - `ContextVfs::search(&self, query: &str, limit: usize) -> Result<Vec<SearchResultItem>, VfsError>`
-  - `SessionStore::query_error_patterns(&self, error_pattern: &str, limit: usize) -> Result<Vec<LessonRecord>, SessionError>`
-  - Combined scoring: $Score(d) = RRF(Rank_{BM25}(d), Rank_{Dense}(d))$.
-
-### M4 (Mock CDP & Visual Verification) ↔ Harnesses & Runtime
-- Structs: `MockCdpServer`, `CdpPage`, `CdpElement`, `SyntheticPngCanvas`, `VisualVerificationGene`.
-- Protocol: JSON-RPC 2.0 handling methods `Page.navigate`, `Page.captureScreenshot`, `DOM.getDocument`, `DOM.querySelector`, `Runtime.evaluate`, `Input.dispatchMouseEvent`.
-- PNG Output: Valid 8-bit RGBA PNG image bytes formatted with `IHDR`, `IDAT` (RFC 1951 Deflate), `IEND`.
-- Harness trait: `VerificationGeneRole::Visual` asserting layout, DOM state, or screenshot hash.
-
-### M5 (Ephemeral Git Worktrees) ↔ CLI & Runtime
-- Structs: `WorktreeIsolationManager`, `WorktreeTaskContext`, `WorktreeMergeResult`, `PrBranchResult`.
-- Signatures:
-  - `WorktreeIsolationManager::provision_worktree(task_id: &str, base_commit: Option<&str>) -> Result<WorktreeTaskContext, WorktreeError>`
-  - `WorktreeIsolationManager::evaluate_gates(ctx: &WorktreeTaskContext) -> Result<PrpValidationReport, WorktreeError>`
-  - `WorktreeIsolationManager::finalize_task(ctx: &WorktreeTaskContext, action: FinalizeAction) -> Result<WorktreeMergeResult, WorktreeError>`
-- CLI: `pandora branch [list|create|checkout|cleanup]` and `pandora pr [create|status]`.
-
-### M6 (Architecture & Invariants) ↔ Acceleration & Compliance
-- Structs: `BlazeCompilerAdapter`, `BlazeBuildResult`, `BlazeDiagnostics`.
-- Integrations:
-  - `workspace.verify` / `workspace.build` supports `compiler = "blaze"` hot in-memory rebuilds.
-  - TypeScript client `npm/pandora-cli` passes `npm run build` and client tests.
-  - Native C++ FFI module compiled with GCC 16.2.0.
-  - `#![forbid(unsafe_code)]` preserved across all crates.
-  - Scripts `validate_docs.py`, `validate_repo.py`, `release_identity.py v3.0.2` pass with code 0.
+### M5 (`PVFS` v3 & `HnswIndex`) ↔ M4 & Benchmarks
+- `HnswIndex`:
+  - `mark_deleted(&mut self, doc_id: usize) -> bool`
+  - `is_deleted(&self, doc_id: usize) -> bool`
+  - `upsert(&mut self, doc_id: usize, vector: HnswVector) -> bool`
+  - `compact(&mut self) -> HnswCompactionReport` (re-packs live nodes, remaps `doc_id -> node_id`, repairs `entry_point` and bidirectional neighbors)
+  - `tombstone_count(&self) -> usize`, `live_count(&self) -> usize`
+- `ContextVfs`:
+  - `remove_document(&self, uri: &str) -> bool` / `tombstone_document(&self, uri: &str) -> bool`
+  - `compact_index(&self) -> Result<VfsCompactionReport, VfsError>`
+  - `with_auto_compact_threshold` / automatic compaction trigger when tombstones exceed configured threshold/ratio on `save_index_to_disk` / mutation
+  - Incremental HNSW synchronization (`sync_hnsw_incremental` / `update_hnsw_on_mutation`) preserving post-compaction search equivalence/recall.
+- `crates/pandora-runtime/benches/r3_throughput_bench.rs`:
+  - Pure-`std` (`Instant`, `black_box`) `harness = false` benchmark executable via `cargo bench -p pandora-runtime --locked` measuring `LatsPrefixMemoCache` (hits, misses, eviction ops/sec) and tropical HNSW (build, incremental upsert/delete, compaction, search ops/sec).
 
 ---
 
-## Code Layout
-- `crates/pandora-types/src/`:
-  - `lib.rs`: `#![forbid(unsafe_code)]`
-  - `lsp.rs`: LSP schemas and payload types
-  - `visual.rs`: Visual verification types and CDP schemas
-  - `worktree.rs`: Worktree isolation schemas
-- `crates/pandora-runtime/src/`:
-  - `lib.rs`: `#![forbid(unsafe_code)]`
-  - `lsp_engine.rs`: JSON-RPC 2.0 LSP client implementation
-  - `semantic_memory.rs`: BM25, dense hashing, and hybrid search
-  - `mock_cdp.rs`: Synthetic CDP server and DOM tree
-  - `synthetic_canvas.rs`: Pure safe Rust PNG screenshot generator
-  - `worktree_isolation.rs`: Ephemeral worktrees, squash-merge, PR branch generation
-  - `blaze_adapter.rs`: `indexable-inc/blaze` build acceleration binding
-- `crates/pandora-harnesses/src/`:
-  - `lib.rs`: `#![forbid(unsafe_code)]`
-  - `verification.rs`: `VerificationGeneRole::Visual` implementation
-- `crates/pandora-cli/src/`:
-  - `commands/lsp.rs`: `pandora lsp` CLI commands
-  - `commands/branch.rs`: `pandora branch` CLI command
-  - `commands/pr.rs`: `pandora pr` CLI command
-  - `commands/tui.rs`: Steerable execution loop, pause/checkpoint modal (`Esc`/`Ctrl+K`)
-  - `commands/completions.rs`: Shell completions for new subcommands
-- `npm/pandora-cli/`:
-  - TypeScript client, type definitions, package build
-- `tests/e2e/`:
-  - E2E opaque-box test suites (Tiers 1-4) and adversarial suite (Tier 5)
+## Code Layout (Write Ownership by Milestone)
+- **M1**:
+  - `crates/pandora-cli/src/commands/moira.rs`
+  - `npm/pandora-cli/src/client.ts` and `npm/pandora-cli/lib/*`
+  - `docs/CLI_COMMANDS_REFERENCE.md`, `docs/TYPESCRIPT.md`
+- **M2**:
+  - `crates/pandora-types/src/distillation.rs`, `crates/pandora-types/src/lib.rs`
+  - `crates/pandora-runtime/src/distillation.rs`, `crates/pandora-runtime/src/decision_engine.rs`, `crates/pandora-runtime/src/lib.rs`
+- **M3**:
+  - `crates/pandora-types/src/service.rs`
+  - `crates/pandora-runtime/src/agent_loop.rs`, `crates/pandora-runtime/src/cockpit.rs`, `crates/pandora-runtime/src/cockpit_web.rs`, `crates/pandora-runtime/src/service.rs`
+  - `crates/pandora-service/src/lib.rs`
+- **M4**:
+  - `crates/pandora-cli/src/commands/{run.rs, fleet.rs, cockpit.rs, cockpit_tui.rs, tui.rs, slash.rs, memory.rs, mod.rs, completions.rs}`
+- **M5**:
+  - `crates/pandora-runtime/src/hnsw.rs`, `crates/pandora-runtime/src/context_vfs.rs`
+  - `crates/pandora-runtime/Cargo.toml`, `crates/pandora-runtime/benches/r3_throughput_bench.rs`
+- **E2E**:
+  - `TEST_INFRA.md`, `TEST_READY.md`, `crates/pandora-cli/tests/**`, `tests/**`

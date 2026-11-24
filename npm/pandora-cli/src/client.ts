@@ -28,6 +28,9 @@ export interface LatsTurnTelemetry {
   nodes_created: number;
   best_action: number | null;
   best_value: number;
+  reflex_action?: number | null;
+  dpo_pair_emitted?: boolean;
+  memo_hit?: boolean;
 }
 
 export interface LatsMetrics {
@@ -39,6 +42,11 @@ export interface LatsMetrics {
   escalated: boolean;
   turn_rollouts?: number;
   turn_escalations?: number;
+  dpo_pairs_emitted?: number;
+  memo_hits?: number;
+  pnn_hot_reloads?: number;
+  active_pnn_digest?: string | null;
+  lats_memo_hits?: number;
   turns?: LatsTurnTelemetry[];
 }
 
@@ -51,6 +59,12 @@ export interface CalibrationAttestationVerification extends JsonObject {
   pnn_digest_matches: boolean;
   path: string;
   receipt_path: string;
+}
+
+export interface ModelVerifyAttestationOptions extends PandoraRunOptions {
+  workspace?: string;
+  config?: string;
+  dataDir?: string;
 }
 
 export interface RunLatsOptions extends PandoraRunOptions {
@@ -337,12 +351,22 @@ export class PandoraClient {
 
   public async modelVerifyAttestation(
     pnnPath?: string,
-    overrideOptions: PandoraRunOptions = {},
+    overrideOptions: ModelVerifyAttestationOptions = {},
   ): Promise<PandoraRunResult<CalibrationAttestationVerification>> {
+    const { workspace, config, dataDir, ...runOptions } = overrideOptions;
     const args = ["model", "verify-attestation"];
     if (pnnPath !== undefined && pnnPath.trim().length > 0) {
       args.push("--pnn", pnnPath);
     }
-    return this.run<CalibrationAttestationVerification>(args, overrideOptions);
+    if (workspace !== undefined && workspace.trim().length > 0) {
+      args.push("--workspace", workspace);
+    }
+    if (config !== undefined && config.trim().length > 0) {
+      args.push("--config", config);
+    }
+    if (dataDir !== undefined && dataDir.trim().length > 0) {
+      args.push("--data-dir", dataDir);
+    }
+    return this.run<CalibrationAttestationVerification>(args, runOptions);
   }
 }

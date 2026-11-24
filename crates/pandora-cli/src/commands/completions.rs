@@ -81,7 +81,7 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'capsule') {
         'export','import'
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq 'memory' -and $elements[2] -eq 'vfs') {
-        'ls','cat','search','index','stats','hnsw-build','hnsw-search'
+        'ls','cat','search','tropical-search','index','stats','hnsw-build','hnsw-search'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'memory') {
         'recall','audit','forget','compact','promote','synthesize','consolidate','provenance','schedule','sop','archive','capsule','vfs'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'approval') {
@@ -121,7 +121,9 @@ fn powershell() -> &'static str {
     } elseif ($elements.Count -gt 2 -and $elements[1] -eq "fleet" -and $elements[2] -eq "supervisor") {
         "list","start","drain","stop","recover","heartbeat","reconcile","reap","restart"
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'fleet') {
-        'dashboard','list','register','dispatch','lease','renew','release','expire','supervisor','quarantine','revoke','kill'
+        'dashboard','distill','verify-attestation','list','register','dispatch','lease','renew','release','expire','supervisor','quarantine','revoke','kill','quorum','dag'
+    } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'cockpit') {
+        'status','tui','distill','verify-attestation','launch','consensus','dispatch','panes','send','reputation','web','autopilot'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'feedback') {
         'coding'
     } elseif ($elements.Count -gt 1 -and $elements[1] -eq 'decision') {
@@ -212,7 +214,7 @@ fn bash() -> &'static str {
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "capsule" ]]; then
         COMPREPLY=( $(compgen -W 'export import' -- "$current") )
     elif [[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "vfs" ]]; then
-        COMPREPLY=( $(compgen -W 'ls cat search index stats hnsw-build hnsw-search' -- "$current") )
+        COMPREPLY=( $(compgen -W 'ls cat search tropical-search index stats hnsw-build hnsw-search' -- "$current") )
     elif [[ "$previous" == "memory" ]]; then
         COMPREPLY=( $(compgen -W 'recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs' -- "$current") )
     elif [[ "$previous" == "approval" ]]; then
@@ -256,7 +258,9 @@ fn bash() -> &'static str {
     elif [[ "$previous" == "supervisor" && "${COMP_WORDS[1]}" == "fleet" ]]; then
         COMPREPLY=( $(compgen -W 'list start drain stop recover heartbeat reconcile reap restart' -- "$current") )
     elif [[ "$previous" == "fleet" ]]; then
-        COMPREPLY=( $(compgen -W 'dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill' -- "$current") )
+        COMPREPLY=( $(compgen -W 'dashboard distill verify-attestation list register dispatch lease renew release expire supervisor quarantine revoke kill quorum dag' -- "$current") )
+    elif [[ "$previous" == "cockpit" ]]; then
+        COMPREPLY=( $(compgen -W 'status tui distill verify-attestation launch consensus dispatch panes send reputation web autopilot' -- "$current") )
     elif [[ "$previous" == "feedback" ]]; then
         COMPREPLY=( $(compgen -W 'coding' -- "$current") )
     elif [[ "$previous" == "decision" ]]; then
@@ -343,7 +347,7 @@ elif [[ ${words[2]} == memory && ${words[3]} == archive ]]; then
 elif [[ ${words[2]} == memory && ${words[3]} == capsule ]]; then
     _arguments '3:memory capsule command:(export import)'
 elif [[ ${words[2]} == memory && ${words[3]} == vfs ]]; then
-    _arguments '3:memory vfs command:(ls cat search index stats hnsw-build hnsw-search)'
+    _arguments '3:memory vfs command:(ls cat search tropical-search index stats hnsw-build hnsw-search)'
 elif [[ ${words[2]} == memory ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy cron prompt dsrs gepa prp branch pr lsp release)' '2:memory command:(recall audit forget compact promote synthesize consolidate provenance schedule sop archive capsule vfs)'
 elif [[ ${words[2]} == approval ]]; then
@@ -383,7 +387,9 @@ elif [[ ${words[2]} == graph ]]; then
 elif [[ ${words[2]} == fleet && ${words[3]} == supervisor ]]; then
     _arguments '3:supervisor command:(list start drain stop recover heartbeat reconcile reap restart)'
 elif [[ ${words[2]} == fleet ]]; then
-    _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy cron prompt dsrs gepa prp branch pr lsp release)' '2:fleet command:(dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill)'
+    _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy cron prompt dsrs gepa prp branch pr lsp release)' '2:fleet command:(dashboard distill verify-attestation list register dispatch lease renew release expire supervisor quarantine revoke kill quorum dag)'
+elif [[ ${words[2]} == cockpit ]]; then
+    _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy cron prompt dsrs gepa prp branch pr lsp release)' '2:cockpit command:(status tui distill verify-attestation launch consensus dispatch panes send reputation web autopilot)'
 elif [[ ${words[2]} == feedback ]]; then
     _arguments '1:command:(help setup backup service auth secret rollout run chat curriculum decision tui harness slash session job subagent skill package registry runtime memory approval provider mcp tool orchestration operations strategies evaluation evolution feedback efficiency fleet graph completions migrate update uninstall doctor policy cron prompt dsrs gepa prp branch pr lsp release)' '2:feedback command:(coding)'
 elif [[ ${words[2]} == decision ]]; then
@@ -443,7 +449,7 @@ complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_s
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from sop' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from archive' -a 'list inspect'
 complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from capsule' -a 'export import'
-complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search index stats hnsw-build hnsw-search'
+complete -c pandora -f -n '__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search tropical-search index stats hnsw-build hnsw-search'
 complete -c pandora -f -n '__fish_seen_subcommand_from approval' -a 'list inspect resolve'
 complete -c pandora -f -n '__fish_seen_subcommand_from provider' -a 'list set add remove use login accounts test'
 complete -c pandora -f -n '__fish_seen_subcommand_from mcp' -a 'list inspect set add add-http login logout remove catalog call'
@@ -464,7 +470,8 @@ complete -c pandora -f -n '__fish_seen_subcommand_from evolution; and __fish_see
 complete -c pandora -f -n '__fish_seen_subcommand_from graph; and __fish_seen_subcommand_from map' -a 'validate show'
 complete -c pandora -f -n '__fish_seen_subcommand_from graph; and not __fish_seen_subcommand_from map' -a 'code knowledge review architecture map show remove'
 complete -c pandora -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from supervisor' -a 'list start drain stop recover heartbeat reconcile reap restart'
-complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill'
+complete -c pandora -f -n '__fish_seen_subcommand_from fleet' -a 'dashboard distill verify-attestation list register dispatch lease renew release expire supervisor quarantine revoke kill quorum dag'
+complete -c pandora -f -n '__fish_seen_subcommand_from cockpit' -a 'status tui distill verify-attestation launch consensus dispatch panes send reputation web autopilot'
 complete -c pandora -f -n '__fish_seen_subcommand_from feedback' -a 'coding'
 complete -c pandora -f -n '__fish_seen_subcommand_from decision' -a 'harvest list'
 complete -c pandora -f -n '__fish_seen_subcommand_from curriculum' -a 'generate inspect list'
@@ -571,10 +578,10 @@ mod tests {
                 "submit work list inspect cancel mark-interrupted",
                 "spawn work list inspect cancel mark-interrupted cleanup",
                 "roles submit claim complete list inspect cancel mark-interrupted reconcile-failed resume",
-                "dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill",
+                "dashboard distill verify-attestation list register dispatch lease renew release expire supervisor quarantine revoke kill quorum dag",
                 "roles",
                 "rank",
-                "dashboard list register dispatch lease renew release expire supervisor quarantine revoke kill",
+                "dashboard distill verify-attestation list register dispatch lease renew release expire supervisor quarantine revoke kill quorum dag",
             ] {
                 assert!(script.contains(expected), "missing {expected} in {script}");
             }
@@ -833,21 +840,50 @@ mod tests {
         let fish = fish();
 
         assert!(powershell.contains("-eq 'memory' -and $elements[2] -eq 'vfs'"));
-        assert!(
-            powershell.contains("'ls','cat','search','index','stats','hnsw-build','hnsw-search'")
-        );
+        assert!(powershell.contains(
+            "'ls','cat','search','tropical-search','index','stats','hnsw-build','hnsw-search'"
+        ));
 
         assert!(bash.contains(r#"[[ "${COMP_WORDS[1]}" == "memory" && "$previous" == "vfs" ]]"#));
-        assert!(bash.contains("compgen -W 'ls cat search index stats hnsw-build hnsw-search'"));
+        assert!(bash.contains(
+            "compgen -W 'ls cat search tropical-search index stats hnsw-build hnsw-search'"
+        ));
 
         assert!(
             zsh.contains(
-                "'3:memory vfs command:(ls cat search index stats hnsw-build hnsw-search)'"
+                "'3:memory vfs command:(ls cat search tropical-search index stats hnsw-build hnsw-search)'"
             )
         );
 
         assert!(fish.contains(
-            "__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search index stats hnsw-build hnsw-search'"
+            "__fish_seen_subcommand_from memory; and __fish_seen_subcommand_from vfs' -a 'ls cat search tropical-search index stats hnsw-build hnsw-search'"
+        ));
+    }
+
+    #[test]
+    fn fleet_and_cockpit_completion_covers_distill_and_verify_across_shells() {
+        let powershell = powershell();
+        let bash = bash();
+        let zsh = zsh();
+        let fish = fish();
+
+        assert!(powershell.contains("'dashboard','distill','verify-attestation'"));
+        assert!(powershell.contains("-eq 'cockpit'"));
+        assert!(powershell.contains("'status','tui','distill','verify-attestation'"));
+
+        assert!(bash.contains("compgen -W 'dashboard distill verify-attestation"));
+        assert!(bash.contains(r#"[[ "$previous" == "cockpit" ]]"#));
+        assert!(bash.contains("compgen -W 'status tui distill verify-attestation"));
+
+        assert!(zsh.contains("2:fleet command:(dashboard distill verify-attestation"));
+        assert!(zsh.contains("${words[2]} == cockpit"));
+        assert!(zsh.contains("2:cockpit command:(status tui distill verify-attestation"));
+
+        assert!(fish.contains(
+            "__fish_seen_subcommand_from fleet' -a 'dashboard distill verify-attestation"
+        ));
+        assert!(fish.contains(
+            "__fish_seen_subcommand_from cockpit' -a 'status tui distill verify-attestation"
         ));
     }
 }

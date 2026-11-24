@@ -57,6 +57,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     match subcommand {
         Some("status") => status(&args[1..]),
         Some("tui") | Some("interactive") => tui(&args[1..]),
+        Some("distill") => super::fleet::run_distill("cockpit distill", &args[1..]),
+        Some("verify-attestation") => {
+            super::fleet::run_verify_attestation("cockpit verify-attestation", &args[1..])
+        }
         Some("launch") | Some("up") => launch(&args[1..]),
         Some("consensus") | Some("vote") => consensus(&args[1..]),
         Some("dispatch") => dispatch(&args[1..]),
@@ -66,7 +70,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some("web") | Some("serve") => web(&args[1..]),
         Some("autopilot") => autopilot(&args[1..]),
         Some(unknown) if !unknown.starts_with('-') => Err(CliError::usage(format!(
-            "unknown cockpit command '{unknown}'; expected 'status', 'tui', 'launch', 'consensus', 'dispatch', 'panes', 'send', 'reputation', 'web', or 'autopilot'"
+            "unknown cockpit command '{unknown}'; expected 'status', 'tui', 'distill', 'verify-attestation', 'launch', 'consensus', 'dispatch', 'panes', 'send', 'reputation', 'web', or 'autopilot'"
         ))),
         _ => status(args),
     }
@@ -87,7 +91,27 @@ pub(crate) fn status(args: &[String]) -> Result<CommandResult, CliError> {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
-    let snapshot = controller.capture_snapshot(epoch_ms);
+    let config = super::load_config_storage(&parsed).ok();
+    let telemetry_path = config
+        .as_ref()
+        .map(|c| c.data_dir().join("cockpit_telemetry.json"))
+        .or_else(|| {
+            parsed
+                .value("data-dir")
+                .map(|d| std::path::PathBuf::from(d).join("cockpit_telemetry.json"))
+        })
+        .or_else(|| {
+            parsed
+                .value("workspace")
+                .map(|w| std::path::PathBuf::from(w).join(".pandora/cockpit_telemetry.json"))
+        });
+
+    let telemetry = telemetry_path
+        .as_deref()
+        .filter(|p| p.is_file())
+        .and_then(|p| pandora_runtime::distillation::load_telemetry_snapshot(p).ok());
+
+    let snapshot = controller.capture_snapshot_with_telemetry(epoch_ms, telemetry.as_ref());
     let ascii_grid = controller.render_ascii_grid(&snapshot);
 
     let mut data = serde_json::to_value(&snapshot)
@@ -104,7 +128,27 @@ pub(crate) fn tui(args: &[String]) -> Result<CommandResult, CliError> {
     let layout_str = parsed.value("panels").unwrap_or("12");
     let layout = CockpitLayout::parse(layout_str).unwrap_or(CockpitLayout::TwelvePanel);
 
-    super::cockpit_tui::run_interactive(layout)
+    let config = super::load_config_storage(&parsed).ok();
+    let telemetry_path = config
+        .as_ref()
+        .map(|c| c.data_dir().join("cockpit_telemetry.json"))
+        .or_else(|| {
+            parsed
+                .value("data-dir")
+                .map(|d| std::path::PathBuf::from(d).join("cockpit_telemetry.json"))
+        })
+        .or_else(|| {
+            parsed
+                .value("workspace")
+                .map(|w| std::path::PathBuf::from(w).join(".pandora/cockpit_telemetry.json"))
+        });
+
+    let telemetry = telemetry_path
+        .as_deref()
+        .filter(|p| p.is_file())
+        .and_then(|p| pandora_runtime::distillation::load_telemetry_snapshot(p).ok());
+
+    super::cockpit_tui::run_interactive(layout, telemetry.as_ref())
 }
 
 pub(crate) fn launch(args: &[String]) -> Result<CommandResult, CliError> {
@@ -500,12 +544,17 @@ pub(crate) fn web(args: &[String]) -> Result<CommandResult, CliError> {
         sse_tick_interval_ms: DEFAULT_SSE_TICK_MS,
     };
 
-    let server = CockpitWebServer::with_config(config, None).map_err(|e| {
+    let mut server = CockpitWebServer::with_config(config, None).map_err(|e| {
         CliError::execution(
             format!("failed to bind cockpit web server on {bind_addr}:{port}: {e}"),
             json!({"bind": bind_addr, "port": port}),
         )
     })?;
+
+    if let Ok(storage) = super::load_config_storage(&parsed) {
+        let tpath = storage.data_dir().join("cockpit_telemetry.json");
+        server = server.with_telemetry_path(tpath);
+    }
 
     let bound_port = server.port();
     let url = format!("http://{bind_addr}:{bound_port}/");

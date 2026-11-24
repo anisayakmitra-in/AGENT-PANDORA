@@ -710,6 +710,7 @@ pub struct AgentLoop {
     tools: ToolEngine,
     context: ContextEngine,
     lats_config: Option<LatsLoopConfig>,
+    telemetry_path: Option<std::path::PathBuf>,
 }
 
 impl AgentLoop {
@@ -727,6 +728,7 @@ impl AgentLoop {
             tools: ToolEngine::with_builtins(),
             context: ContextEngine::new(),
             lats_config: None,
+            telemetry_path: None,
         })
     }
 
@@ -737,6 +739,19 @@ impl AgentLoop {
 
     pub fn lats_config(&self) -> Option<&LatsLoopConfig> {
         self.lats_config.as_ref()
+    }
+
+    pub fn with_telemetry_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.telemetry_path = Some(path.into());
+        self
+    }
+
+    pub fn set_telemetry_path(&mut self, path: Option<std::path::PathBuf>) {
+        self.telemetry_path = path;
+    }
+
+    pub fn telemetry_path(&self) -> Option<&Path> {
+        self.telemetry_path.as_deref()
     }
 
     pub fn with_context_cache(mut self, path: impl AsRef<Path>) -> Result<Self, AgentLoopError> {
@@ -1039,6 +1054,7 @@ impl AgentLoop {
             .map(|c| Arc::clone(&c.tropical_driver));
         let mut lats_memo = crate::lats_engine::LatsPrefixMemoCache::default();
         let mut pnn_hot_reloads: u32 = 0;
+        let mut telemetry_persist = AgentTelemetryPersistState::new(self.telemetry_path.as_deref());
         let mut turns = 0;
         let mut tool_calls: u32 = 0;
         let mut convergence = ConvergenceTracker::new();
@@ -1048,7 +1064,10 @@ impl AgentLoop {
         if let Some(approval) = approval.as_ref() {
             for call in pending_tool_calls {
                 tool_calls = tool_calls.saturating_add(1);
-                check_control(
+                let active_digest = active_tropical_driver
+                    .as_ref()
+                    .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+                if let Err(err) = check_control(
                     control,
                     AgentCheckpointKind::BeforeEffectAuthorization,
                     turns,
@@ -1060,10 +1079,22 @@ impl AgentLoop {
                     &context_receipt,
                     &lats_telemetry,
                     &dpo_pairs,
+                    pnn_hot_reloads,
+                    active_digest.as_deref(),
+                    lats_memo.hits(),
                     &messages,
                     persistent_context.as_ref(),
                     context_insert_index,
-                )?;
+                ) {
+                    telemetry_persist.flush(
+                        pnn_hot_reloads,
+                        lats_memo.hits(),
+                        dpo_pairs.len(),
+                        active_digest.as_deref(),
+                        now.as_unix_seconds(),
+                    );
+                    return Err(err);
+                }
                 match self.execute_tool(
                     &call,
                     controller,
@@ -1095,7 +1126,10 @@ impl AgentLoop {
                             Some(call.name()),
                             &result,
                         )?);
-                        check_control(
+                        let active_digest = active_tropical_driver
+                            .as_ref()
+                            .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+                        if let Err(err) = check_control(
                             control,
                             AgentCheckpointKind::AfterEffect,
                             turns,
@@ -1107,13 +1141,35 @@ impl AgentLoop {
                             &context_receipt,
                             &lats_telemetry,
                             &dpo_pairs,
+                            pnn_hot_reloads,
+                            active_digest.as_deref(),
+                            lats_memo.hits(),
                             &messages,
                             persistent_context.as_ref(),
                             context_insert_index,
-                        )?;
+                        ) {
+                            telemetry_persist.flush(
+                                pnn_hot_reloads,
+                                lats_memo.hits(),
+                                dpo_pairs.len(),
+                                active_digest.as_deref(),
+                                now.as_unix_seconds(),
+                            );
+                            return Err(err);
+                        }
                     }
                     ToolExecution::Approval { reason, summary } => {
                         runs.push(summary);
+                        let active_digest = active_tropical_driver
+                            .as_ref()
+                            .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+                        telemetry_persist.flush(
+                            pnn_hot_reloads,
+                            lats_memo.hits(),
+                            dpo_pairs.len(),
+                            active_digest.as_deref(),
+                            now.as_unix_seconds(),
+                        );
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
                             summary: Box::new(AgentRunSummary {
@@ -1129,9 +1185,7 @@ impl AgentLoop {
                                     lats_telemetry: lats_telemetry.clone(),
                                     dpo_pairs: dpo_pairs.clone(),
                                     pnn_hot_reloads,
-                                    active_pnn_digest: active_tropical_driver
-                                        .as_ref()
-                                        .and_then(|d| d.network().map(|n| n.sha256_digest.clone())),
+                                    active_pnn_digest: active_digest,
                                     lats_memo_hits: lats_memo.hits(),
                                 }),
                                 messages: persisted_messages(
@@ -1147,7 +1201,10 @@ impl AgentLoop {
         }
 
         for turn in 1..=self.max_turns {
-            check_control(
+            let active_digest = active_tropical_driver
+                .as_ref()
+                .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+            if let Err(err) = check_control(
                 control,
                 AgentCheckpointKind::BeforeTurn,
                 turns,
@@ -1159,10 +1216,22 @@ impl AgentLoop {
                 &context_receipt,
                 &lats_telemetry,
                 &dpo_pairs,
+                pnn_hot_reloads,
+                active_digest.as_deref(),
+                lats_memo.hits(),
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
-            )?;
+            ) {
+                telemetry_persist.flush(
+                    pnn_hot_reloads,
+                    lats_memo.hits(),
+                    dpo_pairs.len(),
+                    active_digest.as_deref(),
+                    now.as_unix_seconds(),
+                );
+                return Err(err);
+            }
             let mut request = ModelRequest::new(
                 provider.manifest().id().clone(),
                 requested_model
@@ -1181,7 +1250,7 @@ impl AgentLoop {
             {
                 request = request.with_prompt_cache(PromptCacheTtl::FiveMinutes);
             }
-            check_control(
+            if let Err(err) = check_control(
                 control,
                 AgentCheckpointKind::BeforeProvider,
                 turns,
@@ -1193,10 +1262,22 @@ impl AgentLoop {
                 &context_receipt,
                 &lats_telemetry,
                 &dpo_pairs,
+                pnn_hot_reloads,
+                active_digest.as_deref(),
+                lats_memo.hits(),
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
-            )?;
+            ) {
+                telemetry_persist.flush(
+                    pnn_hot_reloads,
+                    lats_memo.hits(),
+                    dpo_pairs.len(),
+                    active_digest.as_deref(),
+                    now.as_unix_seconds(),
+                );
+                return Err(err);
+            }
             let invocation = controller
                 .invoke_provider(provider, request, &session, now)
                 .map_err(AgentLoopError::Execution)?;
@@ -1213,7 +1294,7 @@ impl AgentLoop {
             };
             usage = add_usage(&usage, response.usage());
             turns = turn;
-            check_control(
+            if let Err(err) = check_control(
                 control,
                 AgentCheckpointKind::AfterProvider,
                 turns,
@@ -1225,10 +1306,22 @@ impl AgentLoop {
                 &context_receipt,
                 &lats_telemetry,
                 &dpo_pairs,
+                pnn_hot_reloads,
+                active_digest.as_deref(),
+                lats_memo.hits(),
                 &messages,
                 persistent_context.as_ref(),
                 context_insert_index,
-            )?;
+            ) {
+                telemetry_persist.flush(
+                    pnn_hot_reloads,
+                    lats_memo.hits(),
+                    dpo_pairs.len(),
+                    active_digest.as_deref(),
+                    now.as_unix_seconds(),
+                );
+                return Err(err);
+            }
 
             if response.tool_calls().is_empty() {
                 if response.text().trim().is_empty() {
@@ -1273,6 +1366,13 @@ impl AgentLoop {
                         }
                         ToolExecution::Approval { reason, summary } => {
                             runs.push(summary);
+                            telemetry_persist.flush(
+                                pnn_hot_reloads,
+                                lats_memo.hits(),
+                                dpo_pairs.len(),
+                                active_digest.as_deref(),
+                                now.as_unix_seconds(),
+                            );
                             return Err(AgentLoopError::ApprovalRequired {
                                 reason,
                                 summary: Box::new(AgentRunSummary {
@@ -1290,11 +1390,7 @@ impl AgentLoop {
                                         lats_telemetry: lats_telemetry.clone(),
                                         dpo_pairs: dpo_pairs.clone(),
                                         pnn_hot_reloads,
-                                        active_pnn_digest: active_tropical_driver
-                                            .as_ref()
-                                            .and_then(|d| {
-                                                d.network().map(|n| n.sha256_digest.clone())
-                                            }),
+                                        active_pnn_digest: active_digest,
                                         lats_memo_hits: lats_memo.hits(),
                                     }),
                                     messages: persisted_messages(
@@ -1308,6 +1404,13 @@ impl AgentLoop {
                     }
                 }
 
+                telemetry_persist.flush(
+                    pnn_hot_reloads,
+                    lats_memo.hits(),
+                    dpo_pairs.len(),
+                    active_digest.as_deref(),
+                    now.as_unix_seconds(),
+                );
                 messages.push(ChatMessage::assistant(response.text())?);
                 return Ok(AgentRunSummary {
                     final_text: response.text().to_owned(),
@@ -1322,9 +1425,7 @@ impl AgentLoop {
                         lats_telemetry: lats_telemetry.clone(),
                         dpo_pairs: dpo_pairs.clone(),
                         pnn_hot_reloads,
-                        active_pnn_digest: active_tropical_driver
-                            .as_ref()
-                            .and_then(|d| d.network().map(|n| n.sha256_digest.clone())),
+                        active_pnn_digest: active_digest,
                         lats_memo_hits: lats_memo.hits(),
                     }),
                     messages: persisted_messages(
@@ -1337,6 +1438,13 @@ impl AgentLoop {
 
             let requested = response.tool_calls().len() as u32;
             if tool_calls.saturating_add(requested) > self.max_tool_calls {
+                telemetry_persist.flush(
+                    pnn_hot_reloads,
+                    lats_memo.hits(),
+                    dpo_pairs.len(),
+                    active_digest.as_deref(),
+                    now.as_unix_seconds(),
+                );
                 return Err(AgentLoopError::ToolBudgetExceeded);
             }
 
@@ -1345,7 +1453,10 @@ impl AgentLoop {
                     call,
                 ))?);
                 tool_calls = tool_calls.saturating_add(1);
-                check_control(
+                let active_digest = active_tropical_driver
+                    .as_ref()
+                    .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+                if let Err(err) = check_control(
                     control,
                     AgentCheckpointKind::BeforeEffectAuthorization,
                     turns,
@@ -1357,10 +1468,22 @@ impl AgentLoop {
                     &context_receipt,
                     &lats_telemetry,
                     &dpo_pairs,
+                    pnn_hot_reloads,
+                    active_digest.as_deref(),
+                    lats_memo.hits(),
                     &messages,
                     persistent_context.as_ref(),
                     context_insert_index,
-                )?;
+                ) {
+                    telemetry_persist.flush(
+                        pnn_hot_reloads,
+                        lats_memo.hits(),
+                        dpo_pairs.len(),
+                        active_digest.as_deref(),
+                        now.as_unix_seconds(),
+                    );
+                    return Err(err);
+                }
                 let lats_denied = if let (Some(lats), Some(live_driver)) =
                     (&self.lats_config, active_tropical_driver.clone())
                 {
@@ -1506,12 +1629,29 @@ impl AgentLoop {
                                     if let Some(batch_k) = lats.auto_calibrate_threshold
                                         && batch_k > 0
                                         && dpo_pairs.len().is_multiple_of(batch_k)
-                                        && let Some(reloaded) =
-                                            try_hot_reload_pnn(&live_driver, &dpo_pairs)
+                                        && let Some(outcome) = try_hot_reload_pnn_with_metrics(
+                                            &live_driver,
+                                            &dpo_pairs,
+                                        )
                                     {
-                                        active_tropical_driver = Some(Arc::new(reloaded));
+                                        telemetry_persist.record_phase_metrics(
+                                            outcome.wasserstein_summary,
+                                            outcome.martingale_summary,
+                                        );
+                                        let next_digest = outcome
+                                            .driver
+                                            .network()
+                                            .map(|n| n.sha256_digest.clone());
+                                        active_tropical_driver = Some(Arc::new(outcome.driver));
                                         pnn_hot_reloads = pnn_hot_reloads.saturating_add(1);
                                         lats_memo.clear();
+                                        telemetry_persist.flush(
+                                            pnn_hot_reloads,
+                                            lats_memo.hits(),
+                                            dpo_pairs.len(),
+                                            next_digest.as_deref(),
+                                            now.as_unix_seconds(),
+                                        );
                                     }
                                 }
                                 lats_telemetry.push(
@@ -1606,7 +1746,10 @@ impl AgentLoop {
                             Some(call.name()),
                             &result,
                         )?);
-                        check_control(
+                        let active_digest = active_tropical_driver
+                            .as_ref()
+                            .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+                        if let Err(err) = check_control(
                             control,
                             AgentCheckpointKind::AfterEffect,
                             turns,
@@ -1618,13 +1761,35 @@ impl AgentLoop {
                             &context_receipt,
                             &lats_telemetry,
                             &dpo_pairs,
+                            pnn_hot_reloads,
+                            active_digest.as_deref(),
+                            lats_memo.hits(),
                             &messages,
                             persistent_context.as_ref(),
                             context_insert_index,
-                        )?;
+                        ) {
+                            telemetry_persist.flush(
+                                pnn_hot_reloads,
+                                lats_memo.hits(),
+                                dpo_pairs.len(),
+                                active_digest.as_deref(),
+                                now.as_unix_seconds(),
+                            );
+                            return Err(err);
+                        }
                     }
                     ToolExecution::Approval { reason, summary } => {
                         runs.push(summary);
+                        let active_digest = active_tropical_driver
+                            .as_ref()
+                            .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+                        telemetry_persist.flush(
+                            pnn_hot_reloads,
+                            lats_memo.hits(),
+                            dpo_pairs.len(),
+                            active_digest.as_deref(),
+                            now.as_unix_seconds(),
+                        );
                         return Err(AgentLoopError::ApprovalRequired {
                             reason,
                             summary: Box::new(AgentRunSummary {
@@ -1640,9 +1805,7 @@ impl AgentLoop {
                                     lats_telemetry: lats_telemetry.clone(),
                                     dpo_pairs: dpo_pairs.clone(),
                                     pnn_hot_reloads,
-                                    active_pnn_digest: active_tropical_driver
-                                        .as_ref()
-                                        .and_then(|d| d.network().map(|n| n.sha256_digest.clone())),
+                                    active_pnn_digest: active_digest,
                                     lats_memo_hits: lats_memo.hits(),
                                 }),
                                 messages: persisted_messages(
@@ -1657,6 +1820,16 @@ impl AgentLoop {
             }
         }
 
+        let active_digest = active_tropical_driver
+            .as_ref()
+            .and_then(|d| d.network().map(|n| n.sha256_digest.clone()));
+        telemetry_persist.flush(
+            pnn_hot_reloads,
+            lats_memo.hits(),
+            dpo_pairs.len(),
+            active_digest.as_deref(),
+            now.as_unix_seconds(),
+        );
         Err(AgentLoopError::TurnBudgetExceeded)
     }
 
@@ -2251,6 +2424,9 @@ fn check_control(
     context_receipt: &ContextReceipt,
     lats_telemetry: &[LatsTurnTelemetry],
     dpo_pairs: &[pandora_types::DpoPair],
+    pnn_hot_reloads: u32,
+    active_pnn_digest: Option<&str>,
+    lats_memo_hits: u64,
     messages: &[ChatMessage],
     persistent_context: Option<&ChatMessage>,
     context_insert_index: usize,
@@ -2274,9 +2450,9 @@ fn check_control(
                     context_receipt: Box::new(context_receipt.clone()),
                     lats_telemetry: lats_telemetry.to_vec(),
                     dpo_pairs: dpo_pairs.to_vec(),
-                    pnn_hot_reloads: 0,
-                    active_pnn_digest: None,
-                    lats_memo_hits: 0,
+                    pnn_hot_reloads,
+                    active_pnn_digest: active_pnn_digest.map(str::to_owned),
+                    lats_memo_hits,
                 }),
                 messages: persisted_messages(messages, persistent_context, context_insert_index),
             }),
@@ -2532,10 +2708,94 @@ struct AgentRunContext<'a> {
 #[path = "agent_loop_tests.rs"]
 mod tests;
 
+struct AgentTelemetryPersistState<'a> {
+    path: Option<&'a Path>,
+    persisted_reloads: u32,
+    persisted_memo_hits: u64,
+    persisted_dpo_pairs: usize,
+    latest_wasserstein: Option<pandora_types::WassersteinTelemetrySummary>,
+    latest_martingale: Option<pandora_types::MartingaleTelemetrySummary>,
+}
+
+impl<'a> AgentTelemetryPersistState<'a> {
+    fn new(path: Option<&'a Path>) -> Self {
+        Self {
+            path,
+            persisted_reloads: 0,
+            persisted_memo_hits: 0,
+            persisted_dpo_pairs: 0,
+            latest_wasserstein: None,
+            latest_martingale: None,
+        }
+    }
+
+    fn record_phase_metrics(
+        &mut self,
+        wasserstein: pandora_types::WassersteinTelemetrySummary,
+        martingale: pandora_types::MartingaleTelemetrySummary,
+    ) {
+        self.latest_wasserstein = Some(wasserstein);
+        self.latest_martingale = Some(martingale);
+    }
+
+    fn flush(
+        &mut self,
+        reloads: u32,
+        memo_hits: u64,
+        dpo_pairs_len: usize,
+        active_pnn_digest: Option<&str>,
+        updated_at_unix: u64,
+    ) {
+        let Some(path) = self.path else {
+            return;
+        };
+        let delta_reloads = reloads.saturating_sub(self.persisted_reloads);
+        let delta_memo_hits = memo_hits.saturating_sub(self.persisted_memo_hits);
+        let delta_dpo = dpo_pairs_len.saturating_sub(self.persisted_dpo_pairs);
+        let mut snap = if path.is_file() {
+            crate::distillation::load_telemetry_snapshot(path).unwrap_or_default()
+        } else {
+            pandora_types::DistillationTelemetrySnapshot::default()
+        };
+        snap.pnn_hot_reloads = snap.pnn_hot_reloads.saturating_add(delta_reloads);
+        snap.lats_memo_hits = snap.lats_memo_hits.saturating_add(delta_memo_hits);
+        snap.dpo_pairs_total = snap.dpo_pairs_total.saturating_add(delta_dpo);
+        if let Some(digest) = active_pnn_digest {
+            snap.active_pnn_digest = Some(digest.to_owned());
+        }
+        if let Some(ref w) = self.latest_wasserstein {
+            snap.wasserstein_drift = Some(w.clone());
+        }
+        if let Some(ref m) = self.latest_martingale {
+            snap.martingale_canary = Some(m.clone());
+        }
+        snap.updated_at_unix = snap.updated_at_unix.max(updated_at_unix);
+        if crate::distillation::save_telemetry_snapshot(path, &snap).is_ok() {
+            self.persisted_reloads = reloads;
+            self.persisted_memo_hits = memo_hits;
+            self.persisted_dpo_pairs = dpo_pairs_len;
+        }
+    }
+}
+
+struct HotReloadOutcome {
+    driver: crate::decision_engine::TropicalDecisionDriver,
+    wasserstein_summary: pandora_types::WassersteinTelemetrySummary,
+    martingale_summary: pandora_types::MartingaleTelemetrySummary,
+}
+
+#[allow(dead_code)]
 fn try_hot_reload_pnn(
     current_driver: &crate::decision_engine::TropicalDecisionDriver,
     pairs: &[pandora_types::DpoPair],
 ) -> Option<crate::decision_engine::TropicalDecisionDriver> {
+    try_hot_reload_pnn_with_metrics(current_driver, pairs).map(|outcome| outcome.driver)
+}
+
+fn try_hot_reload_pnn_with_metrics(
+    current_driver: &crate::decision_engine::TropicalDecisionDriver,
+    pairs: &[pandora_types::DpoPair],
+) -> Option<HotReloadOutcome> {
     use crate::decision_engine::DecisionDriver;
     let base_net = current_driver
         .network()
@@ -2559,6 +2819,116 @@ fn try_hot_reload_pnn(
     let cand_report = suite
         .evaluate_driver("candidate", |q| candidate_driver.evaluate_question(q))
         .ok()?;
+
+    let mut base_points = Vec::with_capacity(suite.traces.len());
+    let mut base_losses = Vec::with_capacity(suite.traces.len());
+    let mut cand_points = Vec::with_capacity(suite.traces.len());
+    let mut cand_losses = Vec::with_capacity(suite.traces.len());
+
+    for ((trace, base_rec), cand_rec) in suite
+        .traces
+        .iter()
+        .zip(base_report.records.iter())
+        .zip(cand_report.records.iter())
+    {
+        let base_verdict = baseline_driver.evaluate_question(&trace.question).ok()?;
+        let base_exp_prob = base_verdict
+            .probabilities
+            .get(&trace.expected_label)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let base_probs: Vec<f64> = base_verdict.probabilities.values().copied().collect();
+        let base_entropy = crate::decision_engine::normalized_entropy(&base_probs);
+        base_points.push(vec![
+            base_verdict.confidence.clamp(0.0, 1.0),
+            base_verdict.margin.clamp(0.0, 1.0),
+            base_exp_prob,
+            base_entropy.clamp(0.0, 1.0),
+            if base_rec.is_correct { 1.0 } else { 0.0 },
+        ]);
+        base_losses.push(
+            (0.5 * (1.0 - base_exp_prob) + if base_rec.is_correct { 0.0 } else { 0.5 })
+                .clamp(0.0, 1.0),
+        );
+
+        let cand_verdict = candidate_driver.evaluate_question(&trace.question).ok()?;
+        let cand_exp_prob = cand_verdict
+            .probabilities
+            .get(&trace.expected_label)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let cand_probs: Vec<f64> = cand_verdict.probabilities.values().copied().collect();
+        let cand_entropy = crate::decision_engine::normalized_entropy(&cand_probs);
+        cand_points.push(vec![
+            cand_verdict.confidence.clamp(0.0, 1.0),
+            cand_verdict.margin.clamp(0.0, 1.0),
+            cand_exp_prob,
+            cand_entropy.clamp(0.0, 1.0),
+            if cand_rec.is_correct { 1.0 } else { 0.0 },
+        ]);
+        cand_losses.push(
+            (0.5 * (1.0 - cand_exp_prob) + if cand_rec.is_correct { 0.0 } else { 0.5 })
+                .clamp(0.0, 1.0),
+        );
+    }
+
+    let mu = crate::wasserstein_drift::EmpiricalDistribution::uniform(base_points).ok()?;
+    let nu = crate::wasserstein_drift::EmpiricalDistribution::uniform(cand_points).ok()?;
+    let detector =
+        crate::wasserstein_drift::SinkhornDriftDetector::new(0.10, 200, 1e-6, 0.50).ok()?;
+    let drift_report = detector.evaluate_drift(&mu, &nu).ok()?;
+    let wasserstein_summary = pandora_types::WassersteinTelemetrySummary::new(
+        drift_report.sinkhorn_divergence,
+        drift_report.wasserstein_2_distance,
+        drift_report.birkhoff_contraction_factor,
+        drift_report.theoretical_entropic_bias_bound,
+        drift_report.drift_threshold,
+        drift_report.drift_detected,
+        drift_report.iterations,
+        drift_report.final_dual_residual,
+        drift_report.marginal_conservation_error,
+    )
+    .ok()?;
+
+    let mut martingale_gate =
+        crate::martingale_gate::MartingaleCanaryGate::new(0.05, 0.50, 1).ok()?;
+    let mut martingale_snap = martingale_gate.snapshot().ok()?;
+    for (&base_loss, &cand_loss) in base_losses.iter().zip(cand_losses.iter()) {
+        let x_t = (cand_loss - base_loss).clamp(-1.0, 1.0);
+        martingale_snap = martingale_gate.observe(x_t).ok()?;
+    }
+    let radius = if martingale_snap.confidence_radius.is_finite() {
+        martingale_snap.confidence_radius
+    } else {
+        1.0
+    };
+    let lower = if martingale_snap.lower_confidence_bound.is_finite() {
+        martingale_snap.lower_confidence_bound
+    } else {
+        martingale_snap.empirical_mean - radius
+    };
+    let upper = if martingale_snap.upper_confidence_bound.is_finite() {
+        martingale_snap.upper_confidence_bound
+    } else {
+        martingale_snap.empirical_mean + radius
+    };
+    let martingale_summary = pandora_types::MartingaleTelemetrySummary::new(
+        martingale_snap.step_t,
+        martingale_snap.e_value,
+        martingale_snap.peak_e_value,
+        martingale_snap.anytime_p_value,
+        martingale_snap.ville_rejection_threshold,
+        martingale_snap.empirical_mean,
+        radius,
+        lower,
+        upper,
+        martingale_snap.betting_fraction_lambda,
+        martingale_snap.verdict.as_str(),
+    )
+    .ok()?;
+
     let gate = crate::evolution::BayesianCanaryGate::default();
     let base_canary = gate.evaluate(
         base_report.correct_count as u32,
@@ -2578,9 +2948,150 @@ fn try_hot_reload_pnn(
     let non_regression = cand_report.branch_selection_accuracy + 1e-9
         >= base_report.branch_selection_accuracy
         && cand_report.mean_margin > 0.0;
-    if non_regression && cand_verdict.promoted {
-        Some(candidate_driver)
+    let drift_passed = !drift_report.drift_detected;
+    let martingale_passed = martingale_snap.verdict
+        != crate::martingale_gate::CanaryGateVerdict::RollbackRegression
+        && martingale_snap.e_value < martingale_snap.ville_rejection_threshold;
+
+    if non_regression && cand_verdict.promoted && drift_passed && martingale_passed {
+        Some(HotReloadOutcome {
+            driver: candidate_driver,
+            wasserstein_summary,
+            martingale_summary,
+        })
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod m3_agent_telemetry_tests {
+    use super::*;
+    use pandora_types::{
+        DistillationTelemetrySnapshot, DpoPair, MartingaleTelemetrySummary,
+        WassersteinTelemetrySummary,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static AGENT_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct StopControl;
+    impl AgentRunControl for StopControl {
+        fn checkpoint(&self, _checkpoint: AgentCheckpoint) -> Result<(), AgentControlStop> {
+            Err(AgentControlStop::Cancelled)
+        }
+    }
+
+    #[test]
+    fn check_control_propagates_live_pnn_and_memo_telemetry_on_controlled_stop() {
+        let context_receipt = ContextReceipt::new(vec![], vec![], 0, true);
+        let usage = TokenUsage::default();
+        let ctrl = StopControl;
+        let err = check_control(
+            Some(&ctrl),
+            AgentCheckpointKind::BeforeTurn,
+            2,
+            3,
+            &usage,
+            &[],
+            &[],
+            &[],
+            &context_receipt,
+            &[],
+            &[],
+            4,
+            Some("pnn-digest-abc123"),
+            17,
+            &[],
+            None,
+            0,
+        )
+        .expect_err("control stops execution");
+
+        match err {
+            AgentLoopError::ControlledStop { summary, .. } => {
+                assert_eq!(summary.pnn_hot_reloads(), 4);
+                assert_eq!(summary.active_pnn_digest(), Some("pnn-digest-abc123"));
+                assert_eq!(summary.lats_memo_hits(), 17);
+            }
+            other => panic!("expected ControlledStop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn telemetry_persist_state_preserves_existing_capsule_and_phase_summaries_without_double_count()
+    {
+        let id = AGENT_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "pandora_agent_telemetry_test_{}_{id}",
+            std::process::id()
+        ));
+        let path = dir.join("cockpit_telemetry.json");
+
+        let w =
+            WassersteinTelemetrySummary::new(0.02, 0.1414, 0.3, 0.01, 0.5, false, 12, 1e-7, 1e-8)
+                .expect("w");
+        let m = MartingaleTelemetrySummary::new(
+            5,
+            0.9,
+            1.1,
+            0.9,
+            20.0,
+            -0.01,
+            0.2,
+            -0.21,
+            0.19,
+            0.2,
+            "continue_monitoring",
+        )
+        .expect("m");
+        let initial = DistillationTelemetrySnapshot::new()
+            .with_runtime_counters(1, 10, Some("initial-digest".to_owned()))
+            .with_distillation_artifacts(
+                5,
+                Some("cap-existing".to_owned()),
+                Some("cap-digest-existing".to_owned()),
+                Some("commit-existing".to_owned()),
+                true,
+            )
+            .with_phase_metrics(Some(w), Some(m), 500);
+        crate::distillation::save_telemetry_snapshot(&path, &initial).expect("save initial");
+
+        let mut state = AgentTelemetryPersistState::new(Some(&path));
+        state.flush(1, 3, 2, Some("reloaded-digest"), 600);
+        state.flush(1, 5, 2, Some("reloaded-digest"), 700);
+
+        let loaded = crate::distillation::load_telemetry_snapshot(&path).expect("load");
+        assert_eq!(loaded.pnn_hot_reloads, 2);
+        assert_eq!(loaded.lats_memo_hits, 15);
+        assert_eq!(loaded.dpo_pairs_total, 7);
+        assert_eq!(loaded.active_pnn_digest.as_deref(), Some("reloaded-digest"));
+        assert_eq!(loaded.last_capsule_id.as_deref(), Some("cap-existing"));
+        assert!(loaded.last_attestation_verified);
+        assert!(loaded.wasserstein_drift.is_some());
+        assert!(loaded.martingale_canary.is_some());
+        assert_eq!(loaded.updated_at_unix, 700);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn try_hot_reload_pnn_with_metrics_evaluates_phase13_and_phase14_when_promoted() {
+        let driver = crate::decision_engine::TropicalDecisionDriver::new(Some(
+            crate::decision_engine::TropicalDecisionDriver::calibrated_network(),
+        ));
+        let pairs = vec![DpoPair {
+            id: "pair-1".to_owned(),
+            prompt: "tool safety turn 1: workspace.verify {}".to_owned(),
+            chosen: "allow".to_owned(),
+            rejected: "reject".to_owned(),
+            margin: 0.9,
+        }];
+        if let Some(outcome) = try_hot_reload_pnn_with_metrics(&driver, &pairs) {
+            assert!(!outcome.wasserstein_summary.drift_detected);
+            assert!(outcome.wasserstein_summary.is_finite());
+            assert!(outcome.martingale_summary.is_finite());
+            assert_ne!(outcome.martingale_summary.verdict, "rollback_regression");
+        }
     }
 }

@@ -380,7 +380,7 @@ pub(crate) fn parse_options(args: &[String], allowed: &[&str]) -> Result<ParsedA
 }
 
 fn is_repeatable(name: &str) -> bool {
-    matches!(name, "param")
+    matches!(name, "param" | "session-path")
 }
 
 fn is_flag(name: &str) -> bool {
@@ -426,6 +426,8 @@ fn is_flag(name: &str) -> bool {
             | "quantized"
             | "simulate"
             | "tropical"
+            | "require-signature"
+            | "require-capsule"
     )
 }
 

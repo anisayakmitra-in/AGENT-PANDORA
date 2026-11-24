@@ -201,11 +201,21 @@ class PandoraClient {
         return this.run(args, runOptions);
     }
     async modelVerifyAttestation(pnnPath, overrideOptions = {}) {
+        const { workspace, config, dataDir, ...runOptions } = overrideOptions;
         const args = ["model", "verify-attestation"];
         if (pnnPath !== undefined && pnnPath.trim().length > 0) {
             args.push("--pnn", pnnPath);
         }
-        return this.run(args, overrideOptions);
+        if (workspace !== undefined && workspace.trim().length > 0) {
+            args.push("--workspace", workspace);
+        }
+        if (config !== undefined && config.trim().length > 0) {
+            args.push("--config", config);
+        }
+        if (dataDir !== undefined && dataDir.trim().length > 0) {
+            args.push("--data-dir", dataDir);
+        }
+        return this.run(args, runOptions);
     }
 }
 exports.PandoraClient = PandoraClient;

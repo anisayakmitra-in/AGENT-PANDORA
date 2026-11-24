@@ -131,6 +131,8 @@ pub(super) fn execute_with_control(
             "lats-depth",
             "puct-c",
             "escalation-threshold",
+            "auto-calibrate",
+            "dpo-output",
             "hooks",
             "trusted-process",
             "mode",
@@ -236,6 +238,23 @@ pub(super) fn execute_with_control(
     } else {
         None
     };
+    let auto_calibrate = if let Some(raw) = parsed.value("auto-calibrate") {
+        if strategy != Some("lats") {
+            return Err(CliError::usage("--auto-calibrate requires --strategy lats"));
+        }
+        let k = raw
+            .parse::<usize>()
+            .map_err(|_| CliError::usage("--auto-calibrate must be a positive integer"))?;
+        if k == 0 {
+            return Err(CliError::usage(
+                "--auto-calibrate must be a positive integer",
+            ));
+        }
+        Some(k)
+    } else {
+        None
+    };
+    let dpo_output = parsed.value("dpo-output").map(std::path::PathBuf::from);
     let is_goal = parsed.has_flag("goal")
         || parsed.value("goal").is_some()
         || parsed
@@ -482,6 +501,8 @@ pub(super) fn execute_with_control(
                 escalation_threshold,
                 tool_profile,
                 explicit_tools,
+                auto_calibrate,
+                dpo_output,
             },
         )?;
         if let Some((manager, ctx)) = goal_worktree {
@@ -1141,14 +1162,20 @@ pub(super) fn execute_agent_core(
             10_000_000,
         )
         .map_err(|error| CliError::execution(error.to_string(), json!({})))?;
-        loop_engine = loop_engine.with_lats(pandora_runtime::LatsLoopConfig {
+        let mut lats_cfg = pandora_runtime::LatsLoopConfig {
             budget,
             puct_c,
             escalation_threshold,
             tropical_driver: std::sync::Arc::clone(&tropical_driver),
-            auto_calibrate_threshold: None,
+            auto_calibrate_threshold: options.auto_calibrate,
             enable_memo: true,
-        });
+        };
+        if let Some(ref dpo_out) = options.dpo_output {
+            lats_cfg = lats_cfg.with_dpo_output_path(dpo_out.clone());
+        }
+        loop_engine = loop_engine
+            .with_lats(lats_cfg)
+            .with_telemetry_path(config.data_dir().join("cockpit_telemetry.json"));
         let lats_engine =
             pandora_runtime::LatsEngine::new_with_tropical(budget, tropical_driver.clone())
                 .with_puct(puct_c)
@@ -1252,6 +1279,9 @@ pub(super) fn execute_agent_core(
                 lats_metrics.as_ref(),
                 lats_escalated,
                 summary.lats_telemetry(),
+                summary.pnn_hot_reloads(),
+                summary.active_pnn_digest(),
+                summary.lats_memo_hits(),
             );
             let (total_rollouts, max_depth, best_val) =
                 aggregate_lats_summary(lats_metrics.as_ref(), summary.lats_telemetry());
@@ -1351,6 +1381,9 @@ pub(super) fn execute_agent_core(
                         lats_metrics.as_ref(),
                         lats_escalated,
                         summary.lats_telemetry(),
+                        summary.pnn_hot_reloads(),
+                        summary.active_pnn_digest(),
+                        summary.lats_memo_hits(),
                     ),
                     "turns": summary.turns(),
                     "tool_calls": summary.tool_calls(),
@@ -1413,6 +1446,9 @@ pub(super) fn execute_agent_core(
                         lats_metrics.as_ref(),
                         lats_escalated,
                         summary.lats_telemetry(),
+                        summary.pnn_hot_reloads(),
+                        summary.active_pnn_digest(),
+                        summary.lats_memo_hits(),
                     ),
                     "resume": {
                         "session_id": session.id(),
@@ -1533,6 +1569,9 @@ fn aggregate_lats_metrics_json(
     pre_loop: Option<&pandora_runtime::LatsSearchMetrics>,
     pre_escalated: bool,
     telemetry: &[pandora_runtime::LatsTurnTelemetry],
+    pnn_hot_reloads: u32,
+    active_pnn_digest: Option<&str>,
+    lats_memo_hits: u64,
 ) -> Value {
     if pre_loop.is_none() && telemetry.is_empty() {
         return Value::Null;
@@ -1585,6 +1624,9 @@ fn aggregate_lats_metrics_json(
         "turn_escalations": turn_escalations,
         "dpo_pairs_emitted": dpo_pairs_emitted,
         "memo_hits": memo_hits,
+        "pnn_hot_reloads": pnn_hot_reloads,
+        "active_pnn_digest": active_pnn_digest,
+        "lats_memo_hits": lats_memo_hits,
         "turns": turns_json,
     })
 }
@@ -1752,6 +1794,8 @@ pub(super) struct AgentOptions<'a> {
     pub escalation_threshold: Option<f64>,
     pub tool_profile: Option<pandora_runtime::ToolProfile>,
     pub explicit_tools: Option<Vec<String>>,
+    pub auto_calibrate: Option<usize>,
+    pub dpo_output: Option<std::path::PathBuf>,
 }
 
 fn parse_agent_budget(
@@ -3395,7 +3439,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_lats_metrics_includes_turn_telemetry() {
-        assert!(aggregate_lats_metrics_json(None, false, &[]).is_null());
+        assert!(aggregate_lats_metrics_json(None, false, &[], 0, None, 0).is_null());
 
         let pre = pandora_runtime::LatsSearchMetrics {
             rollouts: 10,
@@ -3427,7 +3471,14 @@ mod tests {
             ),
         ];
 
-        let agg = aggregate_lats_metrics_json(Some(&pre), false, &telemetry);
+        let agg = aggregate_lats_metrics_json(
+            Some(&pre),
+            false,
+            &telemetry,
+            3,
+            Some("test-pnn-digest"),
+            7,
+        );
         assert_eq!(agg["rollouts"], 16);
         assert_eq!(agg["turn_rollouts"], 6);
         assert_eq!(agg["turn_escalations"], 1);
@@ -3436,6 +3487,9 @@ mod tests {
         assert_eq!(agg["best_action"], 0);
         assert_eq!(agg["best_value"], 0.91);
         assert_eq!(agg["escalated"], true);
+        assert_eq!(agg["pnn_hot_reloads"], 3);
+        assert_eq!(agg["active_pnn_digest"], "test-pnn-digest");
+        assert_eq!(agg["lats_memo_hits"], 7);
         assert_eq!(agg["turns"].as_array().unwrap().len(), 2);
         assert_eq!(agg["turns"][1]["tool_name"], "workspace.patch");
     }

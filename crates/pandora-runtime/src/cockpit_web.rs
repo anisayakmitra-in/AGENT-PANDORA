@@ -259,22 +259,39 @@ pub const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
             document.getElementById("sparkline-rate").textContent = pct + "% NOMINAL";
         }
 
+        function escapeHtml(val) {
+            return String(val ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
         function renderSnapshot(snap) {
             if (!snap) return;
             currentLayout = snap.layout || currentLayout;
             const matrix = document.getElementById("matrix");
             matrix.className = currentLayout === "nine_panel" ? "grid-9" : "grid-12";
-            const healthy = snap.healthy_panels || snap.panel_count || 12;
+            const healthy = snap.healthy_panels ?? snap.panel_count ?? 12;
             const total = snap.panel_count || 12;
             document.getElementById("health-pill").textContent = healthy + "/" + total + " HEALTHY";
             updateSparkline(healthy / Math.max(total, 1));
             if (Array.isArray(snap.panels)) {
-                matrix.innerHTML = snap.panels.map(p => `
+                matrix.innerHTML = snap.panels.map(p => {
+                    const metricsHtml = p.metrics && typeof p.metrics === "object"
+                        ? Object.entries(p.metrics).map(([k, v]) => `
+                            <div class="metric-row"><span>${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>
+                        `).join("")
+                        : "";
+                    return `
                     <div class="panel-card">
-                        <div class="panel-title"><span>${p.title}</span><span>${(p.health || "healthy").toUpperCase()}</span></div>
-                        <div class="panel-headline">${p.headline || ""}</div>
+                        <div class="panel-title"><span>${escapeHtml(p.title)}</span><span>${escapeHtml((p.health || "healthy").toUpperCase())}</span></div>
+                        <div class="panel-headline">${escapeHtml(p.headline || "")}</div>
+                        <div class="panel-metrics">${metricsHtml}</div>
                     </div>
-                `).join("");
+                `;
+                }).join("");
             }
         }
 
@@ -2501,17 +2518,43 @@ impl CockpitWebServer {
         }
     }
 
+    /// Configure a live telemetry snapshot path on the server's [`CockpitController`].
+    pub fn with_telemetry_path(self, path: impl Into<std::path::PathBuf>) -> Self {
+        let path = path.into();
+        if let Ok(mut guard) = self.controller.lock() {
+            guard.set_telemetry_path(Some(path));
+        }
+        self
+    }
+
+    /// Return a cloneable handle to the cockpit controller.
+    pub fn controller_handle(&self) -> Arc<Mutex<CockpitController>> {
+        Arc::clone(&self.controller)
+    }
+
     /// Signal the server loop to stop cleanly.
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::SeqCst);
     }
 
-    /// Capture a current snapshot JSON value with status and digest metadata.
+    /// Capture a current snapshot JSON value with status, digest, and live distillation telemetry metadata.
     pub fn current_snapshot_json(controller: &Arc<Mutex<CockpitController>>) -> Value {
         let now_ms = current_epoch_ms();
-        let snap: CockpitSnapshot = match controller.lock() {
-            Ok(guard) => guard.capture_snapshot(now_ms),
-            Err(poisoned) => poisoned.into_inner().capture_snapshot(now_ms),
+        let (snap, telemetry): (
+            CockpitSnapshot,
+            Option<pandora_types::DistillationTelemetrySnapshot>,
+        ) = match controller.lock() {
+            Ok(guard) => {
+                let t = guard.load_telemetry();
+                let s = guard.capture_snapshot_with_telemetry(now_ms, t.as_ref());
+                (s, t)
+            }
+            Err(poisoned) => {
+                let guard = poisoned.into_inner();
+                let t = guard.load_telemetry();
+                let s = guard.capture_snapshot_with_telemetry(now_ms, t.as_ref());
+                (s, t)
+            }
         };
         let mut val = serde_json::to_value(&snap).unwrap_or_else(|_| json!({}));
         if let Some(obj) = val.as_object_mut() {
@@ -2526,6 +2569,9 @@ impl CockpitWebServer {
                     "snapshot_digest".to_string(),
                     json!(format!("PANDORA_COCKPIT_V1:{digest}")),
                 );
+            }
+            if let Some(t) = telemetry {
+                obj.insert("telemetry".to_string(), json!(t));
             }
         }
         val
@@ -3096,7 +3142,7 @@ fn handle_connection(
                                                 CockpitLayout::parse(layout_str)
                                         {
                                             if let Ok(mut guard) = controller.lock() {
-                                                *guard = CockpitController::new(new_layout);
+                                                guard.set_layout(new_layout);
                                             }
                                             let snap = CockpitWebServer::current_snapshot_json(
                                                 &controller,
@@ -3239,7 +3285,7 @@ fn handle_connection(
                 if let Some(target_str) = json_body.get("layout").and_then(Value::as_str) {
                     if let Some(new_layout) = CockpitLayout::parse(target_str) {
                         if let Ok(mut guard) = controller.lock() {
-                            *guard = CockpitController::new(new_layout);
+                            guard.set_layout(new_layout);
                         }
                         let snap_val = CockpitWebServer::current_snapshot_json(&controller);
                         let now_ms = current_epoch_ms();
@@ -3558,4 +3604,82 @@ fn default_consensus_proposals() -> Vec<AgentPatchProposal> {
             200,
         ),
     ]
+}
+
+#[cfg(test)]
+mod m3_web_telemetry_tests {
+    use super::*;
+    use pandora_types::{
+        DistillationTelemetrySnapshot, MartingaleTelemetrySummary, WassersteinTelemetrySummary,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static WEB_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn web_snapshot_json_surfaces_live_metrics_and_preserves_telemetry_path_on_layout_switch() {
+        let id = WEB_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "pandora_cockpit_web_test_{}_{id}",
+            std::process::id()
+        ));
+        let tpath = dir.join("cockpit_telemetry.json");
+        let w =
+            WassersteinTelemetrySummary::new(0.04, 0.20, 0.35, 0.01, 0.50, false, 10, 1e-7, 1e-8)
+                .expect("w");
+        let m = MartingaleTelemetrySummary::new(
+            4,
+            1.15,
+            1.15,
+            0.869,
+            20.0,
+            -0.02,
+            0.25,
+            -0.27,
+            0.23,
+            0.2,
+            "continue_monitoring",
+        )
+        .expect("m");
+        let snap = DistillationTelemetrySnapshot::new()
+            .with_runtime_counters(2, 19, Some("abcd1234ef567890".to_owned()))
+            .with_phase_metrics(Some(w), Some(m), 999);
+        crate::distillation::save_telemetry_snapshot(&tpath, &snap).expect("save");
+
+        let controller = Arc::new(Mutex::new(
+            CockpitController::new(CockpitLayout::TwelvePanel).with_telemetry_path(&tpath),
+        ));
+        let json_val = CockpitWebServer::current_snapshot_json(&controller);
+        assert_eq!(json_val["status"], "ok");
+        assert_eq!(json_val["telemetry"]["pnn_hot_reloads"], 2);
+        assert_eq!(json_val["telemetry"]["lats_memo_hits"], 19);
+        assert_eq!(
+            json_val["telemetry"]["active_pnn_digest"],
+            "abcd1234ef567890"
+        );
+
+        let panels = json_val["panels"].as_array().expect("panels array");
+        let drift = panels
+            .iter()
+            .find(|p| p["title"] == "[09:Drift-Conformal]")
+            .expect("drift panel");
+        assert_eq!(drift["metrics"]["wasserstein_w2"], "0.200000");
+        assert_eq!(drift["metrics"]["martingale_e_value"], "1.150000");
+        assert_eq!(drift["metrics"]["pnn_hot_reloads"], "2");
+
+        // Toggling layout via set_layout preserves telemetry_path.
+        controller
+            .lock()
+            .expect("lock")
+            .set_layout(CockpitLayout::NinePanel);
+        let after = CockpitWebServer::current_snapshot_json(&controller);
+        assert_eq!(after["panel_count"], 9);
+        assert_eq!(after["telemetry"]["lats_memo_hits"], 19);
+
+        // DASHBOARD_HTML renders panel metrics rows.
+        assert!(DASHBOARD_HTML.contains("p.metrics"));
+        assert!(DASHBOARD_HTML.contains("metric-row"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

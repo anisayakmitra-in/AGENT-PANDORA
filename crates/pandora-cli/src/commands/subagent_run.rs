@@ -83,6 +83,8 @@ pub(crate) fn execute_trusted_subagent(input: TrustedSubagentRun<'_>) -> Result<
             escalation_threshold: None,
             tool_profile: None,
             explicit_tools: None,
+            auto_calibrate: None,
+            dpo_output: None,
         },
     )?;
     Ok(result.data)

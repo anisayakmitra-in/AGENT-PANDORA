@@ -714,9 +714,15 @@ fn capsule_import(args: &[String]) -> Result<CommandResult, CliError> {
             json!({}),
         )
     })?;
-    let capsule: MemoryCapsule = serde_json::from_slice(&content).map_err(|e| {
-        CliError::execution(format!("failed to parse memory capsule: {e}"), json!({}))
-    })?;
+    let capsule: MemoryCapsule = if let Ok(package) =
+        serde_json::from_slice::<pandora_runtime::SignedCapsulePackage>(&content)
+    {
+        package.capsule
+    } else {
+        serde_json::from_slice(&content).map_err(|e| {
+            CliError::execution(format!("failed to parse memory capsule: {e}"), json!({}))
+        })?
+    };
 
     capsule.validate().map_err(|e| {
         let message = match e {
