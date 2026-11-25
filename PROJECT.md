@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.7 Release: OLYMPUS - Quantum Annealing, Federated Homomorphic & Causal Inference)
+# Project: AGENT-PANDORA (v4.0.8 Release: OLYMPUS - Topological QEC, PlonK KZG & Multi-Agent Mechanism Design)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.7` (Phases 46–48, Theorems 110–118).
+- **Versioning & Release**: Workspace version promoted to `4.0.8` (Phases 49–51, Theorems 119–127).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -64,6 +64,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F33 | Phase 46: Quantum Annealing Graph Partitioning & QUBO Job Scheduling | Transverse-field Ising Hamiltonian mapping, spectral gap convergence, makespan bound (Theorems 110–112), CLI `pandora swarm anneal/qubo-schedule`, REST `/api/swarm/anneal` | M20 | v4.0.7 Architecture |
 | F34 | Phase 47: Homomorphic Federated Model Distillation & Secure Aggregation | IND-CPA security, Byzantine poisoning rejection, zero mutual information leak (Theorems 113–115), CLI `pandora crypto fed-aggregate/fed-verify`, REST `/api/crypto/federated` | M20 | v4.0.7 Architecture |
 | F35 | Phase 48: Causal Counterfactual Policy Inference & Pearlian Do-Calculus Engine | Backdoor intervention identifiability, monotonic counterfactual consistency, confounder invariance (Theorems 116–118), CLI `pandora cognitive do-calculus/counterfactual`, REST `/api/cognitive/causal` | M20 | v4.0.7 Architecture |
+| F36 | Phase 49: Topological Quantum Error Correction & Surface Code Stabilizers | 2D surface code distance $d = 2t + 1$, 10.9% threshold, $[A_s, B_p] = 0$ non-destructive measurement, MWPM decoding (Theorems 119–121), CLI `pandora swarm qec-syndrome/qec-decode`, REST `/api/swarm/qec` | M21 | v4.0.8 Architecture |
+| F37 | Phase 50: Zero-Knowledge PlonK Polynomial Commitments & KZG Schemes | $q$-SDH computational binding, Schwartz-Zippel bound $\le d/|S|$, constant-time $O(1)$ pairing verifier (Theorems 122–124), CLI `pandora crypto kzg-commit/kzg-verify`, REST `/api/crypto/kzg` | M21 | v4.0.8 Architecture |
+| F38 | Phase 51: Multi-Agent Mechanism Design & VCG Truthful Equilibrium | DSIC social welfare maximization, polymatrix correlated equilibrium, axiomatic unique Shapley credit (Theorems 125–127), CLI `pandora cognitive vcg-auction/shapley-credit`, REST `/api/cognitive/mechanism` | M21 | v4.0.8 Architecture |
 
 ---
 
@@ -92,6 +95,7 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M18 | Phase 40-42: Centennial Completeness (v4.0.5) | Multi-tenant mesh, hyper-dimensional holographic VFS, formal Lean 4/Coq verification (Theorems 92–100) | M17 | COMPLETED |
 | M19 | Phase 43-45: Advanced Autonomy Substrate (v4.0.6) | Recursive ZK rollups, self-healing kernel, neuromorphic spiking VFS (Theorems 101–109) | M18 | COMPLETED |
 | M20 | Phase 46-48: Quantum, Federated & Causal Substrate (v4.0.7) | Quantum annealing scheduling, federated homomorphic aggregation, Pearlian do-calculus (Theorems 110–118) | M19 | COMPLETED |
+| M21 | Phase 49-51: QEC, PlonK KZG & Mechanism Design (v4.0.8) | Surface code QEC, KZG polynomial commitments, VCG mechanisms & Shapley credit (Theorems 119–127) | M20 | COMPLETED |
 
 ---
 

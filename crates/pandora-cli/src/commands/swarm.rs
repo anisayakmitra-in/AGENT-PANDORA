@@ -58,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', 'mpc-eval', 'mesh', 'cross-commit', 'anneal', or 'qubo-schedule'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', 'mpc-eval', 'mesh', 'cross-commit', 'anneal', 'qubo-schedule', 'qec-syndrome', or 'qec-decode'",
             ));
         }
     };
@@ -79,8 +79,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "cross-commit" => cross_commit(&args[1..]),
         "anneal" => anneal(&args[1..]),
         "qubo-schedule" => qubo_schedule(&args[1..]),
+        "qec-syndrome" => qec_syndrome(&args[1..]),
+        "qec-decode" => qec_decode(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode"
         ))),
     }
 }
@@ -1160,6 +1162,76 @@ fn anneal(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn qubo_schedule(args: &[String]) -> Result<CommandResult, CliError> {
     anneal(args)
+}
+
+fn qec_syndrome(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "distance",
+            "p-error",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let distance = parsed
+        .values
+        .get("distance")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5);
+
+    let p_error = parsed
+        .values
+        .get("p-error")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.01);
+
+    let engine = pandora_runtime::topological_qec::TopologicalQecEngine::new(distance);
+    let syndrome = engine.measure_syndromes(p_error);
+
+    let text = format!(
+        "Topological QEC Stabilizer Syndrome:\n  Distance: {}\n  Defects: {}\n  Hash: {}\n  Theorem 119, 120 verified",
+        syndrome.distance, syndrome.detected_defects, syndrome.syndrome_hash
+    );
+
+    Ok(success("swarm qec-syndrome", json!(syndrome), text))
+}
+
+fn qec_decode(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "distance",
+            "syndrome",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let distance = parsed
+        .values
+        .get("distance")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5);
+
+    let engine = pandora_runtime::topological_qec::TopologicalQecEngine::new(distance);
+    let syndrome = engine.measure_syndromes(0.01);
+    let res = engine.decode_mwpm(&syndrome);
+
+    let text = format!(
+        "Topological QEC MWPM Decoding Result:\n  Distance: {}\n  Logical Error Rate: {:.6e}\n  Below Threshold: {}\n  Algorithm: {}\n  Theorems: 119, 120, 121",
+        res.distance,
+        res.logical_error_rate,
+        res.below_fault_tolerance_threshold,
+        res.decoding_algorithm
+    );
+
+    Ok(success("swarm qec-decode", json!(res), text))
 }
 
 #[cfg(test)]

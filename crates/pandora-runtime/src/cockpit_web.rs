@@ -3053,6 +3053,21 @@ fn handle_connection(
                 engine.evaluate_intervention("action_policy", "safe_explore", "system_reward");
             write_json_response(&mut stream, 200, "OK", &json!(result))?;
         }
+        ("GET", "/api/swarm/qec") => {
+            let engine = crate::topological_qec::TopologicalQecEngine::new(5);
+            let audit = engine.audit_theorems();
+            write_json_response(&mut stream, 200, "OK", &audit)?;
+        }
+        ("GET", "/api/crypto/kzg") => {
+            let scheme = crate::kzg_commitment::KzgScheme::new(32);
+            let audit = scheme.audit_theorems();
+            write_json_response(&mut stream, 200, "OK", &audit)?;
+        }
+        ("GET", "/api/cognitive/mechanism") => {
+            let engine = crate::game_mechanism::GameMechanismEngine::new(4);
+            let audit = engine.audit_theorems();
+            write_json_response(&mut stream, 200, "OK", &audit)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

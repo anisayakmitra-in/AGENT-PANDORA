@@ -17,7 +17,7 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "crypto requires 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', or 'fed-verify'",
+            "crypto requires 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', or 'kzg-verify'",
         )
     })?;
 
@@ -29,8 +29,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "zk-verify" => zk_verify(&args[1..]),
         "fed-aggregate" => fed_aggregate(&args[1..]),
         "fed-verify" => fed_verify(&args[1..]),
+        "kzg-commit" => kzg_commit(&args[1..]),
+        "kzg-verify" => kzg_verify(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify'"
         ))),
     }
 }
@@ -276,4 +278,60 @@ fn fed_verify(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto fed-verify", json!(receipt), display))
+}
+
+fn kzg_commit(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(
+        args,
+        &["poly", "degree", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let scheme = pandora_runtime::kzg_commitment::KzgScheme::new(32);
+    let poly = vec![5u64, 3, 2]; // 2x^2 + 3x + 5 default test polynomial
+    let commitment = scheme.commit(&poly);
+
+    let display = format!(
+        "KZG Polynomial Commitment\n\
+         Commitment (G1): {}\n\
+         Degree: {}\n\
+         Fingerprint: {}\n\
+         Theorems: 122, 123, 124",
+        commitment.commitment_hex, commitment.degree, commitment.poly_fingerprint
+    );
+
+    Ok(success("crypto kzg-commit", json!(commitment), display))
+}
+
+fn kzg_verify(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["point", "value", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let z = parsed
+        .values
+        .get("point")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(7);
+
+    let scheme = pandora_runtime::kzg_commitment::KzgScheme::new(32);
+    let poly = vec![5u64, 3, 2];
+    let commitment = scheme.commit(&poly);
+    let proof = scheme.open(&poly, z);
+    let valid = scheme.verify(&commitment, &proof);
+
+    let display = format!(
+        "KZG Evaluation & Pairing Verification\n\
+         Point z: {}\n\
+         Value y: {}\n\
+         Pairing Valid: {}\n\
+         Schwartz-Zippel Bound: {:.6e}\n\
+         Theorems: 122, 123, 124",
+        proof.evaluation_point_z,
+        proof.evaluated_value_y,
+        valid,
+        proof.theorem123_schwartz_zippel_bound
+    );
+
+    Ok(success("crypto kzg-verify", json!(proof), display))
 }

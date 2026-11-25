@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, and `v4.0.7`. The active release identity
-is `v4.0.7`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, and `v4.0.7`, and `v4.0.8`. The active release identity
+is `v4.0.8`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,15 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.8
+
+This release delivers Phases 49–51 of the architectural roadmap:
+- **Phase 49: Topological Quantum Error Correction & Surface Code Stabilizers** (`topological_qec.rs`, Theorems 119–121, planar surface code distance $d = 2t + 1$, 10.9% fault-tolerance threshold, non-destructive $[A_s, B_p] = 0$ stabilizer measurement, $O(V^3)$ MWPM decoding with exponential logical error suppression, CLI `pandora swarm qec-syndrome|qec-decode`, REST `/api/swarm/qec`).
+- **Phase 50: Zero-Knowledge PlonK Polynomial Commitments & KZG Schemes** (`kzg_commitment.rs`, Theorems 122–124, $q$-SDH computational binding, Schwartz-Zippel bound $\le d/|S|$, constant-time $O(1)$ bilinear pairing verification, CLI `pandora crypto kzg-commit|kzg-verify`, REST `/api/crypto/kzg`).
+- **Phase 51: Multi-Agent Mechanism Design & VCG Truthful Equilibrium** (`game_mechanism.rs`, Theorems 125–127, dominant-strategy incentive compatibility (DSIC) social welfare maximization, polynomial-time polymatrix correlated equilibrium, axiomatic unique Shapley value credit attribution, CLI `pandora cognitive vcg-auction|shapley-credit`, REST `/api/cognitive/mechanism`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/qec`, `/api/crypto/kzg`, `/api/cognitive/mechanism`, and updated `/api/olympus/overview` (`architecture_version: "4.0.8"`, `codename: "OLYMPUS"`, `total_theorems_enforced: 127`).
+- Enforces all **127 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.7
 

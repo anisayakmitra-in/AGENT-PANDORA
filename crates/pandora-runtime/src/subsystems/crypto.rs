@@ -74,6 +74,11 @@ impl CryptoSubsystem {
         crate::federated_homomorphic::FederatedHomomorphicEngine::new()
     }
 
+    /// Access the KZG polynomial commitment scheme (Theorems 122–124).
+    pub fn kzg_commitments(&self) -> crate::kzg_commitment::KzgScheme {
+        crate::kzg_commitment::KzgScheme::new(32)
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -86,7 +91,9 @@ impl CryptoSubsystem {
             ],
             hybrid_pq_verifying_key: self.signer.verifying_key(),
             mpc_report: mpc_rep,
-            theorems_enforced: vec![48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115],
+            theorems_enforced: vec![
+                48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124,
+            ],
         }
     }
 }

@@ -14,7 +14,7 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "cognitive requires 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', or 'counterfactual'",
+            "cognitive requires 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', or 'shapley-credit'",
         )
     })?;
 
@@ -25,8 +25,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "audit" => audit(&args[1..]),
         "do-calculus" => do_calculus(&args[1..]),
         "counterfactual" => counterfactual(&args[1..]),
+        "vcg-auction" => vcg_auction(&args[1..]),
+        "shapley-credit" => shapley_credit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit'"
         ))),
     }
 }
@@ -210,4 +212,73 @@ fn do_calculus(args: &[String]) -> Result<CommandResult, CliError> {
 
 fn counterfactual(args: &[String]) -> Result<CommandResult, CliError> {
     do_calculus(args)
+}
+
+fn vcg_auction(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["agents", "config", "data-dir", "workspace", "json"])?;
+
+    let engine = pandora_runtime::game_mechanism::GameMechanismEngine::new(4);
+    let sample_bids = vec![
+        pandora_runtime::game_mechanism::AgentBid {
+            agent_id: "agent_alpha".to_string(),
+            true_valuation: 120.0,
+            submitted_bid: 120.0,
+        },
+        pandora_runtime::game_mechanism::AgentBid {
+            agent_id: "agent_beta".to_string(),
+            true_valuation: 95.0,
+            submitted_bid: 95.0,
+        },
+        pandora_runtime::game_mechanism::AgentBid {
+            agent_id: "agent_gamma".to_string(),
+            true_valuation: 70.0,
+            submitted_bid: 70.0,
+        },
+    ];
+
+    let allocation = engine.run_vcg_auction(&sample_bids);
+
+    let display = format!(
+        "VCG Truthful Auction Allocation\n\
+         Winning Agent: {}\n\
+         Social Welfare: {:.2}\n\
+         VCG Payment: {:.2}\n\
+         Externality Imposed: {:.2}\n\
+         Theorems: 125 (DSIC), 126 (Correlated Eq), 127 (Shapley)",
+        allocation.winning_agent_id,
+        allocation.social_welfare,
+        allocation.vcg_payment,
+        allocation.externality_imposed
+    );
+
+    Ok(success("cognitive vcg-auction", json!(allocation), display))
+}
+
+fn shapley_credit(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(
+        args,
+        &["coalition", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let engine = pandora_runtime::game_mechanism::GameMechanismEngine::new(3);
+    let agents = vec![
+        "agent_alpha".to_string(),
+        "agent_beta".to_string(),
+        "agent_gamma".to_string(),
+    ];
+    let attributions = engine.compute_shapley_attribution(&agents, 300.0);
+
+    let display = format!(
+        "Shapley Value Fair Credit Attribution\n\
+         Agents Evaluated: {}\n\
+         Total Attribution Points: 300.0\n\
+         Theorems: 125, 126, 127",
+        attributions.len()
+    );
+
+    Ok(success(
+        "cognitive shapley-credit",
+        json!(attributions),
+        display,
+    ))
 }

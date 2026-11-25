@@ -61,6 +61,11 @@ impl SwarmSubsystem {
         crate::quantum_annealer::QuantumAnnealer::new()
     }
 
+    /// Access the topological quantum error correction engine (Theorems 119–121).
+    pub fn topological_qec(&self) -> crate::topological_qec::TopologicalQecEngine {
+        crate::topological_qec::TopologicalQecEngine::new(5)
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -74,7 +79,9 @@ impl SwarmSubsystem {
             bft_nodes_count: self.default_nodes,
             crdt_counter_value: counter.value(),
             gossip_converged: converged,
-            theorems_enforced: vec![62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112],
+            theorems_enforced: vec![
+                62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121,
+            ],
         }
     }
 }
