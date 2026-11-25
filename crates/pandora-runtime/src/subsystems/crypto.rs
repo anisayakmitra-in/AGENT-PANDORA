@@ -79,6 +79,11 @@ impl CryptoSubsystem {
         crate::kzg_commitment::KzgScheme::new(32)
     }
 
+    /// Access the CKKS leveled fully homomorphic encryption engine (Theorems 131–133).
+    pub fn ckks_fhe(&self) -> crate::ckks_fhe::CkksFheEngine {
+        crate::ckks_fhe::CkksFheEngine::new(8192, 5)
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -92,7 +97,8 @@ impl CryptoSubsystem {
             hybrid_pq_verifying_key: self.signer.verifying_key(),
             mpc_report: mpc_rep,
             theorems_enforced: vec![
-                48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124,
+                48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
+                132, 133,
             ],
         }
     }

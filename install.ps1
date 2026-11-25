@@ -4,7 +4,7 @@ function Fail([string]$Message) {
     throw "pandora installer: $Message"
 }
 
-$defaultVersion = "v4.0.8"
+$defaultVersion = "v4.0.9"
 $version = if ([string]::IsNullOrWhiteSpace($env:PANDORA_VERSION)) {
     $defaultVersion
 } else {

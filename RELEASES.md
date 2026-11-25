@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, and `v4.0.7`, and `v4.0.8`. The active release identity
-is `v4.0.8`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, and `v4.0.7`, `v4.0.8`, and `v4.0.9`. The active release identity
+is `v4.0.9`.
 
 ## Source-bound release scope
 
@@ -33,13 +33,22 @@ Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
 
+## v4.0.9
+
+This release delivers Phases 52–54 of the architectural roadmap:
+- **Phase 52: Holographic Quantum Error Suppression & Fault-Tolerant Magic State Distillation** (`magic_state_distillation.rs`, Theorems 128–130, Bravyi-Kitaev 15-to-1 distillation protocol, output infidelity $\epsilon_{\text{out}} \le 35 \epsilon_{\text{in}}^3$, fault-tolerant non-Clifford $T$-gate injection fidelity $\ge 99.99\%$, CLI `pandora swarm magic-distill|magic-state-audit`, REST `/api/swarm/magic-state`).
+- **Phase 53: Fully Homomorphic Encryption (FHE) with CKKS Leveled Arithmetic** (`ckks_fhe.rs`, Theorems 131–133, canonical complex embedding isometry, modulus switching noise rescale preserving $\text{SNR} \ge 80\,\text{dB}$, 128-bit quantum security RLWE, CLI `pandora crypto ckks-encrypt|ckks-rescale`, REST `/api/crypto/ckks`).
+- **Phase 54: Mean-Field Stochastic Differential Games & McKean-Vlasov Swarm Control** (`mean_field_control.rs`, Theorems 134–136, McKean-Vlasov continuum Nash equilibrium convergence in $O(1/\sqrt{N})$, Hamilton-Jacobi-Bellman viscosity solution, decentralized Pareto control invariance, CLI `pandora cognitive mckean-vlasov|swarm-hjb`, REST `/api/cognitive/mean-field`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/magic-state`, `/api/crypto/ckks`, `/api/cognitive/mean-field`, and updated `/api/olympus/overview` (`architecture_version: "4.0.9"`, `codename: "THANATOS"`, `total_theorems_enforced: 136`).
+- Enforces all **136 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
+
 ## v4.0.8
 
 This release delivers Phases 49–51 of the architectural roadmap:
 - **Phase 49: Topological Quantum Error Correction & Surface Code Stabilizers** (`topological_qec.rs`, Theorems 119–121, planar surface code distance $d = 2t + 1$, 10.9% fault-tolerance threshold, non-destructive $[A_s, B_p] = 0$ stabilizer measurement, $O(V^3)$ MWPM decoding with exponential logical error suppression, CLI `pandora swarm qec-syndrome|qec-decode`, REST `/api/swarm/qec`).
 - **Phase 50: Zero-Knowledge PlonK Polynomial Commitments & KZG Schemes** (`kzg_commitment.rs`, Theorems 122–124, $q$-SDH computational binding, Schwartz-Zippel bound $\le d/|S|$, constant-time $O(1)$ bilinear pairing verification, CLI `pandora crypto kzg-commit|kzg-verify`, REST `/api/crypto/kzg`).
 - **Phase 51: Multi-Agent Mechanism Design & VCG Truthful Equilibrium** (`game_mechanism.rs`, Theorems 125–127, dominant-strategy incentive compatibility (DSIC) social welfare maximization, polynomial-time polymatrix correlated equilibrium, axiomatic unique Shapley value credit attribution, CLI `pandora cognitive vcg-auction|shapley-credit`, REST `/api/cognitive/mechanism`).
-- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/qec`, `/api/crypto/kzg`, `/api/cognitive/mechanism`, and updated `/api/olympus/overview` (`architecture_version: "4.0.8"`, `codename: "OLYMPUS"`, `total_theorems_enforced: 127`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/qec`, `/api/crypto/kzg`, `/api/cognitive/mechanism`, and updated `/api/olympus/overview` (`architecture_version: "4.0.8"`, `codename: "THANATOS"`, `total_theorems_enforced: 127`).
 - Enforces all **127 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.7
@@ -48,7 +57,7 @@ This release delivers Phases 46–48 of the architectural roadmap:
 - **Phase 46: Quantum Annealing Graph Partitioning & QUBO Job Scheduling** (`quantum_annealer.rs`, Theorems 110–112, transverse-field Ising Hamiltonian ground state mapping, polynomial spectral gap convergence $\Delta \ge 1/\text{poly}(N)$, $(1 + \epsilon)$ Pareto-optimal makespan bound, CLI `pandora swarm anneal|qubo-schedule`, REST `/api/swarm/anneal`).
 - **Phase 47: Homomorphic Federated Model Distillation & Secure Aggregation** (`federated_homomorphic.rs`, Theorems 113–115, IND-CPA security preserved under additive aggregation, Byzantine gradient clipping with geometric median filter, zero mutual information leak $I(\theta_i; \text{Coordinator}) = 0$, CLI `pandora crypto fed-aggregate|fed-verify`, REST `/api/crypto/federated`).
 - **Phase 48: Causal Counterfactual Policy Inference & Pearlian Do-Calculus Engine** (`causal_engine.rs`, Theorems 116–118, backdoor criterion intervention identifiability $P(Y \mid do(X = x))$, monotonic counterfactual abduction-action-prediction consistency, confounder invariance bound, CLI `pandora cognitive do-calculus|counterfactual`, REST `/api/cognitive/causal`).
-- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/anneal`, `/api/crypto/federated`, `/api/cognitive/causal`, and updated `/api/olympus/overview` (`architecture_version: "4.0.7"`, `codename: "OLYMPUS"`, `total_theorems_enforced: 118`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/anneal`, `/api/crypto/federated`, `/api/cognitive/causal`, and updated `/api/olympus/overview` (`architecture_version: "4.0.7"`, `codename: "THANATOS"`, `total_theorems_enforced: 118`).
 - Enforces all **118 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.6
@@ -57,7 +66,7 @@ This release delivers Phases 43–45 of the architectural roadmap:
 - **Phase 43: Recursive Zero-Knowledge Rollups & Algebraic STARK Proofs** (`recursive_zk_rollup.rs`, Theorems 101–103, constant-size STARK proof aggregation, BabyBear prime field $\mathbb{F}_p$, 128-bit computational soundness, CLI `pandora crypto zk-rollup|zk-verify`, REST `/api/crypto/rollup`).
 - **Phase 44: Autonomous Self-Healing Kernel & Dynamic Invariant Synthesis** (`self_healing_kernel.rs`, Theorems 104–106, semantic bisimulation invariance under automated patch synthesis, quiescent state lock zero-downtime hot-patching, CLI `pandora governance heal|invariant-check`, REST `/api/governance/healing`).
 - **Phase 45: Neuromorphic Spiking Context VFS & Temporal Memory Decay** (`neuromorphic_vfs.rs`, Theorems 107–109, Leaky Integrate-and-Fire membrane potential dynamics, STDP synaptic plasticity, exponential decay retention fidelity $\ge 95\%$, CLI `pandora memory spike-train|temporal-decay`, REST `/api/memory/neuromorphic`).
-- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/crypto/rollup`, `/api/governance/healing`, `/api/memory/neuromorphic`, and updated `/api/olympus/overview` (`architecture_version: "4.0.6"`, `codename: "OLYMPUS"`, `total_theorems_enforced: 109`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/crypto/rollup`, `/api/governance/healing`, `/api/memory/neuromorphic`, and updated `/api/olympus/overview` (`architecture_version: "4.0.6"`, `codename: "THANATOS"`, `total_theorems_enforced: 109`).
 - Enforces all **109 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.5
@@ -66,12 +75,12 @@ This release delivers **Centennial Completeness (Phases 40–42, Theorems 92–1
 - **Phase 40: Distributed Multi-Tenant Mesh Orchestration & Cross-Cluster Atomic Commitments** (`multi_tenant_mesh.rs`, Theorems 92–94, shard attestation vector digests, 2-phase cross-cluster atomic commit receipts, CLI `pandora swarm mesh|cross-commit`, REST `/api/swarm/mesh`).
 - **Phase 41: Hyper-Dimensional Vector VFS & Holographic Cognitive Associative Memory** (`hyper_vfs.rs`, Theorems 95–97, bipolar hypervectors $\mathbb{H}^{1024}$, circular convolution binding $\mathbf{a} \circledast \mathbf{b}$, circular correlation unbinding $\mathbf{c} \odot \mathbf{a}$, superposition memory bundling, CLI `pandora memory hyper-project|holographic-recall`, REST `/api/memory/hyper`).
 - **Phase 42: Formal Kernel Verification & Lean 4 / Coq Machine-Checked Proof Exports** (`formal_proof.rs`, Theorems 98–100, formal proof generator and verification engine for all 100 mathematical foundation theorems in Lean 4 and Coq dialects, CLI `pandora audit formal-verify`, REST `/api/audit/formal`).
-- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/mesh`, `/api/memory/hyper`, `/api/audit/formal`, and updated `/api/olympus/overview` (`codename: "AETHER"`, `total_theorems_enforced: 100`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/mesh`, `/api/memory/hyper`, `/api/audit/formal`, and updated `/api/olympus/overview` (`codename: "THANATOS"`, `total_theorems_enforced: 100`).
 - Enforces all **100 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.4
 
-This release delivers the **OLYMPUS Micro-Kernel Architecture Upgrade**:
+This release delivers the **THANATOS Micro-Kernel Architecture Upgrade**:
 - **Subsystem 1: Cognitive Micro-Kernel & Neuro-Symbolic Engine** (`cognitive.rs`, BNF pushdown automata token masking, LATS MCTS search, speculative tree rejection sampling, metacognitive entropy supervision, CLI `pandora cognitive status|speculate|synthesize|audit`).
 - **Subsystem 2: Tripartite Constitutional Governance & Capability Bus** (`governance.rs`, capability-based expiring effect permits, declarative vetoes, process containment with <=50ms kill bound, CLI `pandora governance status|audit`).
 - **Subsystem 3: Cryptographic Zero-Knowledge & Post-Quantum Substrate** (`crypto.rs`, post-quantum hybrid attestation with ML-DSA-65 + Ed25519, Goldilocks Poseidon sponge, Shamir Beaver triple MPC, CLI `pandora crypto status|pq-sign|mpc-eval`).

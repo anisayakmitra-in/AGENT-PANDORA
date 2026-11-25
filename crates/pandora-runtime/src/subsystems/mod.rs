@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! AGENT-PANDORA Subsystems (v4.0.7 OLYMPUS Architecture)
+//! AGENT-PANDORA Subsystems (v4.0 Architecture - THANATOS)
 //!
 //! Provides the 5 foundational micro-kernel architectural pillars:
 //! - Subsystem 1: Cognitive Micro-Kernel & Neuro-Symbolic Inference Engine
@@ -48,15 +48,15 @@ impl OlympusSystemOverview {
         let formal = FormalProofEngine::new().verify_centennial_suite(ProofDialect::Lean4);
 
         Self {
-            architecture_version: "4.0.8".to_string(),
-            codename: "OLYMPUS".to_string(),
+            architecture_version: "4.0.9".to_string(),
+            codename: "THANATOS".to_string(),
             cognitive: cog.status(),
             governance: gov.status(),
             crypto: cry.status(),
             swarm: swm.status(),
             memory: mem.status(),
             formal_verification: formal,
-            total_theorems_enforced: 127,
+            total_theorems_enforced: 136,
         }
     }
 }

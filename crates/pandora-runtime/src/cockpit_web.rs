@@ -3068,6 +3068,21 @@ fn handle_connection(
             let audit = engine.audit_theorems();
             write_json_response(&mut stream, 200, "OK", &audit)?;
         }
+        ("GET", "/api/swarm/magic-state") => {
+            let engine = crate::magic_state_distillation::MagicStateDistillationEngine::new(2);
+            let audit = engine.audit_theorems();
+            write_json_response(&mut stream, 200, "OK", &audit)?;
+        }
+        ("GET", "/api/crypto/ckks") => {
+            let engine = crate::ckks_fhe::CkksFheEngine::new(8192, 5);
+            let audit = engine.audit_theorems();
+            write_json_response(&mut stream, 200, "OK", &audit)?;
+        }
+        ("GET", "/api/cognitive/mean-field") => {
+            let engine = crate::mean_field_control::MeanFieldControlEngine::new(100);
+            let audit = engine.audit_theorems();
+            write_json_response(&mut stream, 200, "OK", &audit)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

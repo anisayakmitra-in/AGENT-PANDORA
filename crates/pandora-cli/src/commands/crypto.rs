@@ -17,7 +17,7 @@ use serde_json::json;
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "crypto requires 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', or 'kzg-verify'",
+            "crypto requires 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', or 'ckks-rescale'",
         )
     })?;
 
@@ -31,8 +31,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "fed-verify" => fed_verify(&args[1..]),
         "kzg-commit" => kzg_commit(&args[1..]),
         "kzg-verify" => kzg_verify(&args[1..]),
+        "ckks-encrypt" => ckks_encrypt(&args[1..]),
+        "ckks-rescale" => ckks_rescale(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale'"
         ))),
     }
 }
@@ -43,7 +45,7 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
     let status = subsystem.status();
 
     let display = format!(
-        "Cryptographic Subsystem [v4.0.7 OLYMPUS]\n\
+        "Cryptographic Subsystem [THANATOS]\n\
          Status: {}\n\
          Prime Fields: {}\n\
          PQ Ed25519 PK: {}...\n\
@@ -334,4 +336,44 @@ fn kzg_verify(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto kzg-verify", json!(proof), display))
+}
+
+fn ckks_encrypt(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["slots", "config", "data-dir", "workspace", "json"])?;
+
+    let engine = pandora_runtime::ckks_fhe::CkksFheEngine::new(8192, 5);
+    let sample_vector = vec![1.25, 2.5, -3.75, 4.0];
+    let ct = engine.encrypt(&sample_vector);
+
+    let display = format!(
+        "CKKS Leveled Homomorphic Encryption\n\
+         Ciphertext ID: {}\n\
+         Level: {}\n\
+         Slots: {}\n\
+         Estimated SNR: {:.2} dB\n\
+         Theorems: 131, 132, 133",
+        ct.ciphertext_id, ct.level, ct.slots, ct.estimated_snr_db
+    );
+
+    Ok(success("crypto ckks-encrypt", json!(ct), display))
+}
+
+fn ckks_rescale(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["level", "config", "data-dir", "workspace", "json"])?;
+
+    let engine = pandora_runtime::ckks_fhe::CkksFheEngine::new(8192, 5);
+    let sample_vector = vec![1.25, 2.5, -3.75, 4.0];
+    let ct = engine.encrypt(&sample_vector);
+    let rescaled = engine.rescale(&ct);
+
+    let display = format!(
+        "CKKS Modulus Switching & Rescale\n\
+         Prior Level: {}\n\
+         New Level: {}\n\
+         Estimated SNR: {:.2} dB\n\
+         Theorems: 131, 132, 133",
+        ct.level, rescaled.level, rescaled.estimated_snr_db
+    );
+
+    Ok(success("crypto ckks-rescale", json!(rescaled), display))
 }

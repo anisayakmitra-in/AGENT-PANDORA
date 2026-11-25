@@ -34,7 +34,7 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
     let status = subsystem.status();
 
     let display = format!(
-        "Governance Subsystem [v4.0.7 OLYMPUS]\n\
+        "Governance Subsystem [THANATOS]\n\
          Status: {}\n\
          Authorities: {}\n\
          Memory Quota: {} MB\n\

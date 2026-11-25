@@ -66,6 +66,13 @@ impl SwarmSubsystem {
         crate::topological_qec::TopologicalQecEngine::new(5)
     }
 
+    /// Access the magic state distillation engine (Theorems 128–130).
+    pub fn magic_state_distiller(
+        &self,
+    ) -> crate::magic_state_distillation::MagicStateDistillationEngine {
+        crate::magic_state_distillation::MagicStateDistillationEngine::new(2)
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -80,7 +87,7 @@ impl SwarmSubsystem {
             crdt_counter_value: counter.value(),
             gossip_converged: converged,
             theorems_enforced: vec![
-                62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121,
+                62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
             ],
         }
     }

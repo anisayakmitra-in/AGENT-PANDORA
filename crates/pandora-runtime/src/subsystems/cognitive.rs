@@ -73,6 +73,11 @@ impl CognitiveSubsystem {
         crate::game_mechanism::GameMechanismEngine::new(4)
     }
 
+    /// Access the mean-field stochastic differential game engine (Theorems 134–136).
+    pub fn mean_field_control(&self) -> crate::mean_field_control::MeanFieldControlEngine {
+        crate::mean_field_control::MeanFieldControlEngine::new(100)
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -92,6 +97,7 @@ impl CognitiveSubsystem {
             metacognitive_pac_bayes_risk: meta_rep.theorem_82_pac_bayes_risk,
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
+                134, 135, 136,
             ],
         }
     }
