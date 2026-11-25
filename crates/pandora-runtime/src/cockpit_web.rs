@@ -2987,6 +2987,38 @@ fn handle_connection(
             let report = engine.verify_centennial_suite(crate::formal_proof::ProofDialect::Lean4);
             write_json_response(&mut stream, 200, "OK", &json!(report))?;
         }
+        ("GET", "/api/crypto/rollup") => {
+            let engine = crate::recursive_zk_rollup::ZkRollupEngine::new();
+            let sample_receipts = vec![
+                crate::recursive_zk_rollup::ExecutionReceipt {
+                    receipt_id: "rcpt_01".to_string(),
+                    step_index: 1,
+                    pre_state_hash: "0".repeat(64),
+                    post_state_hash: "a".repeat(64),
+                    payload_digest: "p1".to_string(),
+                },
+                crate::recursive_zk_rollup::ExecutionReceipt {
+                    receipt_id: "rcpt_02".to_string(),
+                    step_index: 2,
+                    pre_state_hash: "a".repeat(64),
+                    post_state_hash: "b".repeat(64),
+                    payload_digest: "p2".to_string(),
+                },
+            ];
+            let bundle = engine.aggregate_batch(&sample_receipts);
+            write_json_response(&mut stream, 200, "OK", &json!(bundle))?;
+        }
+        ("GET", "/api/governance/healing") => {
+            let kernel = crate::self_healing_kernel::SelfHealingKernel::new();
+            let report = kernel.audit_subsystem("governance");
+            write_json_response(&mut stream, 200, "OK", &json!(report))?;
+        }
+        ("GET", "/api/memory/neuromorphic") => {
+            let mut vfs = crate::neuromorphic_vfs::NeuromorphicVfs::new();
+            vfs.inject_current("pandora://system/core_context", 10.0, 1.0);
+            let report = vfs.audit();
+            write_json_response(&mut stream, 200, "OK", &json!(report))?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

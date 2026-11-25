@@ -14,7 +14,7 @@ Every tool invocation, filesystem edit, process execution, WebAssembly Gene call
 User / TUI / CLI  ──►  ExecutionController  ──►  Shadow Council  ──►  Parliament  ──►  ReferenceMonitor  ──►  EffectExecutor  ──►  Cryptographic Receipt
 ```
 
-> **Status**: The active release identity is `4.0.5` (Codename: **AETHER** - Centennial Completeness). Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
+> **Status**: The active release identity is `4.0.6` (Codename: **OLYMPUS**). Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
 
 ---
 

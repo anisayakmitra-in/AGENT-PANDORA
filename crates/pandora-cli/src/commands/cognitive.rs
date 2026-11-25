@@ -33,7 +33,7 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
     let status = subsystem.status();
 
     let display = format!(
-        "Cognitive Subsystem [v4.0.5 AETHER]\n\
+        "Cognitive Subsystem [v4.0.6 OLYMPUS]\n\
          Status: {}\n\
          Grammars Supported: {}\n\
          Speculative Speedup: {:.2}x\n\

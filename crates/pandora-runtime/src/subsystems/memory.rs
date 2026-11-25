@@ -42,6 +42,11 @@ impl MemorySubsystem {
         HolographicMemory::default()
     }
 
+    /// Access the neuromorphic spiking context VFS (Theorems 107–109).
+    pub fn neuromorphic_vfs(&self) -> crate::neuromorphic_vfs::NeuromorphicVfs {
+        crate::neuromorphic_vfs::NeuromorphicVfs::default()
+    }
+
     /// Returns high-level operational status of the Memory Subsystem.
     pub fn status(&self) -> MemorySubsystemStatus {
         let sample_receipt = self.certified_scrub("system_bootstrap_sample", 3);
@@ -54,10 +59,11 @@ impl MemorySubsystem {
                 "L3: Standard Operating Procedures (SOP)".to_string(),
                 "L4: Immutable Cold Archive".to_string(),
                 "L5: Holographic Hyper-Dimensional Associative VFS".to_string(),
+                "L6: Neuromorphic Spiking Context VFS".to_string(),
             ],
             privacy_budget: self.supervisor.budget.clone(),
             sample_scrubbing: sample_receipt,
-            theorems_enforced: vec![86, 87, 88, 95, 96, 97],
+            theorems_enforced: vec![86, 87, 88, 95, 96, 97, 107, 108, 109],
         }
     }
 }

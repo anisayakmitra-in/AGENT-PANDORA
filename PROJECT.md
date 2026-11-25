@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.5 Release: AETHER - Centennial Completeness)
+# Project: AGENT-PANDORA (v4.0.6 Release: OLYMPUS - Recursive ZK, Self-Healing & Neuromorphic VFS)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.5` (Centennial Completeness: Phases 40–42, Theorems 92–100).
+- **Versioning & Release**: Workspace version promoted to `4.0.6` (Phases 43–45, Theorems 101–109).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -58,6 +58,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F27 | Phase 40: Distributed Multi-Tenant Mesh Orchestration & Cross-Cluster Atomic Commitments | Two-phase commit protocol, shard attestation vector digests, bounded message complexity (Theorems 92–94), CLI `pandora swarm mesh/cross-commit`, REST `/api/swarm/mesh` | M18 | v4.0.5 Architecture |
 | F28 | Phase 41: Hyper-Dimensional Vector VFS & Holographic Cognitive Associative Memory | 1024-D bipolar hypervectors $\mathbb{H}^{1024}$, circular convolution binding, associative unbinding, capacity scaling (Theorems 95–97), CLI `pandora memory hyper-project/holographic-recall`, REST `/api/memory/hyper` | M18 | v4.0.5 Architecture |
 | F29 | Phase 42: Formal Kernel Verification & Lean 4 / Coq Machine-Checked Proof Exports | Soundness bijection, decidability, centennial completeness for Theorems 1–100 (Theorems 98–100), CLI `pandora audit formal-verify`, REST `/api/audit/formal` | M18 | v4.0.5 Architecture |
+| F30 | Phase 43: Recursive Zero-Knowledge Rollups & Algebraic STARK Proofs | Constant-size STARK proof aggregation, BabyBear prime field $\mathbb{F}_p$, 128-bit computational soundness (Theorems 101–103), CLI `pandora crypto zk-rollup/zk-verify`, REST `/api/crypto/rollup` | M19 | v4.0.6 Architecture |
+| F31 | Phase 44: Autonomous Self-Healing Kernel & Dynamic Invariant Synthesis | Monotonic bisimulation equivalence, automated invariant re-derivation, zero-downtime hot-patching (Theorems 104–106), CLI `pandora governance heal/invariant-check`, REST `/api/governance/healing` | M19 | v4.0.6 Architecture |
+| F32 | Phase 45: Neuromorphic Spiking Context VFS & Temporal Memory Decay | Leaky Integrate-and-Fire dynamics, STDP synaptic plasticity, exponential decay retention fidelity >= 95% (Theorems 107–109), CLI `pandora memory spike-train/temporal-decay`, REST `/api/memory/neuromorphic` | M19 | v4.0.6 Architecture |
 
 ---
 
@@ -83,7 +86,8 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M15 | Phase 37: Differential Privacy & Continual Certified Unlearning | RDP accounting, certified unlearning distance bound (Theorems 86–88) | M14 | COMPLETED |
 | M16 | Phase 38: Distributed Speculative Tree Decoding | Speculative rejection sampling, tree decoding speedup >= 2.0x (Theorems 89–91) | M15 | COMPLETED |
 | M17 | Phase 39: OLYMPUS Subsystems Topology (v4.0.4) | 5 micro-kernel pillars, unified CLI commands, REST endpoints, 91 theorems | M16 | COMPLETED |
-| M18 | Phase 40-42: Centennial Completeness (v4.0.5 AETHER) | Multi-tenant mesh, hyper-dimensional holographic VFS, formal Lean 4/Coq verification (Theorems 92–100) | M17 | COMPLETED |
+| M18 | Phase 40-42: Centennial Completeness (v4.0.5) | Multi-tenant mesh, hyper-dimensional holographic VFS, formal Lean 4/Coq verification (Theorems 92–100) | M17 | COMPLETED |
+| M19 | Phase 43-45: Advanced Autonomy Substrate (v4.0.6) | Recursive ZK rollups, self-healing kernel, neuromorphic spiking VFS (Theorems 101–109) | M18 | COMPLETED |
 
 ---
 

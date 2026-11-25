@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, and `v4.0.5`. The active release identity
-is `v4.0.5`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, and `v4.0.6`. The active release identity
+is `v4.0.6`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,15 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.6
+
+This release delivers Phases 43–45 of the architectural roadmap:
+- **Phase 43: Recursive Zero-Knowledge Rollups & Algebraic STARK Proofs** (`recursive_zk_rollup.rs`, Theorems 101–103, constant-size STARK proof aggregation, BabyBear prime field $\mathbb{F}_p$, 128-bit computational soundness, CLI `pandora crypto zk-rollup|zk-verify`, REST `/api/crypto/rollup`).
+- **Phase 44: Autonomous Self-Healing Kernel & Dynamic Invariant Synthesis** (`self_healing_kernel.rs`, Theorems 104–106, semantic bisimulation invariance under automated patch synthesis, quiescent state lock zero-downtime hot-patching, CLI `pandora governance heal|invariant-check`, REST `/api/governance/healing`).
+- **Phase 45: Neuromorphic Spiking Context VFS & Temporal Memory Decay** (`neuromorphic_vfs.rs`, Theorems 107–109, Leaky Integrate-and-Fire membrane potential dynamics, STDP synaptic plasticity, exponential decay retention fidelity $\ge 95\%$, CLI `pandora memory spike-train|temporal-decay`, REST `/api/memory/neuromorphic`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/crypto/rollup`, `/api/governance/healing`, `/api/memory/neuromorphic`, and updated `/api/olympus/overview` (`architecture_version: "4.0.6"`, `codename: "OLYMPUS"`, `total_theorems_enforced: 109`).
+- Enforces all **109 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.5
 

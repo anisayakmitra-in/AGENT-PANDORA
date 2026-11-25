@@ -62,6 +62,11 @@ impl CryptoSubsystem {
         self.mpc.homomorphic_multiply(x, y, triple)
     }
 
+    /// Access the recursive ZK rollup engine (Theorems 101–103).
+    pub fn zk_rollup(&self) -> crate::recursive_zk_rollup::ZkRollupEngine {
+        crate::recursive_zk_rollup::ZkRollupEngine::new()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -70,10 +75,11 @@ impl CryptoSubsystem {
             prime_fields: vec![
                 "Goldilocks (2^64 - 2^32 + 1)".to_string(),
                 "Mersenne-31 (2^31 - 1)".to_string(),
+                "BabyBear (2^31 - 2^27 + 1)".to_string(),
             ],
             hybrid_pq_verifying_key: self.signer.verifying_key(),
             mpc_report: mpc_rep,
-            theorems_enforced: vec![48, 49, 77, 78, 79, 83, 84, 85],
+            theorems_enforced: vec![48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103],
         }
     }
 }

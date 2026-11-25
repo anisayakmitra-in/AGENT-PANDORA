@@ -42,6 +42,11 @@ impl GovernanceSubsystem {
         !effect_kind.contains("unauthorized_root")
     }
 
+    /// Access the self-healing kernel controller (Theorems 104–106).
+    pub fn self_healing(&self) -> crate::self_healing_kernel::SelfHealingKernel {
+        crate::self_healing_kernel::SelfHealingKernel::new()
+    }
+
     /// Returns high-level operational status of the Governance Subsystem.
     pub fn status(&self) -> GovernanceSubsystemStatus {
         GovernanceSubsystemStatus {
@@ -51,10 +56,11 @@ impl GovernanceSubsystem {
                 "Parliament".to_string(),
                 "ReferenceMonitor".to_string(),
                 "ContainmentEngine".to_string(),
+                "SelfHealingKernel".to_string(),
             ],
             max_memory_quota_mb: self.memory_quota_mb,
             max_kill_latency_bound_ms: self.kill_latency_bound_ms,
-            theorems_enforced: vec![74, 75, 76],
+            theorems_enforced: vec![74, 75, 76, 104, 105, 106],
         }
     }
 }

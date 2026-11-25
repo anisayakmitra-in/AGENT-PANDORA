@@ -32,7 +32,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', 'scrub', 'hyper-project', 'holographic-recall', or 'curator'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', 'scrub', 'hyper-project', 'holographic-recall', 'spike-train', 'temporal-decay', or 'curator'",
         )
     })?;
     match subcommand.as_str() {
@@ -54,6 +54,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "scrub" => scrub(&args[1..]),
         "hyper-project" => hyper_project(&args[1..]),
         "holographic-recall" => holographic_recall(&args[1..]),
+        "spike-train" => spike_train(&args[1..]),
+        "temporal-decay" => temporal_decay(&args[1..]),
         "curator" => super::curator::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
@@ -192,6 +194,91 @@ fn holographic_recall(args: &[String]) -> Result<CommandResult, CliError> {
             "theorems": [95, 96, 97]
         }),
         text,
+    ))
+}
+
+fn spike_train(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "uri",
+            "current",
+            "dt",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let uri = parsed
+        .value("uri")
+        .unwrap_or("pandora://system/core_context");
+    let current: f64 = parsed
+        .value("current")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15.0);
+    let dt: f64 = parsed
+        .value("dt")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
+
+    let mut vfs = pandora_runtime::neuromorphic_vfs::NeuromorphicVfs::new();
+    let fired = vfs.inject_current(uri, current, dt);
+    let audit = vfs.audit();
+
+    let display = format!(
+        "Neuromorphic Spiking Context VFS\n\
+         URI: {}\n\
+         Current Injection: {:.2} nA (dt={:.2} ms)\n\
+         Spike Action Potential Fired: {}\n\
+         Total Spikes: {}\n\
+         Mean Synaptic Weight: {:.4}\n\
+         Theorems: 107 (LIF Dynamics), 108 (STDP Plasticity), 109 (Temporal Decay)",
+        uri, current, dt, fired, audit.total_spikes_fired, audit.mean_synaptic_weight
+    );
+
+    Ok(success(
+        "memory spike-train",
+        json!({
+            "uri": uri,
+            "current": current,
+            "dt_ms": dt,
+            "fired": fired,
+            "audit": audit,
+            "theorems": [107, 108, 109]
+        }),
+        display,
+    ))
+}
+
+fn temporal_decay(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["config", "data-dir", "workspace", "json"])?;
+    let mut vfs = pandora_runtime::neuromorphic_vfs::NeuromorphicVfs::new();
+    vfs.inject_current("pandora://system/core_context", 12.0, 1.0);
+    let audit = vfs.audit();
+
+    let display = format!(
+        "Neuromorphic Temporal Decay Retention Audit\n\
+         Active Entries: {}\n\
+         Temporal Retention Fidelity: {:.2}%\n\
+         LIF Dynamics Verified: {}\n\
+         STDP Plasticity Converged: {}\n\
+         Retention Bound Verified: {}\n\
+         Theorems: 107, 108, 109",
+        audit.active_entries,
+        audit.temporal_retention_fidelity * 100.0,
+        audit.theorem_107_lif_dynamics_verified,
+        audit.theorem_108_stdp_convergence_verified,
+        audit.theorem_109_retention_bound_verified
+    );
+
+    Ok(success(
+        "memory temporal-decay",
+        json!({
+            "audit": audit,
+            "theorems": [107, 108, 109]
+        }),
+        display,
     ))
 }
 
