@@ -5,6 +5,7 @@
 //! Provides Byzantine Fault-Tolerant PBFT consensus, conflict-free replicated
 //! data types (CRDTs), and epidemic gossip dissemination (Theorems 62–64, 71–73).
 
+use crate::multi_tenant_mesh::SwarmMeshRouter;
 use crate::swarm_bft::PbftCluster;
 use crate::swarm_crdt::{EpidemicGossipCluster, PnCounter};
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,11 @@ impl SwarmSubsystem {
         cluster.verify_theorem_72_dissemination("node_0", fanout)
     }
 
+    /// Obtains a handle to the multi-tenant mesh router (Theorems 92–94).
+    pub fn mesh_router(&self) -> SwarmMeshRouter {
+        SwarmMeshRouter::new()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -63,7 +69,7 @@ impl SwarmSubsystem {
             bft_nodes_count: self.default_nodes,
             crdt_counter_value: counter.value(),
             gossip_converged: converged,
-            theorems_enforced: vec![62, 63, 64, 71, 72, 73],
+            theorems_enforced: vec![62, 63, 64, 71, 72, 73, 92, 93, 94],
         }
     }
 }

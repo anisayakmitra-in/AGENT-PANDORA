@@ -162,7 +162,9 @@ fn save_audit_store(path: &Path, store: &AuditStoreFile) -> Result<(), CliError>
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("audit requires 'record', 'proof', 'verify', 'tree', or 'simulate'")
+        CliError::usage(
+            "audit requires 'record', 'proof', 'verify', 'tree', 'simulate', or 'formal-verify'",
+        )
     })?;
 
     match subcommand.as_str() {
@@ -171,8 +173,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "verify" => verify(&args[1..]),
         "tree" => tree(&args[1..]),
         "simulate" => simulate(&args[1..]),
+        "formal-verify" => formal_verify(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown audit subcommand '{unknown}'. Available: 'record', 'proof', 'verify', 'tree', 'simulate'"
+            "unknown audit subcommand '{unknown}'. Available: 'record', 'proof', 'verify', 'tree', 'simulate', 'formal-verify'"
         ))),
     }
 }
@@ -748,6 +751,41 @@ fn simulate(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("audit simulate", data, human))
+}
+
+fn formal_verify(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["dialect", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let dialect = match parsed.value("dialect").unwrap_or("lean4") {
+        "coq" => pandora_runtime::formal_proof::ProofDialect::Coq,
+        _ => pandora_runtime::formal_proof::ProofDialect::Lean4,
+    };
+
+    let engine = pandora_runtime::formal_proof::FormalProofEngine::new();
+    let report = engine.verify_centennial_suite(dialect);
+
+    let display = format!(
+        "Formal Kernel Verification [Centennial Completeness]:\n\
+         Dialect: {:?}\n\
+         Proofs Generated: {}\n\
+         All Proofs Valid: {}\n\
+         Total Centennial Theorems: {}\n\
+         Theorem 98 (Proof Soundness): {}\n\
+         Theorem 99 (Decidability): {}\n\
+         Theorem 100 (Centennial Completeness): {}",
+        report.dialect,
+        report.proofs_generated,
+        report.all_proofs_valid,
+        report.total_centennial_theorems,
+        report.theorem_98_soundness,
+        report.theorem_99_decidable,
+        report.theorem_100_centennial_complete
+    );
+
+    Ok(success("audit formal-verify", json!(report), display))
 }
 
 #[cfg(test)]

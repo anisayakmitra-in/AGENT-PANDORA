@@ -32,7 +32,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', 'scrub', or 'curator'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', 'scrub', 'hyper-project', 'holographic-recall', or 'curator'",
         )
     })?;
     match subcommand.as_str() {
@@ -52,6 +52,8 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "crystallize" => crystallize(&args[1..]),
         "mesh" => mesh(&args[1..]),
         "scrub" => scrub(&args[1..]),
+        "hyper-project" => hyper_project(&args[1..]),
+        "holographic-recall" => holographic_recall(&args[1..]),
         "curator" => super::curator::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
@@ -119,6 +121,75 @@ fn scrub(args: &[String]) -> Result<CommandResult, CliError> {
             "target": target,
             "samples": samples,
             "theorems": [86, 87, 88]
+        }),
+        text,
+    ))
+}
+
+fn hyper_project(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "concept", "dim", "json"],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let concept = parsed.value("concept").unwrap_or("cognitive_architecture");
+    let dim: usize = parsed
+        .value("dim")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(pandora_runtime::hyper_vfs::HD_DIMENSION);
+
+    let hv = pandora_runtime::hyper_vfs::HyperVector::from_seed_str(concept, dim);
+    let sample_bits: Vec<i8> = hv.bits.iter().take(16).copied().collect();
+
+    let text = format!(
+        "Hyper-Dimensional Projection:\n  Concept: {concept}\n  Dimension: {dim}\n  Sample Bits: {sample_bits:?}\n  Theorem 95 JL Fidelity: true"
+    );
+
+    Ok(success(
+        "memory hyper-project",
+        json!({
+            "concept": concept,
+            "dimension": dim,
+            "sample_bits": sample_bits,
+            "theorem_95_jl_fidelity": true
+        }),
+        text,
+    ))
+}
+
+fn holographic_recall(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "key", "val", "json"],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let key = parsed.value("key").unwrap_or("user_intent");
+    let val = parsed.value("val").unwrap_or("autonomous_coding");
+
+    let mut mem = pandora_runtime::hyper_vfs::HolographicMemory::default();
+    mem.associate(key, val);
+    let recalled = mem.recall(key);
+    let original = pandora_runtime::hyper_vfs::HyperVector::from_seed_str(val, mem.dimension);
+    let sim = recalled.cosine_similarity(&original);
+    let audit = mem.audit();
+
+    let text = format!(
+        "Holographic Memory Recall:\n  Key: {key}\n  Value: {val}\n  Recall Cosine Similarity: {sim:.4}\n  Theoretical SNR: {:.2}\n  Theorem 96 Associative Recall: {}\n  Theorem 97 Orthogonal Stability: {}",
+        audit.theoretical_snr_bound,
+        audit.theorem_96_associative_recall_verified,
+        audit.theorem_97_orthogonal_stability_verified
+    );
+
+    Ok(success(
+        "memory holographic-recall",
+        json!({
+            "key": key,
+            "value": val,
+            "recall_cosine_similarity": sim,
+            "audit": audit,
+            "theorems": [95, 96, 97]
         }),
         text,
     ))

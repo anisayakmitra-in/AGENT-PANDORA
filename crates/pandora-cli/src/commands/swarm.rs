@@ -58,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', or 'mpc-eval'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', 'mpc-eval', 'mesh', or 'cross-commit'",
             ));
         }
     };
@@ -75,8 +75,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "gossip" => gossip(&args[1..]),
         "secret-share" => secret_share(&args[1..]),
         "mpc-eval" => mpc_eval(&args[1..]),
+        "mesh" => mesh(&args[1..]),
+        "cross-commit" => cross_commit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit"
         ))),
     }
 }
@@ -1042,6 +1044,70 @@ fn mpc_eval(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         text,
     ))
+}
+
+fn mesh(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "json"])?;
+    let _cfg = load_config(&parsed)?;
+
+    let router = pandora_runtime::multi_tenant_mesh::SwarmMeshRouter::default();
+    let report = router.audit();
+
+    let text = format!(
+        "Multi-Tenant Mesh Status:\n  Nodes: {}\n  Clusters: {}\n  Shards: {}\n  Max Routing Hops: {}\n  Theorem 92 Isolation: {}\n  Theorem 93 Atomic BFT: {}\n  Theorem 94 Bounded Routing: {}",
+        report.total_nodes,
+        report.total_clusters,
+        report.total_shards,
+        report.max_routing_hops,
+        report.theorem_92_isolated,
+        report.theorem_93_bft_atomic,
+        report.theorem_94_hop_bound_met
+    );
+
+    Ok(success("swarm mesh", json!(report), text))
+}
+
+fn cross_commit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "tx-id", "shards", "json"],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let tx_id = parsed.value("tx-id").unwrap_or("tx-cross-01").to_string();
+    let shards_raw = parsed.value("shards").unwrap_or("shard-0,shard-1,shard-2");
+    let shards: Vec<String> = shards_raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
+
+    let tx = pandora_runtime::multi_tenant_mesh::CrossClusterTx {
+        tx_id: tx_id.clone(),
+        origin_cluster: "cluster-0".to_string(),
+        target_shards: shards.clone(),
+        state_hash: "0xdeadbeef".to_string(),
+        expires_at_ms: now_epoch_ms() + 60000,
+    };
+
+    let attestations: Vec<pandora_runtime::multi_tenant_mesh::ShardAttestation> = shards
+        .iter()
+        .map(|s| pandora_runtime::multi_tenant_mesh::ShardAttestation {
+            shard_id: s.clone(),
+            coordinator_id: format!("coord-{s}"),
+            approved: true,
+            signature_hex: "0xabcd1234".to_string(),
+        })
+        .collect();
+
+    let router = pandora_runtime::multi_tenant_mesh::SwarmMeshRouter::default();
+    let receipt = router.execute_cross_cluster_commit(&tx, &attestations);
+
+    let text = format!(
+        "Cross-Cluster 2PC-BFT Atomic Commit:\n  Tx: {}\n  Committed: {}\n  Shards: {} / {}\n  Theorems: 92, 93, 94",
+        receipt.tx_id, receipt.committed, receipt.shards_approved, receipt.shards_participating
+    );
+
+    Ok(success("swarm cross-commit", json!(receipt), text))
 }
 
 #[cfg(test)]

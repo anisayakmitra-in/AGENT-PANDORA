@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! AGENT-PANDORA Subsystems (v4.0.4 OLYMPUS Architecture)
+//! AGENT-PANDORA Subsystems (v4.0.5 AETHER Architecture)
 //!
 //! Provides the 5 foundational micro-kernel architectural pillars:
 //! - Subsystem 1: Cognitive Micro-Kernel & Neuro-Symbolic Inference Engine
@@ -21,9 +21,10 @@ pub use governance::{GovernanceSubsystem, GovernanceSubsystemStatus};
 pub use memory::{MemorySubsystem, MemorySubsystemStatus};
 pub use swarm::{SwarmSubsystem, SwarmSubsystemStatus};
 
+use crate::formal_proof::{FormalProofEngine, FormalVerificationReport, ProofDialect};
 use serde::{Deserialize, Serialize};
 
-/// Comprehensive overview aggregating all 5 foundational subsystems.
+/// Comprehensive overview aggregating all 5 foundational subsystems and formal verification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OlympusSystemOverview {
     pub architecture_version: String,
@@ -33,6 +34,7 @@ pub struct OlympusSystemOverview {
     pub crypto: CryptoSubsystemStatus,
     pub swarm: SwarmSubsystemStatus,
     pub memory: MemorySubsystemStatus,
+    pub formal_verification: FormalVerificationReport,
     pub total_theorems_enforced: usize,
 }
 
@@ -43,16 +45,18 @@ impl OlympusSystemOverview {
         let cry = CryptoSubsystem::new();
         let swm = SwarmSubsystem::new(4);
         let mem = MemorySubsystem::new();
+        let formal = FormalProofEngine::new().verify_centennial_suite(ProofDialect::Lean4);
 
         Self {
-            architecture_version: "4.0.4".to_string(),
-            codename: "OLYMPUS".to_string(),
+            architecture_version: "4.0.5".to_string(),
+            codename: "AETHER".to_string(),
             cognitive: cog.status(),
             governance: gov.status(),
             crypto: cry.status(),
             swarm: swm.status(),
             memory: mem.status(),
-            total_theorems_enforced: 91,
+            formal_verification: formal,
+            total_theorems_enforced: 100,
         }
     }
 }

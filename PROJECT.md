@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.4 Release: OLYMPUS - 5-Pillar Micro-Kernel Subsystem Topology)
+# Project: AGENT-PANDORA (v4.0.5 Release: AETHER - Centennial Completeness)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.4` (Phase 39 OLYMPUS Subsystems Architecture).
+- **Versioning & Release**: Workspace version promoted to `4.0.5` (Centennial Completeness: Phases 40–42, Theorems 92–100).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -55,6 +55,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F24 | Phase 37: Differential Privacy & Continual Certified Unlearning | Rényi DP composition, Fisher projected Newton-step scrubbing, Lipschitz memory stability (Theorems 86–88), CLI `pandora memory scrub`, REST `/api/memory/privacy` | M15 | v4.0.3 Architecture |
 | F25 | Phase 38: Distributed Speculative Tree Decoding | Rejection sampling distributional equivalence, optimal tree draft speedup >= 2.0x, amortized latency (Theorems 89–91), CLI `pandora code speculate`, REST `/api/code/speculative` | M16 | v4.0.3 Architecture |
 | F26 | Phase 39: OLYMPUS Micro-Kernel Subsystems Topology | 5-Pillar Architecture (Cognitive, Governance, Crypto, Swarm, Memory), unified CLI `pandora cognitive/governance/crypto`, REST `/api/subsystems/*`, `/api/olympus/overview` | M17 | v4.0.4 Architecture |
+| F27 | Phase 40: Distributed Multi-Tenant Mesh Orchestration & Cross-Cluster Atomic Commitments | Two-phase commit protocol, shard attestation vector digests, bounded message complexity (Theorems 92–94), CLI `pandora swarm mesh/cross-commit`, REST `/api/swarm/mesh` | M18 | v4.0.5 Architecture |
+| F28 | Phase 41: Hyper-Dimensional Vector VFS & Holographic Cognitive Associative Memory | 1024-D bipolar hypervectors $\mathbb{H}^{1024}$, circular convolution binding, associative unbinding, capacity scaling (Theorems 95–97), CLI `pandora memory hyper-project/holographic-recall`, REST `/api/memory/hyper` | M18 | v4.0.5 Architecture |
+| F29 | Phase 42: Formal Kernel Verification & Lean 4 / Coq Machine-Checked Proof Exports | Soundness bijection, decidability, centennial completeness for Theorems 1–100 (Theorems 98–100), CLI `pandora audit formal-verify`, REST `/api/audit/formal` | M18 | v4.0.5 Architecture |
 
 ---
 
@@ -79,6 +82,8 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M14 | Phase 36: Homomorphic Multi-Party Computation & Secret Sharing | Shamir threshold sharing, Beaver triple multiplication (Theorems 83–85) | M13 | COMPLETED |
 | M15 | Phase 37: Differential Privacy & Continual Certified Unlearning | RDP accounting, certified unlearning distance bound (Theorems 86–88) | M14 | COMPLETED |
 | M16 | Phase 38: Distributed Speculative Tree Decoding | Speculative rejection sampling, tree decoding speedup >= 2.0x (Theorems 89–91) | M15 | COMPLETED |
+| M17 | Phase 39: OLYMPUS Subsystems Topology (v4.0.4) | 5 micro-kernel pillars, unified CLI commands, REST endpoints, 91 theorems | M16 | COMPLETED |
+| M18 | Phase 40-42: Centennial Completeness (v4.0.5 AETHER) | Multi-tenant mesh, hyper-dimensional holographic VFS, formal Lean 4/Coq verification (Theorems 92–100) | M17 | COMPLETED |
 
 ---
 

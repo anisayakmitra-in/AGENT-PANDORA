@@ -32,7 +32,7 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
     let status = subsystem.status();
 
     let display = format!(
-        "Cryptographic Subsystem [v4.0.4 OLYMPUS]\n\
+        "Cryptographic Subsystem [v4.0.5 AETHER]\n\
          Status: {}\n\
          Prime Fields: {}\n\
          PQ Ed25519 PK: {}...\n\

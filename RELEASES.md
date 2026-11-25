@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, and `v4.0.4`. The active release identity
-is `v4.0.4`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, and `v4.0.5`. The active release identity
+is `v4.0.5`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,15 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.5
+
+This release delivers **Centennial Completeness (Phases 40–42, Theorems 92–100)**:
+- **Phase 40: Distributed Multi-Tenant Mesh Orchestration & Cross-Cluster Atomic Commitments** (`multi_tenant_mesh.rs`, Theorems 92–94, shard attestation vector digests, 2-phase cross-cluster atomic commit receipts, CLI `pandora swarm mesh|cross-commit`, REST `/api/swarm/mesh`).
+- **Phase 41: Hyper-Dimensional Vector VFS & Holographic Cognitive Associative Memory** (`hyper_vfs.rs`, Theorems 95–97, bipolar hypervectors $\mathbb{H}^{1024}$, circular convolution binding $\mathbf{a} \circledast \mathbf{b}$, circular correlation unbinding $\mathbf{c} \odot \mathbf{a}$, superposition memory bundling, CLI `pandora memory hyper-project|holographic-recall`, REST `/api/memory/hyper`).
+- **Phase 42: Formal Kernel Verification & Lean 4 / Coq Machine-Checked Proof Exports** (`formal_proof.rs`, Theorems 98–100, formal proof generator and verification engine for all 100 mathematical foundation theorems in Lean 4 and Coq dialects, CLI `pandora audit formal-verify`, REST `/api/audit/formal`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/mesh`, `/api/memory/hyper`, `/api/audit/formal`, and updated `/api/olympus/overview` (`codename: "AETHER"`, `total_theorems_enforced: 100`).
+- Enforces all **100 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.4
 

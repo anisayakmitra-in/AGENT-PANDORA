@@ -2971,6 +2971,22 @@ fn handle_connection(
             let overview = crate::subsystems::OlympusSystemOverview::inspect();
             write_json_response(&mut stream, 200, "OK", &json!(overview))?;
         }
+        ("GET", "/api/swarm/mesh") => {
+            let router = crate::multi_tenant_mesh::SwarmMeshRouter::default();
+            let report = router.audit();
+            write_json_response(&mut stream, 200, "OK", &json!(report))?;
+        }
+        ("GET", "/api/memory/hyper") => {
+            let mut memory = crate::hyper_vfs::HolographicMemory::default();
+            memory.associate("concept_alpha", "value_alpha");
+            let report = memory.audit();
+            write_json_response(&mut stream, 200, "OK", &json!(report))?;
+        }
+        ("GET", "/api/audit/formal") => {
+            let engine = crate::formal_proof::FormalProofEngine::new();
+            let report = engine.verify_centennial_suite(crate::formal_proof::ProofDialect::Lean4);
+            write_json_response(&mut stream, 200, "OK", &json!(report))?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

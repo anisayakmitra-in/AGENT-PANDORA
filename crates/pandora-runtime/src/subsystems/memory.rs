@@ -6,6 +6,7 @@
 //! tropical HNSW indexing, Rényi Differential Privacy (RDP) accounting, and certified
 //! machine unlearning via projected Fisher inverse scrubbing (Theorems 86–88).
 
+use crate::hyper_vfs::HolographicMemory;
 use crate::privacy_engine::{PrivacyBudget, PrivacySupervisor, ScrubbingReceipt};
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,11 @@ impl MemorySubsystem {
             .certified_unlearn(target_id, samples, 0.02, 1.4)
     }
 
+    /// Obtains a handle to the holographic associative memory store (Theorems 95–97).
+    pub fn holographic_memory(&self) -> HolographicMemory {
+        HolographicMemory::default()
+    }
+
     /// Returns high-level operational status of the Memory Subsystem.
     pub fn status(&self) -> MemorySubsystemStatus {
         let sample_receipt = self.certified_scrub("system_bootstrap_sample", 3);
@@ -47,10 +53,11 @@ impl MemorySubsystem {
                 "L2: Episodic Knowledge Base".to_string(),
                 "L3: Standard Operating Procedures (SOP)".to_string(),
                 "L4: Immutable Cold Archive".to_string(),
+                "L5: Holographic Hyper-Dimensional Associative VFS".to_string(),
             ],
             privacy_budget: self.supervisor.budget.clone(),
             sample_scrubbing: sample_receipt,
-            theorems_enforced: vec![86, 87, 88],
+            theorems_enforced: vec![86, 87, 88, 95, 96, 97],
         }
     }
 }
