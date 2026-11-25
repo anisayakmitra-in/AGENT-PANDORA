@@ -58,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', or 'pipeline'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', or 'bft'",
             ));
         }
     };
@@ -70,8 +70,9 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "vote" => vote(&args[1..]),
         "sync-gradients" | "sync" => sync_gradients(&args[1..]),
         "pipeline" => pipeline(&args[1..]),
+        "bft" => bft(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft"
         ))),
     }
 }
@@ -728,6 +729,101 @@ fn pipeline(args: &[String]) -> Result<CommandResult, CliError> {
     Ok(success("swarm pipeline run", json_data, human))
 }
 
+fn bft(args: &[String]) -> Result<CommandResult, CliError> {
+    let first = args.first().map(String::as_str);
+    let subcommand = match first {
+        Some(s) if !s.starts_with('-') => s,
+        _ => "status",
+    };
+
+    match subcommand {
+        "status" => {
+            let offset = if first.is_some() && !args[0].starts_with('-') {
+                1
+            } else {
+                0
+            };
+            bft_status(&args[offset..])
+        }
+        "simulate" => bft_simulate(&args[1..]),
+        unknown => Err(CliError::usage(format!(
+            "unknown swarm bft command '{unknown}'; expected status or simulate"
+        ))),
+    }
+}
+
+fn bft_status(slice: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(slice, &["json"])?;
+    let cluster = pandora_runtime::swarm_bft::PbftCluster::new(4)
+        .map_err(|e| CliError::execution(format!("BFT cluster init failed: {e}"), json!({})))?;
+    let report = cluster.status_report();
+    let human = format!(
+        "PBFT Consensus Cluster: {} nodes, tolerating {} Byzantine fault(s), quorum threshold: {}, view: {}",
+        report["total_nodes"],
+        report["max_byzantine_faults_tolerated"],
+        report["quorum_threshold"],
+        report["current_view"]
+    );
+    Ok(success("swarm bft status", report, human))
+}
+
+fn bft_simulate(slice: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(slice, &["nodes", "faults", "rounds", "payload", "json"])?;
+    let nodes: usize = parsed
+        .value("nodes")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
+    let faults: usize = parsed
+        .value("faults")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let rounds: usize = parsed
+        .value("rounds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+    let payload = parsed
+        .value("payload")
+        .unwrap_or("{\"proposal\": \"swarm_policy_consensus\"}");
+
+    let mut cluster = pandora_runtime::swarm_bft::PbftCluster::new(nodes)
+        .map_err(|e| CliError::execution(format!("BFT cluster init failed: {e}"), json!({})))?;
+
+    // Configure faults
+    for i in 0..faults.min(cluster.max_faulty_nodes()) {
+        let node_idx = nodes - 1 - i;
+        cluster.nodes[node_idx].is_byzantine = true;
+        cluster.nodes[node_idx].equivocate = true;
+    }
+
+    for r in 0..rounds {
+        let round_payload = format!("{payload}_round_{r}");
+        let _cert = cluster
+            .execute_consensus_round(&round_payload)
+            .map_err(|e| CliError::execution(format!("BFT round {r} failed: {e}"), json!({})))?;
+    }
+
+    let json_data = json!({
+        "command": "swarm bft simulate",
+        "nodes": nodes,
+        "byzantine_faults_injected": faults,
+        "rounds_executed": rounds,
+        "theorems_enforced": [62, 63, 64],
+        "theorem_62_resilience": cluster.verify_theorem_62_resilience(),
+        "theorem_63_safety": cluster.verify_theorem_63_safety(),
+        "theorem_64_state_sync": cluster.verify_theorem_64_state_sync(),
+        "state_merkle_root": cluster.state_merkle_root(),
+        "latest_sequence": cluster.sequence_counter,
+        "status": "completed"
+    });
+
+    let human = format!(
+        "PBFT Simulation Completed: {rounds} round(s) across {nodes} nodes ({faults} Byzantine fault(s) tolerated). Merkle Root: {}",
+        cluster.state_merkle_root()
+    );
+
+    Ok(success("swarm bft simulate", json_data, human))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -784,5 +880,32 @@ mod tests {
         assert!(run_res.data["certified"].as_bool().unwrap());
         assert!(run_res.data["self_healed"].as_bool().unwrap());
         assert_eq!(run_res.data["total_rounds"], 2);
+    }
+
+    #[test]
+    fn test_swarm_cli_bft_status_and_simulate() {
+        let status_res =
+            execute(&["bft".to_string(), "status".to_string()]).expect("status succeeds");
+        assert_eq!(status_res.command, "swarm bft status");
+        assert_eq!(status_res.data["total_nodes"], 4);
+        assert_eq!(status_res.data["max_byzantine_faults_tolerated"], 1);
+
+        let sim_res = execute(&[
+            "bft".to_string(),
+            "simulate".to_string(),
+            "--nodes".to_string(),
+            "4".to_string(),
+            "--faults".to_string(),
+            "1".to_string(),
+            "--rounds".to_string(),
+            "2".to_string(),
+        ])
+        .expect("simulate succeeds");
+        assert_eq!(sim_res.command, "swarm bft simulate");
+        assert_eq!(sim_res.data["nodes"], 4);
+        assert_eq!(sim_res.data["rounds_executed"], 2);
+        assert!(sim_res.data["theorem_62_resilience"].as_bool().unwrap());
+        assert!(sim_res.data["theorem_63_safety"].as_bool().unwrap());
+        assert!(sim_res.data["theorem_64_state_sync"].as_bool().unwrap());
     }
 }

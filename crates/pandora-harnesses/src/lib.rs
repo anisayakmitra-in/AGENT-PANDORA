@@ -17,6 +17,7 @@ pub mod security;
 pub mod slash;
 pub mod tier_orchestrator;
 pub mod verification;
+pub mod visual_perception;
 
 pub use catalog::{HarnessCatalog, HarnessCatalogError, replaceable_builtin_harness_kind};
 pub use recursive_engine::{
@@ -28,6 +29,10 @@ pub use tier_orchestrator::{
     HarnessTier, HarnessTierOrchestrator, MetaCoordinationGene, MetaEvolutionGene, MetaSwarmGene,
     SubstrateTelemetryGene, SystemMemoryConstitutionalGene, TierInventoryReport,
     WholeAgentChromosome,
+};
+pub use visual_perception::{
+    ColorRgb, LayoutBox, PerceptualHash, ViewportProfile, VisualPerceptionError,
+    VisualPerceptionGene, WcagLevel,
 };
 
 pub fn canonical_harness_binding_digest(manifest: &pandora_types::HarnessManifest) -> String {

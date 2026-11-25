@@ -3,6 +3,18 @@
 ## v4.0.0
 
 ### THANATOS: Unified Source, Domain & Meta Harness Tier Orchestration, Genomic PAC-Bayes Evolutionary Adaptation, Autonomous Swarm Coding SDLC & 12 Inference Engines
+- **Phase 30: Multi-Modal Visual Perception & Layout Verification Harness (crates/pandora-harnesses/src/visual_perception.rs, crates/pandora-cli/src/commands/harness.rs)**:
+  - Implemented ColorRgb with WCAG 2.2 sRGB gamma expansion, relative luminance calculation, and contrast ratio validation ($\ge 4.5:1$ AA, $\ge 7:1$ AAA; Theorem 66).
+  - Implemented PerceptualHash (pHash) with normalized Hamming distance and scale/affine invariance bounds ($\le 5$; Theorem 65).
+  - Implemented LayoutBox with normalized coordinates, boundary containment, layer overlap checks, and IoU calculation (Theorem 67).
+  - Implemented VisualPerceptionGene implementing pandora_types::Gene for automated UI perceptual audits.
+  - Added CLI subcommands pandora harness visual inspect, contrast, hash, and layout.
+  - Added REST endpoint GET /api/harness/visual to CockpitWebServer.
+- **Phase 29: Distributed Swarm PBFT Consensus State Machine Replication (crates/pandora-runtime/src/swarm_bft.rs, crates/pandora-cli/src/commands/swarm.rs)**:
+  - Implemented 3-phase Byzantine Fault-Tolerant consensus protocol (PrePrepare, Prepare, Commit, ViewChange, Decided) with Ed25519 cryptographic message signing and verification.
+  - Implemented PbftCluster with $N \ge 3f + 1$ quorum verification (Theorem 62), deterministic view-change rotation (Theorem 63), and Merkle state synchronization (Theorem 64).
+  - Added CLI subcommands pandora swarm bft status and pandora swarm bft simulate.
+  - Added REST endpoint GET /api/swarm/bft to CockpitWebServer.
 - **Phase 28: Unified Source, Domain & Meta Harness Tier Orchestration & Genomic PAC-Bayes Adaptation Engine (crates/pandora-harnesses/src/tier_orchestrator.rs, crates/pandora-cli/src/commands/harness.rs)**:
   - Implemented 3-Tier Harness Hierarchy (Source, Domain, Meta) with constitutional substrate memory, telemetry, and execution permits (Theorems 58–61).
   - Implemented Meta Composition Genes: MetaCoordinationGene (Theorem 58: Cross-Domain Invariant Preservation with handoff limits and contract verification), MetaEvolutionGene (Theorem 59: Recursive Meta-Synthesis with prompt compression), and MetaSwarmGene (Theorem 60: Byzantine Quorum Stability with BFT safety bounds).

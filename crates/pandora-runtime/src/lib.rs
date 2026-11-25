@@ -115,6 +115,7 @@ pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
+pub mod swarm_bft;
 pub mod swarm_mesh;
 pub mod swarm_pipeline;
 pub mod synthetic_canvas;

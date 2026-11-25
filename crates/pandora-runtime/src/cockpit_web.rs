@@ -2809,6 +2809,26 @@ fn handle_connection(
                 .unwrap_or_else(|_| json!({"error": "serialization_failed"}));
             write_json_response(&mut stream, 200, "OK", &val)?;
         }
+        ("GET", "/api/swarm/bft") => {
+            let cluster = crate::swarm_bft::PbftCluster::new(4)
+                .map(|c| c.status_report())
+                .unwrap_or_else(|_| json!({"error": "bft_init_failed"}));
+            write_json_response(&mut stream, 200, "OK", &cluster)?;
+        }
+        ("GET", "/api/harness/visual") => {
+            let val = json!({
+                "status": "ready",
+                "gene": "gene-visual-perception",
+                "version": "4.0.0",
+                "supported_viewports": [
+                    {"name": "Desktop", "width": 1920, "height": 1080, "dpr": 1.0},
+                    {"name": "Tablet", "width": 1024, "height": 768, "dpr": 2.0},
+                    {"name": "Mobile (Xiaomi 15)", "width": 393, "height": 851, "dpr": 3.0}
+                ],
+                "theorems": [65, 66, 67]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

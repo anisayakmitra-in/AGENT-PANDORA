@@ -44,6 +44,8 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F13 | `LatsPrefixMemoCache` & Tropical HNSW Benchmarks | Add reproducible offline `--locked` pure-`std` `[[bench]]` target (`cargo bench -p pandora-runtime --locked`) and benchmark helpers reporting throughput for `LatsPrefixMemoCache` and tropical HNSW | M5 | ORIGINAL_REQUEST §R3 |
 | F14 | Version & Quality Gate Compliance | Maintain `3.1.5` workspace version, `#![forbid(unsafe_code)]`, `fmt`, `clippy`, `cargo test --workspace --locked`, `validate_docs.py`, `validate_repo.py` | M6 | ORIGINAL_REQUEST §R4 |
 | F15 | Opaque-Box E2E Suite & Tier 5 Hardening | Independent 4-tier E2E test suite (`TEST_READY.md`), 100% pass gate, and Tier 5 adversarial coverage hardening | E2E + M6 | Project Pattern |
+| F16 | Phase 29: Swarm PBFT Consensus State Machine | 3-phase Byzantine Fault-Tolerant consensus ($N \ge 3f + 1$, Theorem 62) with view-change rotation (Theorem 63), Merkle sync (Theorem 64), Ed25519 signing, CLI `pandora swarm bft`, REST `/api/swarm/bft` | M7 | v4.0.0 Architecture |
+| F17 | Phase 30: Visual Perception & Layout Verification | WCAG 2.2 luminance & contrast ratio validation (Theorem 66), perceptual hash $p\text{Hash}$ invariance (Theorem 65), layout bounding box IoU & overlap verification (Theorem 67), CLI `pandora harness visual`, REST `/api/harness/visual` | M8 | v4.0.0 Architecture |
 
 ---
 
@@ -58,6 +60,8 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M5 | `PVFS` v3 Compaction, Incremental HNSW & Benchmarks (R3) | `hnsw.rs` tombstones/incremental/compact; `context_vfs.rs` PVFS v3 deletion/compaction/incremental HNSW sync; `[[bench]]` pure-`std` throughput benchmarks for `LatsPrefixMemoCache` & tropical HNSW | None | COMPLETED |
 | E2E | E2E Testing Track (Tiers 1-4) | Requirement-driven opaque-box E2E test suite covering F1–F14, publishing `TEST_INFRA.md` & `TEST_READY.md` | None (runs parallel) | COMPLETED |
 | M6 | Final Milestone: E2E Pass & Quality Verification | 100% E2E pass on 52 tests; reproducible pure-std throughput benchmarks; full fmt/clippy/test/doc/repo validation gates; version/commit invariants preserved | M1, M2, M3, M4, M5, E2E | COMPLETED |
+| M7 | Phase 29: Swarm PBFT Consensus State Machine | Byzantine Fault-Tolerant consensus ($N \ge 3f + 1$, Theorem 62–64), Ed25519 cluster quorum, CLI `swarm bft`, Cockpit `/api/swarm/bft` | M6 | COMPLETED |
+| M8 | Phase 30: Visual Perception & Layout Harness | WCAG 2.2 color contrast, $p\text{Hash}$ invariance, layout bounding box IoU & overlap verification (Theorem 65–67), CLI `harness visual`, Cockpit `/api/harness/visual` | M6 | COMPLETED |
 
 ---
 
