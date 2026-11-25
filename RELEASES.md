@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, and `v4.0.10`. The active release identity
-is `v4.0.10`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, and `v4.1.0`. The active release identity
+is `v4.1.0`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,17 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+
+## v4.1.0
+
+This release delivers Phases 58–60 of the architectural roadmap under codename **THANATOS**:
+- **Phase 58: Topological Quantum Field Theory (TQFT) & Chern-Simons Invariants** (`tqft_invariants.rs`, Theorems 146–148, Chern-Simons 3-manifold partition function evaluation, Jones polynomial knot invariants via skein relations, framing anomaly phase evaluation, topological entanglement entropy calculation $\gamma = \ln \mathcal{D}$, CLI `pandora swarm tqft-knot|tqft-entropy`, REST `/api/swarm/tqft`).
+- **Phase 59: Homomorphic Functional Encryption & Verifiable Inner-Product Decryption** (`functional_encryption.rs`, Theorems 149–151, LWE-based Inner-Product Functional Encryption (IPFE), key generation for linear evaluation functions $\mathbf{sk}_{\mathbf{y}}$, IND-CPA function-hiding decryption without revealing underlying plaintexts, multi-authority soundness, CLI `pandora crypto fe-keygen|fe-decrypt`, REST `/api/crypto/functional-encryption`).
+- **Phase 60: Distributed Symplectic Hamiltonian Neural ODEs & Energy-Conserving Swarm Dynamics** (`symplectic_neural_ode.rs`, Theorems 152–154, continuous Hamiltonian Neural ODEs, Störmer-Verlet leapfrog symplectic integrator preserving differential 2-form $d\omega = 0$ and phase volume $\det J = 1$, shadow Hamiltonian backward error analysis, long-horizon kinetic equilibrium bounds, CLI `pandora cognitive symplectic-step|energy-audit`, REST `/api/cognitive/symplectic-ode`).
+- **Constitutional Governance Modernization**: Parliament and Tripartite Governance upgraded to enforce all 154 centennial theorems on issued constitutional permits.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/tqft`, `/api/crypto/functional-encryption`, `/api/cognitive/symplectic-ode`, and updated `/api/olympus/overview` (`architecture_version: "4.1.0"`, `codename: "THANATOS"`, `total_theorems_enforced: 154`).
+- Enforces all **154 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 
 ## v4.0.10

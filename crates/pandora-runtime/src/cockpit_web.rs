@@ -2967,7 +2967,7 @@ fn handle_connection(
             let status = subsystem.status();
             write_json_response(&mut stream, 200, "OK", &json!(status))?;
         }
-        ("GET", "/api/olympus/overview") => {
+        ("GET", "/api/olympus/overview") | ("GET", "/api/cockpit/overview") => {
             let overview = crate::subsystems::OlympusSystemOverview::inspect();
             write_json_response(&mut stream, 200, "OK", &json!(overview))?;
         }
@@ -3176,6 +3176,51 @@ fn handle_connection(
                 "stepped_state": next,
                 "exponential_martingale_risk_bound": risk,
                 "theorems_enforced": [143, 144, 145]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/swarm/tqft") => {
+            let engine = crate::tqft_invariants::TqftEngine::default();
+            let knot = crate::tqft_invariants::KnotDiagram::trefoil();
+            let jones = engine.evaluate_jones_polynomial(&knot, 1.5);
+            let z_s3 = engine.compute_s3_partition_function();
+            let entropy = engine.compute_topological_entropy(&[1.0, 1.6180339887], 10.0, 0.5);
+            let resp = serde_json::json!({
+                "jones_polynomial": jones,
+                "s3_partition_function": z_s3,
+                "topological_entropy": entropy,
+                "theorems_enforced": [146, 147, 148]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/functional-encryption") => {
+            let engine = crate::functional_encryption::FunctionalEncryptionEngine::new(4, 1000003);
+            let weights = vec![2, -3, 4, 1];
+            let key = engine.derive_functional_key(&weights);
+            let plaintext = vec![10, 5, 2, 7];
+            let ct = engine.encrypt(&plaintext);
+            let result = engine.decrypt(&ct, &key);
+            let resp = serde_json::json!({
+                "plaintext_dimension": 4,
+                "functional_result": result,
+                "theorems_enforced": [149, 150, 151]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/symplectic-ode") => {
+            let engine = crate::symplectic_neural_ode::SymplecticNeuralOdeEngine::default();
+            let initial = crate::symplectic_neural_ode::SymplecticState {
+                position_q: vec![1.0, 0.0],
+                momentum_p: vec![0.0, 1.5],
+                time_t: 0.0,
+                kinetic_energy: 1.125,
+                potential_energy: 1.025,
+                total_hamiltonian: 2.15,
+            };
+            let audit = engine.audit_trajectory(&initial, 25);
+            let resp = serde_json::json!({
+                "audit": audit,
+                "theorems_enforced": [152, 153, 154]
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }

@@ -78,6 +78,11 @@ impl SwarmSubsystem {
         crate::anyonic_braiding::AnyonicBraidingEngine::default()
     }
 
+    /// Access the TQFT Chern-Simons and knot invariants engine (Theorems 146–148).
+    pub fn tqft(&self) -> crate::tqft_invariants::TqftEngine {
+        crate::tqft_invariants::TqftEngine::default()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -93,7 +98,7 @@ impl SwarmSubsystem {
             gossip_converged: converged,
             theorems_enforced: vec![
                 62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
-                137, 138, 139,
+                137, 138, 139, 146, 147, 148,
             ],
         }
     }

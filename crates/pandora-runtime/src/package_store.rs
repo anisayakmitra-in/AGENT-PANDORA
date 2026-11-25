@@ -2263,7 +2263,7 @@ mod tests {
             "publisher",
             hash_artifact(artifact),
             Vec::new(),
-            PackageCompatibility::new("pandora>=4.0.0").unwrap(),
+            PackageCompatibility::new("pandora>=5.0.0").unwrap(),
             "MIT",
             TrustEvidence::unsigned(),
         )

@@ -31,8 +31,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "swarm-hjb" => swarm_hjb(&args[1..]),
         "jump-diffuse" => jump_diffuse(&args[1..]),
         "hjb-ide-control" => hjb_ide_control(&args[1..]),
+        "symplectic-step" => symplectic_step(&args[1..]),
+        "energy-audit" => energy_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit'"
         ))),
     }
 }
@@ -447,4 +449,153 @@ fn hjb_ide_control(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         display,
     ))
+}
+
+fn symplectic_step(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "q",
+            "p",
+            "step-size",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let q: Vec<f64> = parsed
+        .value("q")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![1.0, 0.0]);
+
+    let p: Vec<f64> = parsed
+        .value("p")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![0.0, 1.5]);
+
+    let step_size = parsed
+        .value("step-size")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.02);
+
+    let config = pandora_runtime::symplectic_neural_ode::SymplecticConfig {
+        step_size_h: step_size,
+        ..Default::default()
+    };
+    let engine = pandora_runtime::symplectic_neural_ode::SymplecticNeuralOdeEngine::new(config);
+    let (t0, v0, h0) = engine.evaluate_hamiltonian(&q, &p);
+
+    let initial = pandora_runtime::symplectic_neural_ode::SymplecticState {
+        position_q: q,
+        momentum_p: p,
+        time_t: 0.0,
+        kinetic_energy: t0,
+        potential_energy: v0,
+        total_hamiltonian: h0,
+    };
+
+    let next = engine.step(&initial);
+
+    let display = format!(
+        "Symplectic Hamiltonian Neural ODE Step\n\
+         Time: {:.4}s -> {:.4}s\n\
+         Position q: {:?}\n\
+         Momentum p: {:?}\n\
+         Kinetic Energy T: {:.4}\n\
+         Potential Energy V: {:.4}\n\
+         Total Hamiltonian H: {:.4}\n\
+         Theorems: 152 (Volume Preservation), 153 (Shadow Hamiltonian)",
+        initial.time_t,
+        next.time_t,
+        next.position_q,
+        next.momentum_p,
+        next.kinetic_energy,
+        next.potential_energy,
+        next.total_hamiltonian
+    );
+
+    Ok(success("cognitive symplectic-step", json!(next), display))
+}
+
+fn energy_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["steps", "q", "p", "config", "data-dir", "workspace", "json"],
+    )?;
+    let steps = parsed
+        .value("steps")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+
+    let q: Vec<f64> = parsed
+        .value("q")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![1.0, 0.0]);
+
+    let p: Vec<f64> = parsed
+        .value("p")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![0.0, 1.5]);
+
+    let engine = pandora_runtime::symplectic_neural_ode::SymplecticNeuralOdeEngine::default();
+    let (t0, v0, h0) = engine.evaluate_hamiltonian(&q, &p);
+    let initial = pandora_runtime::symplectic_neural_ode::SymplecticState {
+        position_q: q,
+        momentum_p: p,
+        time_t: 0.0,
+        kinetic_energy: t0,
+        potential_energy: v0,
+        total_hamiltonian: h0,
+    };
+
+    let audit = engine.audit_trajectory(&initial, steps);
+
+    let display = format!(
+        "Symplectic Geometric Energy Audit\n\
+         Simulated Steps: {}\n\
+         Initial H: {:.6}\n\
+         Final H: {:.6}\n\
+         Max Energy Drift: {:.6e}\n\
+         Jacobian Det: {:.4}\n\
+         Theorems: 152 ({}), 153 ({}), 154 ({})",
+        steps,
+        audit.initial_hamiltonian,
+        audit.final_hamiltonian,
+        audit.max_energy_drift,
+        audit.volume_preservation_jacobian_det,
+        if audit.theorem_152_symplectic_verified {
+            "VERIFIED"
+        } else {
+            "FAILED"
+        },
+        if audit.theorem_153_shadow_verified {
+            "VERIFIED"
+        } else {
+            "FAILED"
+        },
+        if audit.theorem_154_energy_bounded {
+            "VERIFIED"
+        } else {
+            "FAILED"
+        }
+    );
+
+    Ok(success("cognitive energy-audit", json!(audit), display))
 }

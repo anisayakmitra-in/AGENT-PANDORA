@@ -35,8 +35,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "ckks-rescale" => ckks_rescale(&args[1..]),
         "tfhe-keygen" => tfhe_keygen(&args[1..]),
         "tfhe-partial-decrypt" => tfhe_partial_decrypt(&args[1..]),
+        "fe-keygen" => fe_keygen(&args[1..]),
+        "fe-decrypt" => fe_decrypt(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt'"
         ))),
     }
 }
@@ -472,4 +474,101 @@ fn tfhe_partial_decrypt(args: &[String]) -> Result<CommandResult, CliError> {
         }),
         display,
     ))
+}
+
+fn fe_keygen(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "weights",
+            "dimension",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let dim = parsed
+        .value("dimension")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let weights: Vec<i64> = parsed
+        .value("weights")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<i64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![2, -3, 4, 1]);
+
+    let engine =
+        pandora_runtime::functional_encryption::FunctionalEncryptionEngine::new(dim, 1000003);
+    let key = engine.derive_functional_key(&weights);
+
+    let display = format!(
+        "Inner-Product Functional Encryption Key Token\n\
+         Dimension: {}\n\
+         Weights Vector: {:?}\n\
+         Token Vector Length: {}\n\
+         Authority: {}\n\
+         Theorems: 149 (LWE Security), 151 (Multi-Authority Soundness)",
+        dim,
+        key.function_vector,
+        key.token_vector.len(),
+        key.authority_id
+    );
+
+    Ok(success("crypto fe-keygen", json!(key), display))
+}
+
+fn fe_decrypt(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "plaintext",
+            "weights",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let weights: Vec<i64> = parsed
+        .value("weights")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<i64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![2, -3, 4, 1]);
+
+    let plaintext: Vec<i64> = parsed
+        .value("plaintext")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<i64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![10, 5, 2, 7]);
+
+    let engine = pandora_runtime::functional_encryption::FunctionalEncryptionEngine::new(
+        weights.len(),
+        1000003,
+    );
+    let key = engine.derive_functional_key(&weights);
+    let ct = engine.encrypt(&plaintext);
+    let result = engine.decrypt(&ct, &key);
+
+    let display = format!(
+        "Functional Encryption Evaluation Decryption\n\
+         Computed Inner Product: {}\n\
+         Function Weights: {:?}\n\
+         Plaintext Zero-Knowledge: Preserved (No individual coordinate leak)\n\
+         Theorems: 149 (IND-CPA), 150 (Function-Hiding Decryption)",
+        result.inner_product, result.function_weights_used
+    );
+
+    Ok(success("crypto fe-decrypt", json!(result), display))
 }

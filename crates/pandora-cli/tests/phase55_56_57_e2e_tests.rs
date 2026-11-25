@@ -1,13 +1,13 @@
 #![forbid(unsafe_code)]
 
-//! Phase 55, 56, 57 End-to-End Integration Tests (v4.0.10, Codename: THANATOS)
+//! Phase 55, 56, 57 End-to-End Integration Tests (v4.1.0, Codename: THANATOS)
 //!
 //! Validates:
 //! - Constitutional Governance Modernization: Parliament Bicameral Quadratic Voting & Shadow Council Red-Team Veto
 //! - Phase 55: Non-Abelian Anyonic Braiding & Topological Qubit Synthesis (Theorems 137–139)
 //! - Phase 56: Multi-Key Threshold Fully Homomorphic Encryption with Distributed Noise Flooding (Theorems 140–142)
 //! - Phase 57: Neural Jump-Diffusion Stochastic Optimal Control & Lévy Swarm Flips (Theorems 143–145)
-//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–145)
+//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–154)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -42,7 +42,7 @@ impl TestEnv {
         fs::create_dir_all(&data).expect("create data dir");
 
         let default_config = serde_json::json!({
-            "version": "4.0.10",
+            "version": "4.1.0",
             "active_model": "thanatos-supercluster",
             "max_tool_iterations": 10,
             "cost_limit_dollars": 5.0,
@@ -143,7 +143,7 @@ fn test_governance_bicameral_quadratic_voting_and_shadow_veto() {
     ]);
     assert_eq!(vote_res["proposal_id"], "prop-upgrade-55");
     assert!(vote_res["bicameral_margin"].as_f64().unwrap() > 0.0);
-    assert_eq!(vote_res["theorems_enforced"].as_array().unwrap().len(), 145);
+    assert_eq!(vote_res["theorems_enforced"].as_array().unwrap().len(), 154);
 
     // 3. Shadow Council Red-Team Checks
     let safe_check = env.run_success(&[

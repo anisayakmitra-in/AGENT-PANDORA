@@ -89,6 +89,13 @@ impl CryptoSubsystem {
         crate::threshold_fhe::ThresholdFheEngine::default()
     }
 
+    /// Access the homomorphic functional encryption engine (Theorems 149–151).
+    pub fn functional_encryption(
+        &self,
+    ) -> crate::functional_encryption::FunctionalEncryptionEngine {
+        crate::functional_encryption::FunctionalEncryptionEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -103,7 +110,7 @@ impl CryptoSubsystem {
             mpc_report: mpc_rep,
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
-                132, 133, 140, 141, 142,
+                132, 133, 140, 141, 142, 149, 150, 151,
             ],
         }
     }

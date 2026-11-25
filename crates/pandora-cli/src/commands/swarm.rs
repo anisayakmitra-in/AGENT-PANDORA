@@ -85,8 +85,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "magic-state-audit" => magic_state_audit(&args[1..]),
         "anyon-braid" => anyon_braid(&args[1..]),
         "anyon-fuse" => anyon_fuse(&args[1..]),
+        "tqft-knot" => tqft_knot(&args[1..]),
+        "tqft-entropy" => tqft_entropy(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy"
         ))),
     }
 }
@@ -1342,6 +1344,73 @@ fn anyon_fuse(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("swarm anyon-fuse", json!(result), text))
+}
+
+fn tqft_knot(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["knot", "t", "config", "data-dir", "workspace", "json"],
+    )?;
+    let knot_str = parsed.value("knot").unwrap_or("trefoil");
+    let t = parsed
+        .value("t")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+
+    let knot = match knot_str.to_ascii_lowercase().as_str() {
+        "unknot" => pandora_runtime::tqft_invariants::KnotDiagram::unknot(),
+        "figure8" | "figure_eight" => pandora_runtime::tqft_invariants::KnotDiagram::figure_eight(),
+        "hopf" => pandora_runtime::tqft_invariants::KnotDiagram::hopf_link(),
+        _ => pandora_runtime::tqft_invariants::KnotDiagram::trefoil(),
+    };
+
+    let engine = pandora_runtime::tqft_invariants::TqftEngine::default();
+    let res = engine.evaluate_jones_polynomial(&knot, t);
+    let s3 = engine.compute_s3_partition_function();
+
+    let text = format!(
+        "Chern-Simons TQFT & Jones Polynomial Invariant:\n  Knot: {}\n  Evaluation Point t: {:.2}\n  Jones Value V(t): {:.4}\n  S3 Partition Function Z(S^3): {:.6}\n  Theorems: 146 (Chern-Simons TQFT), 147 (Jones Skein Invariance)",
+        res.knot_name, res.evaluation_point_t, res.polynomial_value, s3
+    );
+
+    Ok(success(
+        "swarm tqft-knot",
+        json!({
+            "jones": res,
+            "s3_partition_function": s3,
+            "theorems": [146, 147]
+        }),
+        text,
+    ))
+}
+
+fn tqft_entropy(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["length", "alpha", "config", "data-dir", "workspace", "json"],
+    )?;
+    let length = parsed
+        .value("length")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(10.0);
+    let alpha = parsed
+        .value("alpha")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+
+    let engine = pandora_runtime::tqft_invariants::TqftEngine::default();
+    let dims = vec![1.0, 1.6180339887];
+    let rep = engine.compute_topological_entropy(&dims, length, alpha);
+
+    let text = format!(
+        "Topological Entanglement Entropy Calculation:\n  Total Quantum Dimension D: {:.4}\n  Topological Entropy Correction Gamma: {:.4}\n  Boundary Length L: {:.2}\n  Total Entanglement S_A: {:.4}\n  Theorem: 148 (Topological Entanglement Area Law Correction)",
+        rep.total_quantum_dimension_d,
+        rep.topological_entanglement_entropy_gamma,
+        rep.boundary_length_l,
+        rep.total_von_neumann_entropy
+    );
+
+    Ok(success("swarm tqft-entropy", json!(rep), text))
 }
 
 #[cfg(test)]

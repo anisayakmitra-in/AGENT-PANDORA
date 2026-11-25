@@ -83,6 +83,11 @@ impl CognitiveSubsystem {
         crate::jump_diffusion::JumpDiffusionEngine::default()
     }
 
+    /// Access the symplectic Hamiltonian neural ODE engine (Theorems 152–154).
+    pub fn symplectic_ode(&self) -> crate::symplectic_neural_ode::SymplecticNeuralOdeEngine {
+        crate::symplectic_neural_ode::SymplecticNeuralOdeEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -102,7 +107,7 @@ impl CognitiveSubsystem {
             metacognitive_pac_bayes_risk: meta_rep.theorem_82_pac_bayes_risk,
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
-                134, 135, 136, 143, 144, 145,
+                134, 135, 136, 143, 144, 145, 152, 153, 154,
             ],
         }
     }
