@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, and `v4.0.3`. The active release identity
-is `v4.0.3`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, and `v4.0.4`. The active release identity
+is `v4.0.4`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,17 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.4
+
+This release delivers the **OLYMPUS Micro-Kernel Architecture Upgrade**:
+- **Subsystem 1: Cognitive Micro-Kernel & Neuro-Symbolic Engine** (`cognitive.rs`, BNF pushdown automata token masking, LATS MCTS search, speculative tree rejection sampling, metacognitive entropy supervision, CLI `pandora cognitive status|speculate|synthesize|audit`).
+- **Subsystem 2: Tripartite Constitutional Governance & Capability Bus** (`governance.rs`, capability-based expiring effect permits, declarative vetoes, process containment with <=50ms kill bound, CLI `pandora governance status|audit`).
+- **Subsystem 3: Cryptographic Zero-Knowledge & Post-Quantum Substrate** (`crypto.rs`, post-quantum hybrid attestation with ML-DSA-65 + Ed25519, Goldilocks Poseidon sponge, Shamir Beaver triple MPC, CLI `pandora crypto status|pq-sign|mpc-eval`).
+- **Subsystem 4: Decentralized Swarm Mesh & Consensus Substrate** (`swarm.rs`, PBFT consensus, conflict-free replicated data types, epidemic gossip dissemination).
+- **Subsystem 5: Continual Memory VFS & Certified Privacy Substrate** (`memory.rs`, Context VFS PVFS v3, tropical HNSW indexing, Rényi DP accounting, certified unlearning).
+- **Cockpit Web Micro-Server REST Endpoints**: `/api/subsystems/cognitive`, `/api/subsystems/governance`, `/api/subsystems/crypto`, `/api/subsystems/swarm`, `/api/subsystems/memory`, and `/api/olympus/overview`.
+- Enforces all **91 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.3
 

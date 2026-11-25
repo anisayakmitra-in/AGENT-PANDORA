@@ -120,6 +120,7 @@ pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
+pub mod subsystems;
 pub mod swarm_bft;
 pub mod swarm_crdt;
 pub mod swarm_mesh;

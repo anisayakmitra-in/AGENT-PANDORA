@@ -25,10 +25,12 @@ mod chat;
 pub(crate) mod cockpit;
 pub(crate) mod cockpit_tui;
 pub(crate) mod code;
+pub(crate) mod cognitive;
 pub(crate) mod colab;
 mod completions;
 pub(crate) mod connector;
 pub(crate) mod cron;
+pub(crate) mod crypto;
 pub(crate) mod curator;
 pub(crate) mod curriculum;
 pub(crate) mod decision;
@@ -40,6 +42,7 @@ mod evolution;
 mod feedback;
 mod fleet;
 pub(crate) mod gepa;
+pub(crate) mod governance;
 mod graph;
 pub(crate) mod hardware;
 mod harness;
@@ -287,6 +290,9 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "canary" => canary::execute(&args[1..]),
         "colab" => colab::execute(&args[1..]),
         "code" => code::execute(&args[1..]),
+        "cognitive" => cognitive::execute(&args[1..]),
+        "governance" => governance::execute(&args[1..]),
+        "crypto" => crypto::execute(&args[1..]),
         "sandbox" => sandbox::execute(&args[1..]),
         "agent" => agent::execute(&args[1..]),
         "--help" | "help" => {

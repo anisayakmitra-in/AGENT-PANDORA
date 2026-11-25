@@ -2942,6 +2942,35 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &val)?;
         }
+        ("GET", "/api/subsystems/cognitive") => {
+            let mut subsystem = crate::subsystems::CognitiveSubsystem::new();
+            let status = subsystem.status();
+            write_json_response(&mut stream, 200, "OK", &json!(status))?;
+        }
+        ("GET", "/api/subsystems/governance") => {
+            let subsystem = crate::subsystems::GovernanceSubsystem::new();
+            let status = subsystem.status();
+            write_json_response(&mut stream, 200, "OK", &json!(status))?;
+        }
+        ("GET", "/api/subsystems/crypto") => {
+            let subsystem = crate::subsystems::CryptoSubsystem::new();
+            let status = subsystem.status();
+            write_json_response(&mut stream, 200, "OK", &json!(status))?;
+        }
+        ("GET", "/api/subsystems/swarm") => {
+            let subsystem = crate::subsystems::SwarmSubsystem::new(4);
+            let status = subsystem.status();
+            write_json_response(&mut stream, 200, "OK", &json!(status))?;
+        }
+        ("GET", "/api/subsystems/memory") => {
+            let subsystem = crate::subsystems::MemorySubsystem::new();
+            let status = subsystem.status();
+            write_json_response(&mut stream, 200, "OK", &json!(status))?;
+        }
+        ("GET", "/api/olympus/overview") => {
+            let overview = crate::subsystems::OlympusSystemOverview::inspect();
+            write_json_response(&mut stream, 200, "OK", &json!(overview))?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

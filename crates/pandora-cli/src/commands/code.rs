@@ -88,7 +88,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             ",",
             "\"version\"",
             ":",
-            "\"4.0.3\"",
+            "\"4.0.4\"",
             "}",
         ],
         GrammarKind::SqlSubset => vec!["SELECT", "id", ",", "name", "FROM", "agents", ";"],

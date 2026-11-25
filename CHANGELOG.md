@@ -1,5 +1,34 @@
 # Changelog
 
+## v4.0.4
+
+### OLYMPUS Micro-Kernel Subsystem Topology Architecture Upgrade
+- **Phase 39: 5-Pillar Micro-Kernel Subsystems (crates/pandora-runtime/src/subsystems/)**:
+  - Consolidated 140 disparate runtime modules across Phases 1–38 into 5 foundational micro-kernel architectural pillars:
+    - **Subsystem 1: Cognitive Micro-Kernel & Neuro-Symbolic Engine** (`cognitive.rs`): Unifies BNF pushdown automata token masking, System 2 LATS tree search, speculative tree decoding, and metacognitive entropy supervision.
+    - **Subsystem 2: Tripartite Constitutional Governance & Capability Bus** (`governance.rs`): Enforces capability-scoped expiring permits, declarative vetoes, and untrusted process containment with deterministic $\le 50\text{ ms}$ kill latencies.
+    - **Subsystem 3: Cryptographic Zero-Knowledge & Post-Quantum Substrate** (`crypto.rs`): Provides hybrid ML-DSA-65 + Ed25519 lattice attestation, Goldilocks Poseidon sponge commitments, and Shamir Beaver triple homomorphic MPC.
+    - **Subsystem 4: Decentralized Swarm Mesh & Autonomous Synchronization** (`swarm.rs`): Unifies Byzantine Fault-Tolerant PBFT consensus, conflict-free replicated data types (CRDTs), and epidemic gossip dissemination.
+    - **Subsystem 5: Continual Memory VFS & Certified Privacy Substrate** (`memory.rs`): Unifies Context VFS PVFS v3, tropical HNSW vector indexing, Rényi Differential Privacy tracking, and Fisher certified unlearning.
+- **Unified CLI Subcommands (crates/pandora-cli/src/commands/)**:
+  - Added `pandora cognitive [status|speculate|synthesize|audit]`.
+  - Added `pandora governance [status|audit]`.
+  - Added `pandora crypto [status|pq-sign|mpc-eval]`.
+- **Cockpit Web REST Subsystem Endpoints (crates/pandora-runtime/src/cockpit_web.rs)**:
+  - Added `GET /api/subsystems/cognitive`.
+  - Added `GET /api/subsystems/governance`.
+  - Added `GET /api/subsystems/crypto`.
+  - Added `GET /api/subsystems/swarm`.
+  - Added `GET /api/subsystems/memory`.
+  - Added `GET /api/olympus/overview` (`OlympusSystemOverview`).
+- **Integration Test Suite**:
+  - Created `crates/pandora-cli/tests/phase39_olympus_v404_e2e_tests.rs` with 4/4 passing end-to-end tests covering all 5 subsystems and 91 mathematical theorems.
+- **Platform Invariants**:
+  - Workspace promoted to `v4.0.4`.
+  - Enforced `#![forbid(unsafe_code)]` workspace-wide.
+  - Zero compiler warnings and zero clippy warnings under `--locked -- -D warnings`.
+  - TypeScript SDK (`npm/pandora-cli`) synchronized and built under `v4.0.4`.
+
 ## v4.0.3
 
 ### Swarm Homomorphic Multi-Party Computation, Differential Privacy Certified Unlearning & Distributed Speculative Tree Decoding

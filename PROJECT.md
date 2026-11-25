@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.3 Release: Swarm MPC, Certified Privacy Unlearning & Speculative Tree Decoding)
+# Project: AGENT-PANDORA (v4.0.4 Release: OLYMPUS - 5-Pillar Micro-Kernel Subsystem Topology)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.3` (Phase 36, 37 & 38 Foundations).
+- **Versioning & Release**: Workspace version promoted to `4.0.4` (Phase 39 OLYMPUS Subsystems Architecture).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -54,6 +54,7 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F23 | Phase 36: Homomorphic Multi-Party Computation & Secret Sharing | Shamir (k, n)-threshold secret sharing, Byzantine reconstruction, Beaver triple homomorphic multiplication (Theorems 83–85), CLI `pandora swarm secret-share/mpc-eval`, REST `/api/swarm/mpc` | M14 | v4.0.3 Architecture |
 | F24 | Phase 37: Differential Privacy & Continual Certified Unlearning | Rényi DP composition, Fisher projected Newton-step scrubbing, Lipschitz memory stability (Theorems 86–88), CLI `pandora memory scrub`, REST `/api/memory/privacy` | M15 | v4.0.3 Architecture |
 | F25 | Phase 38: Distributed Speculative Tree Decoding | Rejection sampling distributional equivalence, optimal tree draft speedup >= 2.0x, amortized latency (Theorems 89–91), CLI `pandora code speculate`, REST `/api/code/speculative` | M16 | v4.0.3 Architecture |
+| F26 | Phase 39: OLYMPUS Micro-Kernel Subsystems Topology | 5-Pillar Architecture (Cognitive, Governance, Crypto, Swarm, Memory), unified CLI `pandora cognitive/governance/crypto`, REST `/api/subsystems/*`, `/api/olympus/overview` | M17 | v4.0.4 Architecture |
 
 ---
 
