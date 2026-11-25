@@ -3224,6 +3224,47 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/quantum-geometry") => {
+            let engine = crate::quantum_geometric_tensor::QuantumGeometricTensorEngine::default();
+            let coord = crate::quantum_geometric_tensor::SwarmManifoldCoord { kx: 0.5, ky: -0.5 };
+            let tensor = engine.evaluate_tensor(coord);
+            let chern = engine.compute_chern_number(16);
+            let holonomy = engine.evaluate_wilczek_zee_holonomy(1.0);
+            let resp = serde_json::json!({
+                "tensor": tensor,
+                "chern_number": chern,
+                "holonomy": holonomy,
+                "theorems_enforced": [155, 156, 157]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/blind-mpc") => {
+            let engine = crate::blind_mpc::BlindMpcEngine::default();
+            let ot = engine.execute_oblivious_transfer(100, 200, 1);
+            let mult = engine.blind_multiply(45, 80);
+            let resp = serde_json::json!({
+                "oblivious_transfer": ot,
+                "multiplication": mult,
+                "theorems_enforced": [158, 159, 160]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/mean-field-master") => {
+            let engine = crate::mean_field_master::MeanFieldMasterEngine::default();
+            let measure = crate::mean_field_master::SwarmMeasure {
+                mean: 1.5,
+                variance: 0.5,
+                sample_size: 100,
+            };
+            let state = engine.solve_master(2.0, 1.0, &measure);
+            let lions = engine.evaluate_lions_derivative(&measure, 2.5);
+            let resp = serde_json::json!({
+                "master_state": state,
+                "lions_derivative": lions,
+                "theorems_enforced": [161, 162, 163]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

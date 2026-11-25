@@ -88,6 +88,11 @@ impl CognitiveSubsystem {
         crate::symplectic_neural_ode::SymplecticNeuralOdeEngine::default()
     }
 
+    /// Access the infinite-horizon Mean-Field Game Master Equation engine (Theorems 161–163).
+    pub fn mean_field_master(&self) -> crate::mean_field_master::MeanFieldMasterEngine {
+        crate::mean_field_master::MeanFieldMasterEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -107,7 +112,7 @@ impl CognitiveSubsystem {
             metacognitive_pac_bayes_risk: meta_rep.theorem_82_pac_bayes_risk,
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
-                134, 135, 136, 143, 144, 145, 152, 153, 154,
+                134, 135, 136, 143, 144, 145, 152, 153, 154, 161, 162, 163,
             ],
         }
     }

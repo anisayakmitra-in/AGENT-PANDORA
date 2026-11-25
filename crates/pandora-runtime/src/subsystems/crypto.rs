@@ -96,6 +96,11 @@ impl CryptoSubsystem {
         crate::functional_encryption::FunctionalEncryptionEngine::default()
     }
 
+    /// Access the Post-Quantum Blind MPC engine (Theorems 158–160).
+    pub fn blind_mpc(&self) -> crate::blind_mpc::BlindMpcEngine {
+        crate::blind_mpc::BlindMpcEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -110,7 +115,7 @@ impl CryptoSubsystem {
             mpc_report: mpc_rep,
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
-                132, 133, 140, 141, 142, 149, 150, 151,
+                132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160,
             ],
         }
     }

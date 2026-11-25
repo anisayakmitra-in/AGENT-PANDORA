@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-NEXT_VERSION = "4.1.0"
+NEXT_VERSION = "4.1.1"
 NEXT_TAG = f"v{NEXT_VERSION}"
 CONSUMED_TAG = "v3.0.6"
 

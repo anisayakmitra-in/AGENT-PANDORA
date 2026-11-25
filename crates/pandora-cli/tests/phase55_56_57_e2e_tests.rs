@@ -42,7 +42,7 @@ impl TestEnv {
         fs::create_dir_all(&data).expect("create data dir");
 
         let default_config = serde_json::json!({
-            "version": "4.1.0",
+            "version": "4.1.1",
             "active_model": "thanatos-supercluster",
             "max_tool_iterations": 10,
             "cost_limit_dollars": 5.0,
@@ -143,7 +143,7 @@ fn test_governance_bicameral_quadratic_voting_and_shadow_veto() {
     ]);
     assert_eq!(vote_res["proposal_id"], "prop-upgrade-55");
     assert!(vote_res["bicameral_margin"].as_f64().unwrap() > 0.0);
-    assert_eq!(vote_res["theorems_enforced"].as_array().unwrap().len(), 154);
+    assert_eq!(vote_res["theorems_enforced"].as_array().unwrap().len(), 163);
 
     // 3. Shadow Council Red-Team Checks
     let safe_check = env.run_success(&[

@@ -37,8 +37,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "tfhe-partial-decrypt" => tfhe_partial_decrypt(&args[1..]),
         "fe-keygen" => fe_keygen(&args[1..]),
         "fe-decrypt" => fe_decrypt(&args[1..]),
+        "blind-ot" => blind_ot(&args[1..]),
+        "mpc-multiply" => mpc_multiply(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply'"
         ))),
     }
 }
@@ -571,4 +573,74 @@ fn fe_decrypt(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto fe-decrypt", json!(result), display))
+}
+
+fn blind_ot(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "choice",
+            "m0",
+            "m1",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let choice = parsed
+        .value("choice")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let m0 = parsed
+        .value("m0")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(100);
+    let m1 = parsed
+        .value("m1")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(200);
+
+    let engine = pandora_runtime::blind_mpc::BlindMpcEngine::default();
+    let ot = engine.execute_oblivious_transfer(m0, m1, choice);
+
+    let display = format!(
+        "Post-Quantum 1-out-of-2 Oblivious Transfer\n\
+         Chosen Branch: {}\n\
+         Transferred Message: {}\n\
+         Ciphertext c0: {}\n\
+         Ciphertext c1: {}\n\
+         Privacy Bound: {:.4e}\n\
+         Theorems: 158 (Ring-LWE OT Privacy), 160 (Perfect Secrecy)",
+        ot.chosen_branch, ot.transferred_value, ot.c0, ot.c1, ot.theorem_158_privacy_bound
+    );
+
+    Ok(success("crypto blind-ot", json!(ot), display))
+}
+
+fn mpc_multiply(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["x", "y", "config", "data-dir", "workspace", "json"])?;
+    let x = parsed
+        .value("x")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(45);
+    let y = parsed
+        .value("y")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(80);
+
+    let engine = pandora_runtime::blind_mpc::BlindMpcEngine::default();
+    let res = engine.blind_multiply(x, y);
+
+    let display = format!(
+        "Beaver Triple Authenticated Blind Multiplication\n\
+         Blinded Wire X: {}\n\
+         Blinded Wire Y: {}\n\
+         Computed Product: {}\n\
+         Soundness Verified: {}\n\
+         Theorems: 159 (MAC Soundness), 160 (Blind Secrecy)",
+        res.blinded_x, res.blinded_y, res.computed_product, res.theorem_159_soundness_verified
+    );
+
+    Ok(success("crypto mpc-multiply", json!(res), display))
 }

@@ -33,8 +33,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "hjb-ide-control" => hjb_ide_control(&args[1..]),
         "symplectic-step" => symplectic_step(&args[1..]),
         "energy-audit" => energy_audit(&args[1..]),
+        "mfg-master-solve" => mfg_master_solve(&args[1..]),
+        "lions-derivative" => lions_derivative(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative'"
         ))),
     }
 }
@@ -598,4 +600,114 @@ fn energy_audit(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("cognitive energy-audit", json!(audit), display))
+}
+
+fn mfg_master_solve(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "time",
+            "position",
+            "mean",
+            "variance",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let time = parsed
+        .value("time")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.0);
+    let position = parsed
+        .value("position")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    let mean = parsed
+        .value("mean")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+    let variance = parsed
+        .value("variance")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+
+    let engine = pandora_runtime::mean_field_master::MeanFieldMasterEngine::default();
+    let measure = pandora_runtime::mean_field_master::SwarmMeasure {
+        mean,
+        variance,
+        sample_size: 100,
+    };
+    let state = engine.solve_master(time, position, &measure);
+
+    let display = format!(
+        "Mean-Field Game Master Equation Viscosity Solution\n\
+         Time t: {:.2}s, Position x: {:.2}\n\
+         Value U(t, x, m): {:.4}\n\
+         Spatial Gradient dU/dx: {:.4}\n\
+         Lions Derivative dU/dm: {:.4}\n\
+         Optimal Control u*: {:.4}\n\
+         Nash Error Bound: {:.4e}\n\
+         Theorems: 161 (Viscosity Uniqueness), 163 (Nash Stability)",
+        state.time_t,
+        state.spatial_x,
+        state.value_u,
+        state.spatial_gradient_du_dx,
+        state.lions_derivative_du_dm,
+        state.optimal_feedback_control,
+        state.theorem_163_nash_error_bound
+    );
+
+    Ok(success("cognitive mfg-master-solve", json!(state), display))
+}
+
+fn lions_derivative(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "y",
+            "mean",
+            "variance",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let y = parsed
+        .value("y")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.5);
+    let mean = parsed
+        .value("mean")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.0);
+    let variance = parsed
+        .value("variance")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+
+    let engine = pandora_runtime::mean_field_master::MeanFieldMasterEngine::default();
+    let measure = pandora_runtime::mean_field_master::SwarmMeasure {
+        mean,
+        variance,
+        sample_size: 50,
+    };
+    let rep = engine.evaluate_lions_derivative(&measure, y);
+
+    let display = format!(
+        "Lions Derivative on Wasserstein Probability Space\n\
+         Evaluation Point y: {:.2}\n\
+         Functional Value F(m): {:.4}\n\
+         Lions Derivative grad_y dF/dm: {:.4}\n\
+         Wasserstein Inner Product: {:.4}\n\
+         Theorems: 161 (Master Equation), 162 (Wasserstein Chain Rule)",
+        rep.test_point_y,
+        rep.functional_value,
+        rep.lions_derivative_val,
+        rep.wasserstein_inner_product
+    );
+
+    Ok(success("cognitive lions-derivative", json!(rep), display))
 }

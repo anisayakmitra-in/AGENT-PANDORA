@@ -87,8 +87,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "anyon-fuse" => anyon_fuse(&args[1..]),
         "tqft-knot" => tqft_knot(&args[1..]),
         "tqft-entropy" => tqft_entropy(&args[1..]),
+        "berry-curvature" => berry_curvature(&args[1..]),
+        "quantum-metric" => quantum_metric(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric"
         ))),
     }
 }
@@ -1411,6 +1413,105 @@ fn tqft_entropy(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("swarm tqft-entropy", json!(rep), text))
+}
+
+fn berry_curvature(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "kx",
+            "ky",
+            "grid",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let kx = parsed
+        .value("kx")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let ky = parsed
+        .value("ky")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(-0.5);
+    let grid = parsed
+        .value("grid")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+
+    let engine = pandora_runtime::quantum_geometric_tensor::QuantumGeometricTensorEngine::default();
+    let coord = pandora_runtime::quantum_geometric_tensor::SwarmManifoldCoord { kx, ky };
+    let tensor = engine.evaluate_tensor(coord);
+    let chern = engine.compute_chern_number(grid);
+
+    let text = format!(
+        "Quantum Geometric Tensor & Berry Curvature:\n  Point: ({:.2}, {:.2})\n  Berry Curvature F_xy: {:.6}\n  Chern Number C_1: {}\n  Quantization Residual: {:.4e}\n  Theorems: 155 (Fubini-Study), 156 (Chern Quantization)",
+        kx, ky, tensor.berry_curvature_f_xy, chern.first_chern_number, chern.quantization_residual
+    );
+
+    Ok(success(
+        "swarm berry-curvature",
+        json!({
+            "tensor": tensor,
+            "chern_number": chern,
+            "theorems": [155, 156]
+        }),
+        text,
+    ))
+}
+
+fn quantum_metric(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "kx",
+            "ky",
+            "radius",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let kx = parsed
+        .value("kx")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let ky = parsed
+        .value("ky")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(-0.5);
+    let radius = parsed
+        .value("radius")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+
+    let engine = pandora_runtime::quantum_geometric_tensor::QuantumGeometricTensorEngine::default();
+    let coord = pandora_runtime::quantum_geometric_tensor::SwarmManifoldCoord { kx, ky };
+    let tensor = engine.evaluate_tensor(coord);
+    let holonomy = engine.evaluate_wilczek_zee_holonomy(radius);
+
+    let text = format!(
+        "Fubini-Study Riemannian Metric & Wilczek-Zee Holonomy:\n  Metric [g_xx, g_xy, g_yy]: [{:.4}, {:.4}, {:.4}]\n  Infinitesimal Distance ds^2: {:.6e}\n  Holonomy Unitary Residual: {:.4e}\n  Theorems: 155 (Geodesic Invariance), 157 (Holonomy Unitarity)",
+        tensor.fubini_study_metric[0],
+        tensor.fubini_study_metric[1],
+        tensor.fubini_study_metric[2],
+        tensor.gauge_invariant_ds2,
+        holonomy.unitary_residual
+    );
+
+    Ok(success(
+        "swarm quantum-metric",
+        json!({
+            "fubini_study_metric": tensor.fubini_study_metric,
+            "gauge_invariant_ds2": tensor.gauge_invariant_ds2,
+            "holonomy": holonomy,
+            "theorems": [155, 157]
+        }),
+        text,
+    ))
 }
 
 #[cfg(test)]

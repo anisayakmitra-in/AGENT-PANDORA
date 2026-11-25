@@ -83,6 +83,13 @@ impl SwarmSubsystem {
         crate::tqft_invariants::TqftEngine::default()
     }
 
+    /// Access the Quantum Geometric Tensor and Berry Curvature engine (Theorems 155–157).
+    pub fn quantum_geometry(
+        &self,
+    ) -> crate::quantum_geometric_tensor::QuantumGeometricTensorEngine {
+        crate::quantum_geometric_tensor::QuantumGeometricTensorEngine::default()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -98,7 +105,7 @@ impl SwarmSubsystem {
             gossip_converged: converged,
             theorems_enforced: vec![
                 62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
-                137, 138, 139, 146, 147, 148,
+                137, 138, 139, 146, 147, 148, 155, 156, 157,
             ],
         }
     }

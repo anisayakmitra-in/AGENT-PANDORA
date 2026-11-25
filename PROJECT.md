@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.1.0 Release: THANATOS - TQFT Invariants, Functional Encryption & Symplectic Neural ODEs)
+# Project: AGENT-PANDORA (v4.1.1 Release: THANATOS - Quantum Geometric Tensor, Blind MPC & Mean-Field Master Equation)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.1.0` (Phases 58–60, Theorems 146–154).
+- **Versioning & Release**: Workspace version promoted to `4.1.1` (Phases 61–63, Theorems 155–163).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
