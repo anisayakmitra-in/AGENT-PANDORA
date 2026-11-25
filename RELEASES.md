@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, and `v4.0.1`. The active release identity
-is `v4.0.1`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, and `v4.0.2`. The active release identity
+is `v4.0.2`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,19 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.2
+
+This release delivers Phases 33–35 of the architectural roadmap:
+- **Phase 33**: Autonomous Untrusted Sandbox Isolation & Resource Roofline Hardening (Theorems 74–76, `SandboxIsolationEngine`, process tree kill bound <= 50ms, CLI `pandora sandbox status|execute|audit`, REST `/api/sandbox/telemetry`).
+- **Phase 34**: Post-Quantum Hybrid Attestation & Algebraic Sponge State Commitments (Theorems 77–79, Poseidon Sponge over Goldilocks prime, dual classical Ed25519 + lattice ML-DSA-65 signatures, CLI `pandora moira pq-sign|pq-verify`, REST `/api/moira/pq`).
+- **Phase 35**: Continuous Introspective Metacognition & Hallucination Entropy Gating (Theorems 80–82, predictive token entropy gating, monotonic backtracking convergence, PAC-Bayes generalization bound <= 0.15, CLI `pandora agent introspect|reflect`, REST `/api/agent/introspect`).
+
+## v4.0.1
+
+This release delivers Phases 31–32 of the architectural roadmap:
+- **Phase 31**: Grammar-Constrained Token-Level BNF / Pushdown Automata Synthesis Engine (Theorems 68–70, zero parse errors by construction, CLI `pandora code synthesize`, `pandora code grammar mask|validate`, REST `/api/code/synthesize/grammar`).
+- **Phase 32**: Decentralized Cross-Cluster Swarm CRDT & Epidemic Gossip Synchronization (Theorems 71–73, PN-Counter, OR-Set, Merkle DAG CRDT, Vector Clock causal precedence, CLI `pandora swarm crdt status|merge`, `pandora swarm gossip simulate`, REST `/api/swarm/crdt`).
 
 ## v4.0.0
 

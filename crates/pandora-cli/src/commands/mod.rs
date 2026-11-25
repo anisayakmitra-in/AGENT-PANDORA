@@ -14,6 +14,7 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod agent;
 mod approval;
 pub(crate) mod audit;
 mod auth;
@@ -68,6 +69,7 @@ mod restore_journal;
 mod rollout;
 mod run;
 mod runtime;
+pub(crate) mod sandbox;
 mod secret;
 mod service;
 mod session;
@@ -285,6 +287,8 @@ pub fn execute(raw_args: Vec<String>) -> Result<CommandResult, CliError> {
         "canary" => canary::execute(&args[1..]),
         "colab" => colab::execute(&args[1..]),
         "code" => code::execute(&args[1..]),
+        "sandbox" => sandbox::execute(&args[1..]),
+        "agent" => agent::execute(&args[1..]),
         "--help" | "help" => {
             if args.len() != 1 {
                 return Err(CliError::usage("help does not accept additional arguments"));

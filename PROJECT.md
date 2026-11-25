@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.1 Release: Grammar-Constrained BNF Synthesis, Cross-Cluster CRDT & Epidemic Gossip Synchronization)
+# Project: AGENT-PANDORA (v4.0.2 Release: Autonomous Sandbox Isolation, Post-Quantum Attestation & Introspective Metacognition)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -8,7 +8,7 @@ AGENT-PANDORA is an autonomous software engineering agent across 7 workspace cra
 - `pandora-provider` (`#![forbid(unsafe_code)]`): LLM providers and reasoning models.
 - `pandora-service` (`#![forbid(unsafe_code)]`): Daemon and background service HTTP/RPC management.
 - `pandora-sandbox`: Isolated job execution (helper uses Windows Job Objects; library is safe).
-- `pandora-cli` (`#![forbid(unsafe_code)]`): Terminal UI (`tui.rs`, `cockpit_tui.rs`), CLI commands (`moira`, `fleet`, `cockpit`, `run`, `memory`), completions, and launchers.
+- `pandora-cli` (`#![forbid(unsafe_code)]`): Terminal UI (`tui.rs`, `cockpit_tui.rs`), CLI commands (`moira`, `fleet`, `cockpit`, `run`, `memory`, `code`, `swarm`, `sandbox`, `agent`), completions, and launchers.
 
 Ecosystem bindings & docs:
 - `npm/pandora-cli`: TypeScript client (`PandoraClient`) and compiled definitions in `npm/pandora-cli/lib/`.
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.1` (Phase 31 & 32 Foundations).
+- **Versioning & Release**: Workspace version promoted to `4.0.2` (Phase 33, 34 & 35 Foundations).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -48,6 +48,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F17 | Phase 30: Visual Perception & Layout Verification | WCAG 2.2 luminance & contrast ratio validation (Theorem 66), perceptual hash $p\text{Hash}$ invariance (Theorem 65), layout bounding box IoU & overlap verification (Theorem 67), CLI `pandora harness visual`, REST `/api/harness/visual` | M8 | v4.0.0 Architecture |
 | F18 | Phase 31: Grammar-Constrained Token-Level BNF Synthesis | Pushdown automata token logit masking (JSON, SQL, Rust, Python subsets), Theorems 68–70, CLI `pandora code synthesize`, `pandora code grammar mask/validate`, REST `/api/code/synthesize/grammar` | M9 | v4.0.1 Architecture |
 | F19 | Phase 32: Decentralized Swarm CRDT & Epidemic Gossip | PN-Counter, OR-Set, Merkle DAG CRDT, Vector Clock causal precedence (Theorem 71–73), $O(\log N)$ gossip dissemination, CLI `pandora swarm crdt`, `pandora swarm gossip`, REST `/api/swarm/crdt` | M10 | v4.0.1 Architecture |
+| F20 | Phase 33: Autonomous Untrusted Sandbox Isolation | Deterministic process tree containment, non-interference safety, $\le 50\text{ ms}$ kill bound, resource rooflines (Theorems 74–76), CLI `pandora sandbox status/execute/audit`, REST `/api/sandbox/telemetry` | M11 | v4.0.2 Architecture |
+| F21 | Phase 34: Post-Quantum Hybrid Attestation | Poseidon algebraic sponge over Goldilocks prime field, Ed25519 + ML-DSA-65 lattice signatures (Theorems 77–79), CLI `pandora moira pq-sign/pq-verify`, REST `/api/moira/pq` | M12 | v4.0.2 Architecture |
+| F22 | Phase 35: Continuous Introspective Metacognition | Shannon predictive entropy gating, monotonic backtracking convergence, PAC-Bayes generalization risk $\le 0.15$ (Theorems 80–82), CLI `pandora agent introspect/reflect`, REST `/api/agent/introspect` | M13 | v4.0.2 Architecture |
 
 ---
 
@@ -66,6 +69,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M8 | Phase 30: Visual Perception & Layout Harness | WCAG 2.2 color contrast, $p\text{Hash}$ invariance, layout bounding box IoU & overlap verification (Theorem 65–67), CLI `harness visual`, Cockpit `/api/harness/visual` | M6 | COMPLETED |
 | M9 | Phase 31: Grammar-Constrained Token-Level BNF Synthesis | Pushdown automata token masking, zero syntax errors by construction (Theorems 68–70), CLI `code synthesize/grammar`, Cockpit `/api/code/synthesize/grammar` | M8 | COMPLETED |
 | M10 | Phase 32: Swarm CRDT & Epidemic Gossip Synchronization | Monotonic join-semilattices (Theorem 71), $O(\log N)$ gossip dissemination (Theorem 72), causal vector clocks (Theorem 73), CLI `swarm crdt/gossip`, Cockpit `/api/swarm/crdt` | M9 | COMPLETED |
+| M11 | Phase 33: Autonomous Untrusted Sandbox Isolation | Job objects/cgroups containment engine, deterministic kill bound, resource quotas (Theorems 74–76) | M10 | COMPLETED |
+| M12 | Phase 34: Post-Quantum Hybrid Attestation | Goldilocks Poseidon sponge, dual classical + lattice ML-DSA-65 attestation (Theorems 77–79) | M11 | COMPLETED |
+| M13 | Phase 35: Continuous Introspective Metacognition | Predictive entropy gating, monotonic backtracking convergence, PAC-Bayes bound (Theorems 80–82) | M12 | COMPLETED |
 
 ---
 

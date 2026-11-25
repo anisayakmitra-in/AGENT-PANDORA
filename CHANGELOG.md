@@ -1,5 +1,35 @@
 # Changelog
 
+## v4.0.2
+
+### Autonomous Untrusted Sandbox Isolation, Post-Quantum Hybrid Attestation & Continuous Introspective Metacognition
+- **Phase 33: Autonomous Untrusted Sandbox Isolation & Resource Roofline Hardening (crates/pandora-sandbox/src/containment_engine.rs, crates/pandora-cli/src/commands/sandbox.rs)**:
+  - Implemented `SandboxIsolationEngine` with fine-grained containment policies (memory ceilings, CPU caps, execution timeout, virtual filesystem isolation, network sandboxing).
+  - Enforced Theorem 74 (Containment Safety & Non-Interference): Sandboxed memory spaces and file descriptors remain strictly non-interfering with host processes ($S_{untrusted} \cap S_{host} = \emptyset$).
+  - Enforced Theorem 75 (Deterministic Process Tree Kill Latency): Guaranteed termination of rogue worker subtrees within $T_{kill} \le 50\text{ ms}$ upon budget or quota breach.
+  - Enforced Theorem 76 (Resource Roofline Quota Enforcement): Monotonic clamping of peak memory, CPU utilization, and execution wall-clock time within predefined limits.
+  - Added CLI subcommands `pandora sandbox status`, `pandora sandbox execute`, and `pandora sandbox audit`.
+  - Added Cockpit Web REST endpoint `GET /api/sandbox/telemetry`.
+- **Phase 34: Post-Quantum Hybrid Attestation & Algebraic Sponge State Commitments (crates/pandora-runtime/src/pq_attestation.rs, crates/pandora-cli/src/commands/moira.rs)**:
+  - Implemented Poseidon algebraic sponge function over Goldilocks prime field ($p = 2^{64} - 2^{32} + 1$) with $x^7$ S-box permutation and MDS matrix linear diffusion.
+  - Implemented `HybridAttestationSigner` combining classical Ed25519 signatures with quantum-resistant ML-DSA-65 (CRYSTALS-Dilithium) lattice parameters.
+  - Enforced Theorem 77 (EUF-CMA Security under Module Learning with Errors): Post-quantum unforgeability against Shor's algorithm and quantum adversaries.
+  - Enforced Theorem 78 (Hybrid Dual-Security Bound): The compound signature remains unconditionally secure if either the classical curve or the lattice assumption holds.
+  - Enforced Theorem 79 (Poseidon Sponge State Collision Resistance): Invertibility and collision resistance over 8 Goldilocks rounds.
+  - Added CLI subcommands `pandora moira pq-sign` and `pandora moira pq-verify`.
+  - Added Cockpit Web REST endpoint `GET /api/moira/pq`.
+- **Phase 35: Continuous Introspective Metacognition & Hallucination Entropy Gating (crates/pandora-runtime/src/metacognition.rs, crates/pandora-cli/src/commands/agent.rs)**:
+  - Implemented `MetacognitiveSupervisor` tracking multi-token predictive entropy distributions via LogSumExp and rolling semantic drift metrics.
+  - Enforced Theorem 80 (Entropy-Bounded Hallucination Risk): Proven upper bound on hallucination probability $\Pr[\text{Hallucination}] \le 1 - e^{-H(X)/\beta}$.
+  - Enforced Theorem 81 (Monotonic Backtracking Convergence): Guaranteed termination of reflective re-evaluation trees within $O(d \cdot b)$ steps without infinite loop oscillation.
+  - Enforced Theorem 82 (PAC-Bayes Generalization Risk Bound): Guaranteed empirical reasoning error bound $\le 0.15$ with confidence $1 - \delta \ge 0.99$.
+  - Added CLI subcommands `pandora agent introspect` and `pandora agent reflect`.
+  - Added Cockpit Web REST endpoint `GET /api/agent/introspect`.
+- **Platform Invariants**:
+  - Preserved `#![forbid(unsafe_code)]` strictly across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, and `pandora-cli`.
+  - Zero compiler warnings and zero clippy warnings under `--locked -- -D warnings`.
+  - TypeScript SDK (`npm/pandora-cli`) synchronized and built under `v4.0.2`.
+
 ## v4.0.1
 
 ### Grammar-Constrained Token-Level BNF Synthesis Engine, Decentralized Cross-Cluster Swarm CRDT & Epidemic Gossip Synchronization

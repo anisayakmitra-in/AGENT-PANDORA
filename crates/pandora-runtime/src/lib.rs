@@ -71,6 +71,7 @@ pub mod merge_resolver;
 pub mod merkle_dag;
 pub mod merkle_rollup;
 pub mod mesh_sync;
+pub mod metacognition;
 pub mod mock_cdp;
 pub mod multi_agent_collab;
 pub mod multi_agent_consensus;
@@ -86,6 +87,7 @@ pub mod package_store;
 pub mod parliament;
 pub mod permit_store;
 pub mod pexer_ipc;
+pub mod pq_attestation;
 pub mod privacy_budget;
 pub mod prompt_engine;
 pub mod prp_engine;
@@ -380,6 +382,9 @@ pub use mesh_sync::{
     CapsuleValidationVerdict, MeshError, MeshHandshake, MeshPeerEntry, MeshSyncEngine,
     MeshSyncResult, PeerIdentity, SignedCapsulePackage,
 };
+pub use metacognition::{
+    MetacognitiveAuditReport, MetacognitiveFrame, MetacognitiveSupervisor, MetacognitiveVerdict,
+};
 pub use mock_cdp::{CdpError, CdpResult, ElementRect, MockCdpServer, VirtualDocument, VirtualNode};
 pub use mutation::{MutationEngine, MutationError};
 pub use observability::{
@@ -416,6 +421,10 @@ pub use package_store::{
 };
 pub use parliament::{Parliament, ToolSafetyGateVerdict, ToolSafetyReflexVerdict};
 pub use permit_store::{ConsumedPermit, PermitError, PermitStore};
+pub use pq_attestation::{
+    HybridAttestationReceipt, HybridAttestationSigner, HybridVerifyingKey, LatticeParams,
+    PoseidonSpongeEngine,
+};
 pub use privacy_budget::{
     DistributedPrivacyTracker, GaussianMechanism, LaplaceMechanism, PrivacyAccountantError,
     PrivacyError, PrivacyExpenditure, QueryReservation, RDP_ORDER_KEY_SCALE, RdpBudget, RdpOrder,

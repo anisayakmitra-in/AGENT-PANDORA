@@ -43,6 +43,7 @@
 // and `deny` still forces any unsafe code to be explicitly allowed and documented.
 #![deny(unsafe_code)]
 
+pub mod containment_engine;
 pub mod detect;
 pub mod error;
 pub mod handle;
@@ -75,6 +76,10 @@ pub use protocol::{
 pub use report::{
     Mechanisms, Observation, Proofs, VerificationReport, accept_verified, derive_outcome, encode,
     gate, read_one_frame,
+};
+
+pub use containment_engine::{
+    ContainmentAuditReport, SandboxIsolationEngine, SandboxPolicy, SandboxStatus,
 };
 
 /// The decision the parent makes about whether to run the target at all.
