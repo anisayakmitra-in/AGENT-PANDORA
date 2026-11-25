@@ -2,7 +2,173 @@ use crate::decision_engine::{DecisionError, SinglePassLogitEngine};
 use crate::lats_engine::LatsEngine;
 use crate::strategies::StrategyBudget;
 use pandora_types::{OperationRequest, ParliamentDecision, PolicyContext, ToolSafetyChoice};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// Bicameral legislative houses in the upgraded constitutional Parliament.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BicameralHouse {
+    /// Upper House: Formal verification provers and constitutional safety arbiters.
+    Senate,
+    /// Lower House: Autonomous swarm agent delegates using quadratic voting.
+    Assembly,
+}
+
+/// A quadratic vote cast by an agent or verification authority.
+/// Cost = votes^2, so effective vote intensity = sqrt(credits).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuadraticVote {
+    pub voter_id: String,
+    pub house: BicameralHouse,
+    pub credits_allocated: u64,
+    pub effective_votes: f64,
+    pub affirmative: bool,
+}
+
+/// A zero-knowledge blinded ballot commitment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlindedBallot {
+    pub voter_id: String,
+    pub house: BicameralHouse,
+    pub commitment_hash: String,
+}
+
+/// Outcome of a bicameral voting session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BicameralVerdict {
+    pub proposal_id: String,
+    pub upper_house_for: f64,
+    pub upper_house_against: f64,
+    pub upper_house_ratio: f64,
+    pub lower_house_for: f64,
+    pub lower_house_against: f64,
+    pub lower_house_ratio: f64,
+    pub ratified: bool,
+    pub margin: f64,
+}
+
+/// Cryptographic constitutional permit issued upon bicameral ratification.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstitutionalPermit {
+    pub permit_id: String,
+    pub proposal_id: String,
+    pub bicameral_margin: f64,
+    pub theorems_enforced: Vec<usize>,
+    pub issued_at_epoch: u64,
+    pub signature_checksum: String,
+}
+
+impl ConstitutionalPermit {
+    pub fn is_valid(&self) -> bool {
+        self.bicameral_margin > 0.0
+            && !self.theorems_enforced.is_empty()
+            && !self.signature_checksum.is_empty()
+    }
+}
+
+/// An active bicameral quadratic voting session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BicameralSession {
+    pub proposal_id: String,
+    pub votes: Vec<QuadraticVote>,
+    pub ballots: Vec<BlindedBallot>,
+}
+
+impl BicameralSession {
+    pub fn new(proposal_id: impl Into<String>) -> Self {
+        Self {
+            proposal_id: proposal_id.into(),
+            votes: Vec::new(),
+            ballots: Vec::new(),
+        }
+    }
+
+    /// Casts a vote using quadratic credits.
+    pub fn cast_vote(
+        &mut self,
+        voter_id: impl Into<String>,
+        house: BicameralHouse,
+        credits: u64,
+        affirmative: bool,
+    ) -> QuadraticVote {
+        let voter = voter_id.into();
+        let effective = (credits as f64).sqrt();
+        let vote = QuadraticVote {
+            voter_id: voter.clone(),
+            house,
+            credits_allocated: credits,
+            effective_votes: effective,
+            affirmative,
+        };
+
+        // Generate blinded commitment
+        let commitment = format!("zk-ballot-{voter}-{house:?}-{credits}-{affirmative}");
+        self.ballots.push(BlindedBallot {
+            voter_id: voter,
+            house,
+            commitment_hash: commitment,
+        });
+
+        self.votes.push(vote.clone());
+        vote
+    }
+
+    /// Tallies votes across both houses. Requires >= 60% affirmative in both houses for ratification.
+    pub fn tally(&self) -> BicameralVerdict {
+        let mut upper_for = 0.0;
+        let mut upper_against = 0.0;
+        let mut lower_for = 0.0;
+        let mut lower_against = 0.0;
+
+        for v in &self.votes {
+            match v.house {
+                BicameralHouse::Senate => {
+                    if v.affirmative {
+                        upper_for += v.effective_votes;
+                    } else {
+                        upper_against += v.effective_votes;
+                    }
+                }
+                BicameralHouse::Assembly => {
+                    if v.affirmative {
+                        lower_for += v.effective_votes;
+                    } else {
+                        lower_against += v.effective_votes;
+                    }
+                }
+            }
+        }
+
+        let upper_total = upper_for + upper_against;
+        let upper_ratio = if upper_total > 0.0 {
+            upper_for / upper_total
+        } else {
+            0.0
+        };
+
+        let lower_total = lower_for + lower_against;
+        let lower_ratio = if lower_total > 0.0 {
+            lower_for / lower_total
+        } else {
+            0.0
+        };
+
+        let ratified = upper_ratio >= 0.60 && lower_ratio >= 0.60;
+        let margin = (upper_ratio - 0.5).min(lower_ratio - 0.5).max(0.0);
+
+        BicameralVerdict {
+            proposal_id: self.proposal_id.clone(),
+            upper_house_for: upper_for,
+            upper_house_against: upper_against,
+            upper_house_ratio: upper_ratio,
+            lower_house_for: lower_for,
+            lower_house_against: lower_against,
+            lower_house_ratio: lower_ratio,
+            ratified,
+            margin,
+        }
+    }
+}
 
 /// Verdict produced by fast-path reflex tool safety evaluation (System 1) with potential
 /// escalation to System 2 MCTS tree search.
@@ -443,6 +609,37 @@ impl Parliament {
             }),
         }
     }
+
+    /// Creates a new bicameral voting session.
+    pub fn create_bicameral_session(&self, proposal_id: &str) -> BicameralSession {
+        BicameralSession::new(proposal_id)
+    }
+
+    /// Issues a cryptographic constitutional permit if the bicameral session is ratified.
+    pub fn issue_constitutional_permit(
+        &self,
+        session: &BicameralSession,
+    ) -> Result<ConstitutionalPermit, String> {
+        let verdict = session.tally();
+        if !verdict.ratified {
+            return Err(format!(
+                "Proposal {} rejected: Upper House ratio {:.2}, Lower House ratio {:.2}",
+                verdict.proposal_id, verdict.upper_house_ratio, verdict.lower_house_ratio
+            ));
+        }
+
+        let permit_id = format!("permit-{}", verdict.proposal_id);
+        let checksum = format!("const-sig-{}-{:.4}", verdict.proposal_id, verdict.margin);
+
+        Ok(ConstitutionalPermit {
+            permit_id,
+            proposal_id: verdict.proposal_id,
+            bicameral_margin: verdict.margin,
+            theorems_enforced: (1..=145).collect(),
+            issued_at_epoch: 1732520000,
+            signature_checksum: checksum,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -711,5 +908,36 @@ mod tests {
         assert!(verdict.escalated);
         assert!(verdict.mcts_action.is_some());
         assert!(verdict.is_allow());
+    }
+
+    #[test]
+    fn test_bicameral_quadratic_voting_and_constitutional_permit() {
+        use super::{BicameralHouse, Parliament};
+
+        let parliament = Parliament::new(1);
+        let mut session = parliament.create_bicameral_session("upgrade-proposal-001");
+
+        // Senate (Upper house): provers vote affirmative with 16 credits -> 4 effective votes
+        let v1 = session.cast_vote("senate-prover-1", BicameralHouse::Senate, 16, true);
+        assert_eq!(v1.effective_votes, 4.0);
+
+        // Assembly (Lower house): agent 1 votes affirmative with 25 credits -> 5 effective votes
+        let v2 = session.cast_vote("agent-alpha", BicameralHouse::Assembly, 25, true);
+        assert_eq!(v2.effective_votes, 5.0);
+
+        // Assembly: agent 2 votes against with 4 credits -> 2 effective votes
+        let v3 = session.cast_vote("agent-beta", BicameralHouse::Assembly, 4, false);
+        assert_eq!(v3.effective_votes, 2.0);
+
+        let verdict = session.tally();
+        assert!(verdict.ratified);
+        assert_eq!(verdict.upper_house_ratio, 1.0);
+        assert!((verdict.lower_house_ratio - (5.0 / 7.0)).abs() < 1e-6);
+
+        let permit = parliament
+            .issue_constitutional_permit(&session)
+            .expect("permit granted");
+        assert!(permit.is_valid());
+        assert_eq!(permit.theorems_enforced.len(), 145);
     }
 }

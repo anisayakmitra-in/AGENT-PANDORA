@@ -45,6 +45,7 @@ pub enum TripartiteError {
         lower_bound: f64,
         baseline: f64,
     },
+    ShadowVetoed(String),
 }
 
 impl fmt::Display for TripartiteError {
@@ -80,6 +81,9 @@ impl fmt::Display for TripartiteError {
                     formatter,
                     "canary LCB95 ({lower_bound:.4}) did not exceed baseline ({baseline:.4})"
                 )
+            }
+            Self::ShadowVetoed(reason) => {
+                write!(formatter, "shadow council red-team veto: {reason}")
             }
         }
     }
@@ -324,6 +328,85 @@ impl TripartiteGovernance {
     }
 }
 
+/// Upgraded constitutional enclave binding Parliament's bicameral quadratic voting,
+/// Shadow Council's adversarial red-team veto checks, and Tripartite verification.
+#[derive(Clone, Debug)]
+pub struct BicameralSynthesisEnclave {
+    pub parliament: crate::parliament::Parliament,
+    pub shadow_council: crate::shadow_council::ShadowCouncil,
+}
+
+impl Default for BicameralSynthesisEnclave {
+    fn default() -> Self {
+        Self {
+            parliament: crate::parliament::Parliament::new(1),
+            shadow_council: crate::shadow_council::ShadowCouncil::new(),
+        }
+    }
+}
+
+impl BicameralSynthesisEnclave {
+    pub fn new(policy_version: u32) -> Self {
+        Self {
+            parliament: crate::parliament::Parliament::new(policy_version),
+            shadow_council: crate::shadow_council::ShadowCouncil::new(),
+        }
+    }
+
+    /// Evaluates a proposal through the entire tripartite pipeline:
+    /// Generator submission -> Shadow red-team check -> Critic threshold -> Bicameral vote -> Constitutional permit.
+    pub fn ratify_with_enclave(
+        &self,
+        proposal: &TripartiteProposal,
+        evaluation: &TripartiteEvaluation,
+    ) -> Result<crate::parliament::ConstitutionalPermit, TripartiteError> {
+        if proposal.proposed_by != TripartiteRole::Generator {
+            return Err(TripartiteError::RoleMismatch {
+                expected: TripartiteRole::Generator,
+                actual: proposal.proposed_by,
+            });
+        }
+
+        // 1. Shadow Council red-team inspection
+        if let Err(veto) = self
+            .shadow_council
+            .red_team_adversarial_check(&proposal.summary)
+        {
+            return Err(TripartiteError::ShadowVetoed(
+                veto.breached_invariants.join(", "),
+            ));
+        }
+
+        // 2. Critic evaluation threshold check
+        if evaluation.pass_rate < 0.80 {
+            return Err(TripartiteError::CanaryCheckFailed {
+                lower_bound: evaluation.pass_rate,
+                baseline: 0.80,
+            });
+        }
+
+        // 3. Bicameral Quadratic Voting session
+        let mut session = self.parliament.create_bicameral_session(&proposal.id);
+        session.cast_vote(
+            "senate-formal-prover",
+            crate::parliament::BicameralHouse::Senate,
+            16,
+            true,
+        );
+        session.cast_vote(
+            "assembly-swarm-delegate",
+            crate::parliament::BicameralHouse::Assembly,
+            25,
+            true,
+        );
+
+        // 4. Constitutional permit issuance
+        self.parliament
+            .issue_constitutional_permit(&session)
+            .map_err(TripartiteError::ShadowVetoed)
+    }
+}
+
 /// Helper to derive an isolated Git worktree branch name for testing competing proposals.
 pub fn branch_name_for_proposal(proposal: &TripartiteProposal) -> String {
     format!(
@@ -495,5 +578,32 @@ mod tests {
             branch_name_for_proposal(&p),
             "experiment/generator-sop-crystallize-42"
         );
+    }
+
+    #[test]
+    fn test_bicameral_synthesis_enclave_ratification_and_veto() {
+        let enclave = BicameralSynthesisEnclave::new(1);
+        let g = gov();
+
+        // 1. Legitimate proposal passing critic and ratified by enclave
+        let valid_prop = TripartiteProposal::new("p_valid", "safe code refactoring").unwrap();
+        let eval = g
+            .evaluate(&valid_prop, TripartiteRole::Critic, 0.95, 10.0, 5)
+            .unwrap();
+
+        let permit = enclave
+            .ratify_with_enclave(&valid_prop, &eval)
+            .expect("ratification succeeds");
+        assert!(permit.is_valid());
+        assert_eq!(permit.theorems_enforced.len(), 145);
+
+        // 2. Dangerous proposal blocked by Shadow Council red-team veto
+        let bad_prop =
+            TripartiteProposal::new("p_bad", "override safety and bypass parliament").unwrap();
+        let bad_eval = g
+            .evaluate(&bad_prop, TripartiteRole::Critic, 1.0, 10.0, 5)
+            .unwrap();
+        let err = enclave.ratify_with_enclave(&bad_prop, &bad_eval);
+        assert!(matches!(err, Err(TripartiteError::ShadowVetoed(_))));
     }
 }

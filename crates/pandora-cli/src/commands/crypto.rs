@@ -33,8 +33,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "kzg-verify" => kzg_verify(&args[1..]),
         "ckks-encrypt" => ckks_encrypt(&args[1..]),
         "ckks-rescale" => ckks_rescale(&args[1..]),
+        "tfhe-keygen" => tfhe_keygen(&args[1..]),
+        "tfhe-partial-decrypt" => tfhe_partial_decrypt(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt'"
         ))),
     }
 }
@@ -376,4 +378,98 @@ fn ckks_rescale(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto ckks-rescale", json!(rescaled), display))
+}
+
+fn tfhe_keygen(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "threshold",
+            "parties",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let threshold = parsed
+        .value("threshold")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+    let parties = parsed
+        .value("parties")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::threshold_fhe::ThresholdFheEngine::new(threshold, parties, 40);
+    let key_shares = engine.generate_key_shares(42.0);
+
+    let display = format!(
+        "Multi-Key Threshold FHE Keygen\n\
+         Threshold: {}\n\
+         Total Parties: {}\n\
+         Key Shares Generated: {}\n\
+         Theorems: 140 (Smudging Bound), 141 (Threshold Decryption)",
+        threshold,
+        parties,
+        key_shares.len()
+    );
+
+    Ok(success("crypto tfhe-keygen", json!(key_shares), display))
+}
+
+fn tfhe_partial_decrypt(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "threshold",
+            "parties",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let threshold = parsed
+        .value("threshold")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+    let parties = parsed
+        .value("parties")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::threshold_fhe::ThresholdFheEngine::new(threshold, parties, 40);
+    let key_shares = engine.generate_key_shares(42.0);
+    let message = vec![2.5, 5.0, -1.25];
+    let ct = engine.encrypt(&message, 42.0);
+
+    let shares: Vec<_> = key_shares[0..=threshold]
+        .iter()
+        .map(|k| engine.partial_decrypt(k, &ct))
+        .collect();
+    let reconstructed = engine.collective_decrypt(&ct, &shares).map_err(|e| {
+        CliError::execution(format!("decryption failed: {e}"), json!({ "error": e }))
+    })?;
+
+    let display = format!(
+        "Multi-Key Threshold Partial Decryption & Reconstruction\n\
+         Active Shares: {}\n\
+         Noise Flooding Bound: {:.4e}\n\
+         Reconstructed Vector: {:?}\n\
+         Theorems: 140 (Smudging), 141 (Honest Majority Correctness)",
+        shares.len(),
+        shares[0].flooded_noise_bound,
+        reconstructed
+    );
+
+    Ok(success(
+        "crypto tfhe-partial-decrypt",
+        json!({
+            "shares_count": shares.len(),
+            "reconstructed": reconstructed,
+            "theorems": [140, 141, 142]
+        }),
+        display,
+    ))
 }

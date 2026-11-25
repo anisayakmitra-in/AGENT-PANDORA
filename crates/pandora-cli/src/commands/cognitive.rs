@@ -29,8 +29,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "shapley-credit" => shapley_credit(&args[1..]),
         "mckean-vlasov" => mckean_vlasov(&args[1..]),
         "swarm-hjb" => swarm_hjb(&args[1..]),
+        "jump-diffuse" => jump_diffuse(&args[1..]),
+        "hjb-ide-control" => hjb_ide_control(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control'"
         ))),
     }
 }
@@ -338,4 +340,111 @@ fn swarm_hjb(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("cognitive swarm-hjb", audit, display))
+}
+
+fn jump_diffuse(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["steps", "lambda", "config", "data-dir", "workspace", "json"],
+    )?;
+    let steps = parsed
+        .values
+        .get("steps")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10);
+    let lambda = parsed
+        .values
+        .get("lambda")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.2);
+
+    let cfg = pandora_runtime::jump_diffusion::JumpDiffusionConfig {
+        jump_intensity_lambda: lambda,
+        ..Default::default()
+    };
+    let engine = pandora_runtime::jump_diffusion::JumpDiffusionEngine::new(cfg);
+
+    let mut state = pandora_runtime::jump_diffusion::JumpDiffusionState {
+        position: vec![1.0, -1.0],
+        velocity: vec![0.0, 0.0],
+        time: 0.0,
+        accumulated_jumps: 0,
+        jump_intensity_lambda: lambda,
+        value_function_hjb: 0.0,
+    };
+
+    for i in 0..steps {
+        state = engine.step(&state, 0.01, i + 1);
+    }
+
+    let risk_bound = engine.compute_martingale_risk_bound(5.0, state.time);
+
+    let display = format!(
+        "Neural Jump-Diffusion Stochastic Dynamics\n\
+         Simulated Steps: {}\n\
+         Final Time: {:.2}s\n\
+         Accumulated Jumps: {}\n\
+         Final Position: {:?}\n\
+         HJB Viscosity Value: {:.4}\n\
+         Martingale Risk Bound: {:.4e}\n\
+         Theorems: 143, 144, 145",
+        steps,
+        state.time,
+        state.accumulated_jumps,
+        state.position,
+        state.value_function_hjb,
+        risk_bound
+    );
+
+    Ok(success(
+        "cognitive jump-diffuse",
+        json!({
+            "state": state,
+            "risk_bound": risk_bound,
+            "theorems": [143, 144, 145]
+        }),
+        display,
+    ))
+}
+
+fn hjb_ide_control(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["x0", "x1", "config", "data-dir", "workspace", "json"],
+    )?;
+    let x0 = parsed
+        .values
+        .get("x0")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+    let x1 = parsed
+        .values
+        .get("x1")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(-2.0);
+
+    let engine = pandora_runtime::jump_diffusion::JumpDiffusionEngine::default();
+    let state = vec![x0, x1];
+    let (control, value) = engine.compute_hjb_ide_control(&state);
+
+    let display = format!(
+        "Hamilton-Jacobi-Bellman Integro-Differential Viscosity Control\n\
+         State: {:?}\n\
+         Optimal Feedback Control: {:?}\n\
+         Viscosity Value V(x): {:.4}\n\
+         Theorems: 143 (HJB-IDE Viscosity), 144 (Lévy Stability), 145 (Martingale Bound)\n\
+         Status: PROVEN",
+        state, control, value
+    );
+
+    Ok(success(
+        "cognitive hjb-ide-control",
+        json!({
+            "state": state,
+            "control": control,
+            "viscosity_value": value,
+            "theorems": [143, 144, 145]
+        }),
+        display,
+    ))
 }

@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, and `v4.0.7`, `v4.0.8`, and `v4.0.9`. The active release identity
-is `v4.0.9`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, and `v4.0.10`. The active release identity
+is `v4.0.10`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,17 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+
+## v4.0.10
+
+This release delivers the Constitutional Governance Modernization and Phases 55–57 of the architectural roadmap:
+- **Constitutional Governance Modernization**: Parliament Bicameral Quadratic Voting (`parliament.rs`, Senate & Assembly houses, zk-blinded ballots, constitutional permits), Shadow Council Adversarial Red-Team Veto Engine (`shadow_council.rs`, $<5\mu s$ preemption latency, dual-key attestation), and Tripartite Synthesis Enclave (`tripartite_governance.rs`, `governance.rs`, CLI `pandora governance bicameral-vote|shadow-veto-check`, REST `/api/governance/parliament|/api/governance/shadow/veto`).
+- **Phase 55: Non-Abelian Anyonic Braiding & Topological Qubit Synthesis** (`anyonic_braiding.rs`, Theorems 137–139, Fibonacci anyons, braiding matrix unitary equivalence $\|U_{\text{braid}} - U_{\text{ideal}}\| \le \mathcal{O}(e^{-L/\xi})$, Solovay-Kitaev gate compilation, conserved fusion parity $\tau \otimes \tau = 1 \oplus \tau$, CLI `pandora swarm anyon-braid|anyon-fuse`, REST `/api/swarm/anyons`).
+- **Phase 56: Multi-Key Threshold Fully Homomorphic Encryption with Distributed Noise Flooding** (`threshold_fhe.rs`, Theorems 140–142, $(t, n)$ Shamir key sharing, distributed smudging noise bound $\sigma_{\text{flood}} \ge 2^{\lambda} B_{\text{dec}}$, honest-majority collective decryption correctness, multi-party inner product, CLI `pandora crypto tfhe-keygen|tfhe-partial-decrypt`, REST `/api/crypto/tfhe`).
+- **Phase 57: Neural Jump-Diffusion Stochastic Optimal Control & Lévy Swarm Flips** (`jump_diffusion.rs`, Theorems 143–145, SDE with compound Poisson jumps, HJB-IDE viscosity existence and uniqueness, Lévy-Khintchine swarm consensus stability, exponential martingale risk bounds, CLI `pandora cognitive jump-diffuse|hjb-ide-control`, REST `/api/cognitive/jump-diffusion`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/governance/parliament`, `/api/governance/shadow/veto`, `/api/swarm/anyons`, `/api/crypto/tfhe`, `/api/cognitive/jump-diffusion`, and updated `/api/olympus/overview` (`architecture_version: "4.0.10"`, `codename: "THANATOS"`, `total_theorems_enforced: 145`).
+- Enforces all **145 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.9
 

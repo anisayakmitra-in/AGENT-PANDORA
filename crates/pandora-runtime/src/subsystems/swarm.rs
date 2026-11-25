@@ -73,6 +73,11 @@ impl SwarmSubsystem {
         crate::magic_state_distillation::MagicStateDistillationEngine::new(2)
     }
 
+    /// Access the non-Abelian anyonic braiding engine (Theorems 137–139).
+    pub fn anyonic_braiding(&self) -> crate::anyonic_braiding::AnyonicBraidingEngine {
+        crate::anyonic_braiding::AnyonicBraidingEngine::default()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -88,6 +93,7 @@ impl SwarmSubsystem {
             gossip_converged: converged,
             theorems_enforced: vec![
                 62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
+                137, 138, 139,
             ],
         }
     }

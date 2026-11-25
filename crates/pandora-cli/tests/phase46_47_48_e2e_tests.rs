@@ -41,7 +41,7 @@ impl TestEnv {
         fs::create_dir_all(&data).expect("create data dir");
 
         let default_config = serde_json::json!({
-            "version": "4.0.9",
+            "version": "4.0.10",
             "active_model": "olympus-supercluster",
             "max_tool_iterations": 10,
             "cost_limit_dollars": 5.0,
@@ -211,9 +211,9 @@ fn test_cockpit_web_phase46_47_48_rest_endpoints() {
     // 4. Test /api/olympus/overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.0.9");
+    assert_eq!(overview["architecture_version"], "4.0.10");
     assert_eq!(overview["codename"], "THANATOS");
-    assert_eq!(overview["total_theorems_enforced"], 136);
+    assert_eq!(overview["total_theorems_enforced"], 145);
 
     shutdown_handle.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(("127.0.0.1", port));

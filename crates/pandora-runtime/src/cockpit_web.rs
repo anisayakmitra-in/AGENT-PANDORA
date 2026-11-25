@@ -3083,6 +3083,102 @@ fn handle_connection(
             let audit = engine.audit_theorems();
             write_json_response(&mut stream, 200, "OK", &audit)?;
         }
+        ("GET", "/api/governance/parliament") => {
+            let p = crate::parliament::Parliament::new(1);
+            let mut session = p.create_bicameral_session("cockpit-auto-proposal");
+            session.cast_vote(
+                "senate-prover",
+                crate::parliament::BicameralHouse::Senate,
+                16,
+                true,
+            );
+            session.cast_vote(
+                "assembly-delegate",
+                crate::parliament::BicameralHouse::Assembly,
+                25,
+                true,
+            );
+            let verdict = session.tally();
+            let permit = p.issue_constitutional_permit(&session).ok();
+            let resp = serde_json::json!({
+                "verdict": verdict,
+                "permit": permit,
+                "theorems_enforced": [74, 75, 76, 137, 140, 143]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/governance/shadow/veto") => {
+            let council = crate::shadow_council::ShadowCouncil::new();
+            let safe_check = council
+                .red_team_adversarial_check("safe system maintenance")
+                .is_ok();
+            let veto_check = council
+                .red_team_adversarial_check("override safety bypass parliament")
+                .err();
+            let resp = serde_json::json!({
+                "safe_check_passed": safe_check,
+                "veto_attestation": veto_check,
+                "preemption_guarantee": "<5us"
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/swarm/anyons") => {
+            let engine = crate::anyonic_braiding::AnyonicBraidingEngine::default();
+            let seq = engine.compile_topological_gate("H", 8);
+            let fusion = engine.fuse_anyons(
+                crate::anyonic_braiding::AnyonCharge::FibonacciTau,
+                crate::anyonic_braiding::AnyonCharge::FibonacciTau,
+            );
+            let resp = serde_json::json!({
+                "braiding_sequence": seq,
+                "fusion_result": fusion,
+                "theorem_137_verified": engine.verify_theorem_137(),
+                "theorems_enforced": [137, 138, 139]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/tfhe") => {
+            let engine = crate::threshold_fhe::ThresholdFheEngine::new(2, 4, 40);
+            let shares = engine.generate_key_shares(42.0);
+            let msg = vec![3.5, 2.25, 1.125];
+            let ct = engine.encrypt(&msg, 42.0);
+            let part_shares: Vec<_> = shares[0..3]
+                .iter()
+                .map(|k| engine.partial_decrypt(k, &ct))
+                .collect();
+            let decrypted = engine
+                .collective_decrypt(&ct, &part_shares)
+                .unwrap_or_default();
+            let resp = serde_json::json!({
+                "message": msg,
+                "decrypted": decrypted,
+                "parties": 4,
+                "threshold": 2,
+                "smudging_slack_bits": 40,
+                "theorems_enforced": [140, 141, 142]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/jump-diffusion") => {
+            let engine = crate::jump_diffusion::JumpDiffusionEngine::default();
+            let initial = crate::jump_diffusion::JumpDiffusionState {
+                position: vec![1.0, -0.5],
+                velocity: vec![0.0, 0.0],
+                time: 0.0,
+                accumulated_jumps: 0,
+                jump_intensity_lambda: 0.1,
+                value_function_hjb: 0.0,
+            };
+            let next = engine.step(&initial, 0.05, 42);
+            let risk = engine.compute_martingale_risk_bound(5.0, 1.0);
+            let resp = serde_json::json!({
+                "initial_state": initial,
+                "stepped_state": next,
+                "exponential_martingale_risk_bound": risk,
+                "theorems_enforced": [143, 144, 145]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

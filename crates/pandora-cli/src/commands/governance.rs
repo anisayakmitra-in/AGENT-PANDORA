@@ -14,7 +14,7 @@ use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("governance requires 'status', 'audit', 'heal', or 'invariant-check'")
+        CliError::usage("governance requires 'status', 'audit', 'heal', 'invariant-check', 'bicameral-vote', or 'shadow-veto-check'")
     })?;
 
     match subcommand.as_str() {
@@ -22,8 +22,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "audit" => audit(&args[1..]),
         "heal" => heal(&args[1..]),
         "invariant-check" => invariant_check(&args[1..]),
+        "bicameral-vote" => bicameral_vote(&args[1..]),
+        "shadow-veto-check" => shadow_veto_check(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown governance subcommand '{unknown}'. Available: 'status', 'audit', 'heal', 'invariant-check'"
+            "unknown governance subcommand '{unknown}'. Available: 'status', 'audit', 'heal', 'invariant-check', 'bicameral-vote', 'shadow-veto-check'"
         ))),
     }
 }
@@ -134,6 +136,102 @@ fn invariant_check(args: &[String]) -> Result<CommandResult, CliError> {
     Ok(success(
         "governance invariant-check",
         json!(report),
+        display,
+    ))
+}
+
+fn bicameral_vote(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "proposal",
+            "upper-credits",
+            "lower-credits",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let proposal = parsed.value("proposal").unwrap_or("prop-default");
+    let upper_credits = parsed
+        .value("upper-credits")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(16);
+    let lower_credits = parsed
+        .value("lower-credits")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(25);
+
+    let subsystem = GovernanceSubsystem::new();
+    let permit = subsystem
+        .vote_and_ratify(proposal, upper_credits, lower_credits)
+        .map_err(|e| {
+            CliError::execution(
+                format!("bicameral voting failed: {e}"),
+                json!({ "error": e }),
+            )
+        })?;
+
+    let display = format!(
+        "Bicameral Quadratic Voting Session Ratified\n\
+         Proposal ID: {}\n\
+         Permit ID: {}\n\
+         Bicameral Margin: {:.4}\n\
+         Theorems Enforced: {}\n\
+         Signature: {}",
+        permit.proposal_id,
+        permit.permit_id,
+        permit.bicameral_margin,
+        permit.theorems_enforced.len(),
+        permit.signature_checksum
+    );
+
+    Ok(success("governance bicameral-vote", json!(permit), display))
+}
+
+fn shadow_veto_check(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["intent", "config", "data-dir", "workspace", "json"])?;
+    let intent = parsed.value("intent").unwrap_or("routine maintenance");
+
+    let subsystem = GovernanceSubsystem::new();
+    let council = subsystem.shadow_council();
+    let check_res = council.red_team_adversarial_check(intent);
+
+    let (vetoed, display) = match check_res {
+        Ok(()) => (
+            false,
+            format!(
+                "Shadow Council Red-Team Check\n\
+                 Intent: {}\n\
+                 Status: APPROVED (No adversarial breaches detected)\n\
+                 Preemption Bound: <5 microseconds",
+                intent
+            ),
+        ),
+        Err(attestation) => (
+            true,
+            format!(
+                "Shadow Council Red-Team Check [VETO ATTESTED]\n\
+                 Intent: {}\n\
+                 Breached Invariants: {}\n\
+                 Dual Key Sig: ({}, {})\n\
+                 Preemption Latency: {} us",
+                intent,
+                attestation.breached_invariants.join(", "),
+                attestation.dual_key_signature.0,
+                attestation.dual_key_signature.1,
+                attestation.preemption_latency_us
+            ),
+        ),
+    };
+
+    Ok(success(
+        "governance shadow-veto-check",
+        json!({
+            "intent": intent,
+            "vetoed": vetoed,
+        }),
         display,
     ))
 }

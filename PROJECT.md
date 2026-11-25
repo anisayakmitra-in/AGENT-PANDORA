@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.9 Release: THANATOS - Magic State Distillation, CKKS FHE & McKean-Vlasov Mean-Field)
+# Project: AGENT-PANDORA (v4.0.10 Release: THANATOS - Constitutional Governance, Anyonic Braiding, Threshold FHE & Neural Jump-Diffusion)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.9` (Phases 52–54, Theorems 128–136).
+- **Versioning & Release**: Workspace version promoted to `4.0.10` (Constitutional Governance Upgrades & Phases 55–57, Theorems 137–145).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---

@@ -83,8 +83,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "qec-decode" => qec_decode(&args[1..]),
         "magic-distill" => magic_distill(&args[1..]),
         "magic-state-audit" => magic_state_audit(&args[1..]),
+        "anyon-braid" => anyon_braid(&args[1..]),
+        "anyon-fuse" => anyon_fuse(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse"
         ))),
     }
 }
@@ -1291,6 +1293,55 @@ fn magic_state_audit(args: &[String]) -> Result<CommandResult, CliError> {
     let text = "Magic State Distillation Formal Audit:\n  Theorems: 128 (Cubic Suppression), 129 (Transversal Soundness), 130 (Yield Bound)\n  Status: PROVEN".to_string();
 
     Ok(success("swarm magic-state-audit", audit, text))
+}
+
+fn anyon_braid(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["gate", "depth", "config", "data-dir", "workspace", "json"],
+    )?;
+    let gate = parsed.value("gate").unwrap_or("H");
+    let depth = parsed
+        .value("depth")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
+
+    let engine = pandora_runtime::anyonic_braiding::AnyonicBraidingEngine::default();
+    let seq = engine.compile_topological_gate(gate, depth);
+
+    let text = format!(
+        "Topological Anyonic Gate Synthesis:\n  Target Gate: {}\n  Strands: {}\n  Generators Count: {}\n  Approximation Error: {:.6}\n  Topological Protection Factor: {:.4e}\n  Theorems: 137 (Braiding Unitary Equivalence), 138 (Solovay-Kitaev Synthesis)",
+        seq.target_gate,
+        seq.num_strands,
+        seq.generators.len(),
+        seq.approximation_error,
+        seq.topological_protection_factor
+    );
+
+    Ok(success("swarm anyon-braid", json!(seq), text))
+}
+
+fn anyon_fuse(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["charge", "config", "data-dir", "workspace", "json"])?;
+    let charge_str = parsed.value("charge").unwrap_or("tau");
+    let charge = match charge_str.to_ascii_lowercase().as_str() {
+        "tau" | "fibonacci" => pandora_runtime::anyonic_braiding::AnyonCharge::FibonacciTau,
+        "majorana" => pandora_runtime::anyonic_braiding::AnyonCharge::MajoranaFermion,
+        _ => pandora_runtime::anyonic_braiding::AnyonCharge::Vacuum,
+    };
+
+    let engine = pandora_runtime::anyonic_braiding::AnyonicBraidingEngine::default();
+    let result = engine.fuse_anyons(charge, charge);
+
+    let text = format!(
+        "Non-Abelian Anyon Fusion:\n  Incoming: {:?}\n  Outcome: {:?}\n  Quantum Dimension: {:.4}\n  Parity Preserved: {}\n  Theorem: 139 (Fusion-Rule Conserved Parity)",
+        result.incoming_charges,
+        result.outcome_charge,
+        result.quantum_dimension,
+        result.parity_preserved
+    );
+
+    Ok(success("swarm anyon-fuse", json!(result), text))
 }
 
 #[cfg(test)]

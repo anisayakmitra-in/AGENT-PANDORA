@@ -47,6 +47,45 @@ impl GovernanceSubsystem {
         crate::self_healing_kernel::SelfHealingKernel::new()
     }
 
+    /// Access the upgraded constitutional Parliament.
+    pub fn parliament(&self) -> crate::parliament::Parliament {
+        crate::parliament::Parliament::new(1)
+    }
+
+    /// Access the Shadow Council with adversarial red-team veto protection.
+    pub fn shadow_council(&self) -> crate::shadow_council::ShadowCouncil {
+        crate::shadow_council::ShadowCouncil::new()
+    }
+
+    /// Access the Bicameral Synthesis Enclave.
+    pub fn enclave(&self) -> crate::tripartite_governance::BicameralSynthesisEnclave {
+        crate::tripartite_governance::BicameralSynthesisEnclave::new(1)
+    }
+
+    /// Conducts a complete bicameral quadratic vote and issues a constitutional permit if ratified.
+    pub fn vote_and_ratify(
+        &self,
+        proposal_id: &str,
+        upper_credits: u64,
+        lower_credits: u64,
+    ) -> Result<crate::parliament::ConstitutionalPermit, String> {
+        let p = self.parliament();
+        let mut session = p.create_bicameral_session(proposal_id);
+        session.cast_vote(
+            "senate-formal-prover",
+            crate::parliament::BicameralHouse::Senate,
+            upper_credits,
+            true,
+        );
+        session.cast_vote(
+            "assembly-swarm-delegate",
+            crate::parliament::BicameralHouse::Assembly,
+            lower_credits,
+            true,
+        );
+        p.issue_constitutional_permit(&session)
+    }
+
     /// Returns high-level operational status of the Governance Subsystem.
     pub fn status(&self) -> GovernanceSubsystemStatus {
         GovernanceSubsystemStatus {
@@ -54,13 +93,15 @@ impl GovernanceSubsystem {
             active_authorities: vec![
                 "ExecutionController".to_string(),
                 "Parliament".to_string(),
+                "ShadowCouncil".to_string(),
+                "BicameralSynthesisEnclave".to_string(),
                 "ReferenceMonitor".to_string(),
                 "ContainmentEngine".to_string(),
                 "SelfHealingKernel".to_string(),
             ],
             max_memory_quota_mb: self.memory_quota_mb,
             max_kill_latency_bound_ms: self.kill_latency_bound_ms,
-            theorems_enforced: vec![74, 75, 76, 104, 105, 106],
+            theorems_enforced: vec![74, 75, 76, 104, 105, 106, 137, 140, 143],
         }
     }
 }

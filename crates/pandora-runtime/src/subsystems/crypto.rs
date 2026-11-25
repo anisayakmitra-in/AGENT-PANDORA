@@ -84,6 +84,11 @@ impl CryptoSubsystem {
         crate::ckks_fhe::CkksFheEngine::new(8192, 5)
     }
 
+    /// Access the multi-key threshold FHE engine (Theorems 140–142).
+    pub fn threshold_fhe(&self) -> crate::threshold_fhe::ThresholdFheEngine {
+        crate::threshold_fhe::ThresholdFheEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -98,7 +103,7 @@ impl CryptoSubsystem {
             mpc_report: mpc_rep,
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
-                132, 133,
+                132, 133, 140, 141, 142,
             ],
         }
     }
