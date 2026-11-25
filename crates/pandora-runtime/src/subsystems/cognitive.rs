@@ -63,6 +63,11 @@ impl CognitiveSubsystem {
         self.supervisor.generate_report()
     }
 
+    /// Access the Pearlian causal do-calculus inference engine (Theorems 116–118).
+    pub fn causal_engine(&self) -> crate::causal_engine::PearlianCausalEngine {
+        crate::causal_engine::PearlianCausalEngine::new()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -80,7 +85,9 @@ impl CognitiveSubsystem {
             ],
             speculative_default_speedup: spec_rep.speedup_factor,
             metacognitive_pac_bayes_risk: meta_rep.theorem_82_pac_bayes_risk,
-            theorems_enforced: vec![1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91],
+            theorems_enforced: vec![
+                1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118,
+            ],
         }
     }
 }

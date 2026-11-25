@@ -13,7 +13,9 @@ use serde_json::json;
 
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
-        CliError::usage("cognitive requires 'status', 'speculate', 'synthesize', or 'audit'")
+        CliError::usage(
+            "cognitive requires 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', or 'counterfactual'",
+        )
     })?;
 
     match subcommand.as_str() {
@@ -21,8 +23,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "speculate" => speculate(&args[1..]),
         "synthesize" => synthesize(&args[1..]),
         "audit" => audit(&args[1..]),
+        "do-calculus" => do_calculus(&args[1..]),
+        "counterfactual" => counterfactual(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual'"
         ))),
     }
 }
@@ -33,7 +37,7 @@ fn status(args: &[String]) -> Result<CommandResult, CliError> {
     let status = subsystem.status();
 
     let display = format!(
-        "Cognitive Subsystem [v4.0.6 OLYMPUS]\n\
+        "Cognitive Subsystem [v4.0.7 OLYMPUS]\n\
          Status: {}\n\
          Grammars Supported: {}\n\
          Speculative Speedup: {:.2}x\n\
@@ -165,4 +169,45 @@ fn audit(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("cognitive audit", json!(report), display))
+}
+
+fn do_calculus(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "treatment",
+            "value",
+            "outcome",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let treatment = parsed.value("treatment").unwrap_or("policy_action");
+    let val = parsed.value("value").unwrap_or("safe_explore");
+    let outcome = parsed.value("outcome").unwrap_or("agent_reward");
+
+    let engine = pandora_runtime::causal_engine::PearlianCausalEngine::new();
+    let res = engine.evaluate_intervention(treatment, val, outcome);
+
+    let display = format!(
+        "Pearlian Do-Calculus Interventional Evaluation\n\
+         Intervention: do({} = {})\n\
+         Outcome: {}\n\
+         Average Treatment Effect (ATE): {:.4}\n\
+         Backdoor Set: {}\n\
+         Theorems: 116 (Identifiability), 117 (Counterfactual Soundness), 118 (Confounder Bound)",
+        res.treatment_variable,
+        res.treatment_value,
+        res.outcome_variable,
+        res.average_treatment_effect,
+        res.backdoor_admissible_set.join(", ")
+    );
+
+    Ok(success("cognitive do-calculus", json!(res), display))
+}
+
+fn counterfactual(args: &[String]) -> Result<CommandResult, CliError> {
+    do_calculus(args)
 }

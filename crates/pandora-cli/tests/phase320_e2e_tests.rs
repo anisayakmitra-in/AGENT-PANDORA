@@ -261,24 +261,24 @@ fn test_tier1_r1_01_version_invariant_cli_and_manifests() {
     assert!(out_json.status.success());
     assert_eq!(val["command"], "version");
     assert_eq!(val["version"], "0.1");
-    assert_eq!(val["pandora_version"], "4.0.6");
+    assert_eq!(val["pandora_version"], "4.0.7");
 
     let out_plain = env.run(&["--version"]);
     assert!(out_plain.status.success());
     let plain_str = String::from_utf8_lossy(&out_plain.stdout);
-    assert!(plain_str.contains("4.0.6"));
+    assert!(plain_str.contains("4.0.7"));
     assert!(!plain_str.contains("3.2.0"));
 
     let cargo_toml = fs::read_to_string(repo_root().join("Cargo.toml")).expect("read Cargo.toml");
     assert!(
-        cargo_toml.contains("version = \"4.0.6\""),
+        cargo_toml.contains("version = \"4.0.7\""),
         "root Cargo.toml version invariant"
     );
 
     let pkg_json = fs::read_to_string(repo_root().join("npm/pandora-cli/package.json"))
         .expect("read package.json");
     let pkg_val: Value = serde_json::from_str(&pkg_json).expect("valid package.json");
-    assert_eq!(pkg_val["version"], "4.0.6");
+    assert_eq!(pkg_val["version"], "4.0.7");
 }
 
 #[test]
@@ -1978,7 +1978,7 @@ fn test_tier4_03_release_and_documentation_compliance_audit_lifecycle() {
 
     let (out_v, val_v) = env.run_json(&["--version"]);
     assert!(out_v.status.success());
-    assert_eq!(val_v["pandora_version"], "4.0.6");
+    assert_eq!(val_v["pandora_version"], "4.0.7");
 
     let py = find_python();
     if py.is_file() {

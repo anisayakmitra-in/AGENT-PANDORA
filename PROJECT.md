@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.6 Release: OLYMPUS - Recursive ZK, Self-Healing & Neuromorphic VFS)
+# Project: AGENT-PANDORA (v4.0.7 Release: OLYMPUS - Quantum Annealing, Federated Homomorphic & Causal Inference)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.6` (Phases 43–45, Theorems 101–109).
+- **Versioning & Release**: Workspace version promoted to `4.0.7` (Phases 46–48, Theorems 110–118).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -61,6 +61,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F30 | Phase 43: Recursive Zero-Knowledge Rollups & Algebraic STARK Proofs | Constant-size STARK proof aggregation, BabyBear prime field $\mathbb{F}_p$, 128-bit computational soundness (Theorems 101–103), CLI `pandora crypto zk-rollup/zk-verify`, REST `/api/crypto/rollup` | M19 | v4.0.6 Architecture |
 | F31 | Phase 44: Autonomous Self-Healing Kernel & Dynamic Invariant Synthesis | Monotonic bisimulation equivalence, automated invariant re-derivation, zero-downtime hot-patching (Theorems 104–106), CLI `pandora governance heal/invariant-check`, REST `/api/governance/healing` | M19 | v4.0.6 Architecture |
 | F32 | Phase 45: Neuromorphic Spiking Context VFS & Temporal Memory Decay | Leaky Integrate-and-Fire dynamics, STDP synaptic plasticity, exponential decay retention fidelity >= 95% (Theorems 107–109), CLI `pandora memory spike-train/temporal-decay`, REST `/api/memory/neuromorphic` | M19 | v4.0.6 Architecture |
+| F33 | Phase 46: Quantum Annealing Graph Partitioning & QUBO Job Scheduling | Transverse-field Ising Hamiltonian mapping, spectral gap convergence, makespan bound (Theorems 110–112), CLI `pandora swarm anneal/qubo-schedule`, REST `/api/swarm/anneal` | M20 | v4.0.7 Architecture |
+| F34 | Phase 47: Homomorphic Federated Model Distillation & Secure Aggregation | IND-CPA security, Byzantine poisoning rejection, zero mutual information leak (Theorems 113–115), CLI `pandora crypto fed-aggregate/fed-verify`, REST `/api/crypto/federated` | M20 | v4.0.7 Architecture |
+| F35 | Phase 48: Causal Counterfactual Policy Inference & Pearlian Do-Calculus Engine | Backdoor intervention identifiability, monotonic counterfactual consistency, confounder invariance (Theorems 116–118), CLI `pandora cognitive do-calculus/counterfactual`, REST `/api/cognitive/causal` | M20 | v4.0.7 Architecture |
 
 ---
 
@@ -88,6 +91,7 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M17 | Phase 39: OLYMPUS Subsystems Topology (v4.0.4) | 5 micro-kernel pillars, unified CLI commands, REST endpoints, 91 theorems | M16 | COMPLETED |
 | M18 | Phase 40-42: Centennial Completeness (v4.0.5) | Multi-tenant mesh, hyper-dimensional holographic VFS, formal Lean 4/Coq verification (Theorems 92–100) | M17 | COMPLETED |
 | M19 | Phase 43-45: Advanced Autonomy Substrate (v4.0.6) | Recursive ZK rollups, self-healing kernel, neuromorphic spiking VFS (Theorems 101–109) | M18 | COMPLETED |
+| M20 | Phase 46-48: Quantum, Federated & Causal Substrate (v4.0.7) | Quantum annealing scheduling, federated homomorphic aggregation, Pearlian do-calculus (Theorems 110–118) | M19 | COMPLETED |
 
 ---
 

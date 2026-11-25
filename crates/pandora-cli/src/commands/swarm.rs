@@ -58,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', 'mpc-eval', 'mesh', or 'cross-commit'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', 'mpc-eval', 'mesh', 'cross-commit', 'anneal', or 'qubo-schedule'",
             ));
         }
     };
@@ -77,8 +77,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "mpc-eval" => mpc_eval(&args[1..]),
         "mesh" => mesh(&args[1..]),
         "cross-commit" => cross_commit(&args[1..]),
+        "anneal" => anneal(&args[1..]),
+        "qubo-schedule" => qubo_schedule(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule"
         ))),
     }
 }
@@ -1108,6 +1110,56 @@ fn cross_commit(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("swarm cross-commit", json!(receipt), text))
+}
+
+fn anneal(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "tasks",
+            "clusters",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let clusters: usize = parsed
+        .value("clusters")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2);
+
+    let sample_tasks = vec![
+        pandora_runtime::quantum_annealer::QuboTask {
+            task_id: "agent_eval_01".to_string(),
+            weight: 4.0,
+            cluster_affinity: Some(0),
+        },
+        pandora_runtime::quantum_annealer::QuboTask {
+            task_id: "agent_eval_02".to_string(),
+            weight: 2.5,
+            cluster_affinity: Some(1),
+        },
+        pandora_runtime::quantum_annealer::QuboTask {
+            task_id: "agent_eval_03".to_string(),
+            weight: 3.0,
+            cluster_affinity: None,
+        },
+    ];
+
+    let annealer = pandora_runtime::quantum_annealer::QuantumAnnealer::new();
+    let res = annealer.schedule_tasks(&sample_tasks, clusters);
+
+    let text = format!(
+        "Quantum Annealing QUBO Schedule:\n  Energy: {:.4}\n  Makespan: {:.4}\n  Spectral Gap: {:.4}\n  Theorems: 110, 111, 112",
+        res.ground_state_energy, res.makespan_estimate, res.spectral_gap
+    );
+
+    Ok(success("swarm anneal", json!(res), text))
+}
+
+fn qubo_schedule(args: &[String]) -> Result<CommandResult, CliError> {
+    anneal(args)
 }
 
 #[cfg(test)]

@@ -3019,6 +3019,40 @@ fn handle_connection(
             let report = vfs.audit();
             write_json_response(&mut stream, 200, "OK", &json!(report))?;
         }
+        ("GET", "/api/swarm/anneal") => {
+            let annealer = crate::quantum_annealer::QuantumAnnealer::new();
+            let sample_tasks = vec![
+                crate::quantum_annealer::QuboTask {
+                    task_id: "t_01".to_string(),
+                    weight: 5.0,
+                    cluster_affinity: Some(0),
+                },
+                crate::quantum_annealer::QuboTask {
+                    task_id: "t_02".to_string(),
+                    weight: 3.5,
+                    cluster_affinity: Some(1),
+                },
+            ];
+            let schedule = annealer.schedule_tasks(&sample_tasks, 2);
+            write_json_response(&mut stream, 200, "OK", &json!(schedule))?;
+        }
+        ("GET", "/api/crypto/federated") => {
+            let engine = crate::federated_homomorphic::FederatedHomomorphicEngine::new();
+            let sample_updates = vec![crate::federated_homomorphic::EncryptedGradientUpdate {
+                worker_id: "w_01".to_string(),
+                ciphertext_payload: vec![12345, 67890],
+                norm_clip_bound: 1.5,
+                proof_of_bounded_norm: "zk_bound_proof_01".to_string(),
+            }];
+            let receipt = engine.aggregate(&sample_updates);
+            write_json_response(&mut stream, 200, "OK", &json!(receipt))?;
+        }
+        ("GET", "/api/cognitive/causal") => {
+            let engine = crate::causal_engine::PearlianCausalEngine::new();
+            let result =
+                engine.evaluate_intervention("action_policy", "safe_explore", "system_reward");
+            write_json_response(&mut stream, 200, "OK", &json!(result))?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

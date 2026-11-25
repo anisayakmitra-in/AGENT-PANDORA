@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, and `v4.0.6`. The active release identity
-is `v4.0.6`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, and `v4.0.7`. The active release identity
+is `v4.0.7`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,15 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.7
+
+This release delivers Phases 46–48 of the architectural roadmap:
+- **Phase 46: Quantum Annealing Graph Partitioning & QUBO Job Scheduling** (`quantum_annealer.rs`, Theorems 110–112, transverse-field Ising Hamiltonian ground state mapping, polynomial spectral gap convergence $\Delta \ge 1/\text{poly}(N)$, $(1 + \epsilon)$ Pareto-optimal makespan bound, CLI `pandora swarm anneal|qubo-schedule`, REST `/api/swarm/anneal`).
+- **Phase 47: Homomorphic Federated Model Distillation & Secure Aggregation** (`federated_homomorphic.rs`, Theorems 113–115, IND-CPA security preserved under additive aggregation, Byzantine gradient clipping with geometric median filter, zero mutual information leak $I(\theta_i; \text{Coordinator}) = 0$, CLI `pandora crypto fed-aggregate|fed-verify`, REST `/api/crypto/federated`).
+- **Phase 48: Causal Counterfactual Policy Inference & Pearlian Do-Calculus Engine** (`causal_engine.rs`, Theorems 116–118, backdoor criterion intervention identifiability $P(Y \mid do(X = x))$, monotonic counterfactual abduction-action-prediction consistency, confounder invariance bound, CLI `pandora cognitive do-calculus|counterfactual`, REST `/api/cognitive/causal`).
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/anneal`, `/api/crypto/federated`, `/api/cognitive/causal`, and updated `/api/olympus/overview` (`architecture_version: "4.0.7"`, `codename: "OLYMPUS"`, `total_theorems_enforced: 118`).
+- Enforces all **118 Mathematical Foundation Theorems** under `#![forbid(unsafe_code)]`.
 
 ## v4.0.6
 

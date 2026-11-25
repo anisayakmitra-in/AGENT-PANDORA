@@ -67,6 +67,13 @@ impl CryptoSubsystem {
         crate::recursive_zk_rollup::ZkRollupEngine::new()
     }
 
+    /// Access the federated homomorphic aggregator (Theorems 113–115).
+    pub fn federated_homomorphic(
+        &self,
+    ) -> crate::federated_homomorphic::FederatedHomomorphicEngine {
+        crate::federated_homomorphic::FederatedHomomorphicEngine::new()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -79,7 +86,7 @@ impl CryptoSubsystem {
             ],
             hybrid_pq_verifying_key: self.signer.verifying_key(),
             mpc_report: mpc_rep,
-            theorems_enforced: vec![48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103],
+            theorems_enforced: vec![48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115],
         }
     }
 }

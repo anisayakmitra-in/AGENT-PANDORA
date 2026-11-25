@@ -56,6 +56,11 @@ impl SwarmSubsystem {
         SwarmMeshRouter::new()
     }
 
+    /// Access the quantum annealing graph scheduler (Theorems 110–112).
+    pub fn quantum_annealer(&self) -> crate::quantum_annealer::QuantumAnnealer {
+        crate::quantum_annealer::QuantumAnnealer::new()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -69,7 +74,7 @@ impl SwarmSubsystem {
             bft_nodes_count: self.default_nodes,
             crdt_counter_value: counter.value(),
             gossip_converged: converged,
-            theorems_enforced: vec![62, 63, 64, 71, 72, 73, 92, 93, 94],
+            theorems_enforced: vec![62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112],
         }
     }
 }
