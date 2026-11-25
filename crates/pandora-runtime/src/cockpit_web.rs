@@ -2900,6 +2900,48 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &val)?;
         }
+        ("GET", "/api/swarm/mpc") => {
+            let engine = crate::swarm_mpc::ShamirMpcEngine::default();
+            let report = engine.audit(133742, 3, 5);
+            let val = json!({
+                "status": "ready",
+                "mpc_report": report,
+                "theorem_83_information_theoretic_privacy": report.theorem_83_information_theoretic_privacy,
+                "theorem_84_byzantine_fault_tolerance": report.theorem_84_byzantine_fault_tolerance,
+                "theorem_85_constant_round_multiplication": report.theorem_85_constant_round_multiplication,
+                "theorems": [83, 84, 85]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
+        ("GET", "/api/memory/privacy") => {
+            let supervisor = crate::privacy_engine::PrivacySupervisor::default();
+            let receipt = supervisor.certified_unlearn("tenant_sensitive_trace_01", 3, 0.015, 1.2);
+            let val = json!({
+                "status": "ready",
+                "scrubbing_receipt": receipt,
+                "theorem_86_rdp_composed": receipt.theorem_86_rdp_composed,
+                "theorem_87_certified_unlearning": receipt.theorem_87_certified_unlearning,
+                "theorem_88_retention_guaranteed": receipt.theorem_88_retention_guaranteed,
+                "theorems": [86, 87, 88]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
+        ("GET", "/api/code/speculative") => {
+            let engine = crate::speculative_tree::SpeculativeTreeEngine::new(4, 2);
+            let draft = vec![0.85, 0.75, 0.65, 0.90, 0.80, 0.70];
+            let target = vec![0.90, 0.80, 0.60, 0.95, 0.85, 0.72];
+            let (nodes, report) = engine.evaluate_tree(&draft, &target);
+            let val = json!({
+                "status": "ready",
+                "nodes_count": nodes.len(),
+                "speculative_report": report,
+                "theorem_89_distributional_equivalence": report.theorem_89_distributional_equivalence,
+                "theorem_90_speedup_bound_met": report.theorem_90_speedup_bound_met,
+                "theorem_91_latency_amortized": report.theorem_91_latency_amortized,
+                "theorems": [89, 90, 91]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

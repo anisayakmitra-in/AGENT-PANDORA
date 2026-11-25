@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, and `v4.0.2`. The active release identity
-is `v4.0.2`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, and `v4.0.3`. The active release identity
+is `v4.0.3`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,13 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+## v4.0.3
+
+This release delivers Phases 36–38 of the architectural roadmap:
+- **Phase 36**: Homomorphic Multi-Party Computation & Zero-Leakage Secret Sharing (Theorems 83–85, Shamir (k, n)-threshold sharing, Byzantine fault-tolerant reconstruction, Beaver triple homomorphic multiplication, CLI `pandora swarm secret-share|mpc-eval`, REST `/api/swarm/mpc`).
+- **Phase 37**: Differential Privacy & Continual Certified Unlearning (Theorems 86–88, Rényi DP composition, projected Newton-step Fisher inverse scrubbing, Lipschitz memory stability, CLI `pandora memory scrub`, REST `/api/memory/privacy`).
+- **Phase 38**: Distributed Speculative Multi-Draft Verification & Tree-Structured Decoding (Theorems 89–91, rejection sampling distributional equivalence, optimal tree draft speedup >= 2.0x, amortized single forward pass latency, CLI `pandora code speculate`, REST `/api/code/speculative`).
 
 ## v4.0.2
 

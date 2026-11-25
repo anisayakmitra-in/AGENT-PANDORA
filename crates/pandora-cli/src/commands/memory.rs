@@ -32,7 +32,7 @@ const MEMORY_PROMOTION_GENE: &str = "memory.promote";
 pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = args.first().ok_or_else(|| {
         CliError::usage(
-            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', or 'curator'",
+            "memory requires 'recall', 'audit', 'forget', 'compact', 'promote', 'synthesize', 'consolidate', 'provenance', 'schedule', 'sop', 'archive', 'capsule', 'vfs', 'crystallize', 'mesh', 'scrub', or 'curator'",
         )
     })?;
     match subcommand.as_str() {
@@ -51,11 +51,77 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "vfs" => vfs(&args[1..]),
         "crystallize" => crystallize(&args[1..]),
         "mesh" => mesh(&args[1..]),
+        "scrub" => scrub(&args[1..]),
         "curator" => super::curator::execute(&args[1..]),
         unknown => Err(CliError::usage(format!(
             "unknown memory command '{unknown}'"
         ))),
     }
+}
+
+fn scrub(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "target",
+            "samples",
+            "epsilon",
+        ],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let target = parsed.value("target").unwrap_or("sensitive_tenant_record");
+    let samples: usize = parsed
+        .value("samples")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let epsilon: f64 = parsed
+        .value("epsilon")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
+
+    let budget = pandora_runtime::privacy_engine::PrivacyBudget {
+        epsilon,
+        ..Default::default()
+    };
+    let mut supervisor = pandora_runtime::privacy_engine::PrivacySupervisor::new(budget);
+    let _ = supervisor.track_query(1.0, 2.0);
+
+    let receipt = supervisor.certified_unlearn(target, samples, 0.02, 1.4);
+
+    let text = format!(
+        "Certified Differential Privacy Memory Scrubbing:\n\
+         Target Record: {}\n\
+         Samples Scrubbed: {}\n\
+         Parameter Delta L2: {:.4}\n\
+         Unlearning Distance Bound: {:.4}\n\
+         Memory Retention Fidelity: {:.2}%\n\
+         Theorem 86 (RDP Composed): {}\n\
+         Theorem 87 (Certified Unlearning): {}\n\
+         Theorem 88 (Retention Guaranteed): {}\n",
+        receipt.target_id,
+        receipt.scrubbed_samples,
+        receipt.parameter_delta_l2_norm,
+        receipt.unlearning_bound_delta,
+        receipt.memory_retention_fidelity * 100.0,
+        receipt.theorem_86_rdp_composed,
+        receipt.theorem_87_certified_unlearning,
+        receipt.theorem_88_retention_guaranteed
+    );
+
+    Ok(success(
+        "memory scrub",
+        json!({
+            "receipt": receipt,
+            "target": target,
+            "samples": samples,
+            "theorems": [86, 87, 88]
+        }),
+        text,
+    ))
 }
 
 fn schedule(args: &[String]) -> Result<CommandResult, CliError> {

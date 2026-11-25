@@ -58,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', or 'gossip'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', 'gossip', 'secret-share', or 'mpc-eval'",
             ));
         }
     };
@@ -73,8 +73,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "bft" => bft(&args[1..]),
         "crdt" => crdt(&args[1..]),
         "gossip" => gossip(&args[1..]),
+        "secret-share" => secret_share(&args[1..]),
+        "mpc-eval" => mpc_eval(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval"
         ))),
     }
 }
@@ -938,6 +940,108 @@ fn gossip(args: &[String]) -> Result<CommandResult, CliError> {
             "unknown gossip action '{unknown}'. Available: simulate"
         ))),
     }
+}
+
+fn secret_share(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "secret",
+            "threshold",
+            "shares",
+        ],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let secret: u64 = parsed
+        .value("secret")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4242);
+    let threshold: usize = parsed
+        .value("threshold")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let shares_count: usize = parsed
+        .value("shares")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+
+    let engine = pandora_runtime::swarm_mpc::ShamirMpcEngine::default();
+    let coefs: Vec<u64> = (1..threshold)
+        .map(|i| (i as u64 * 777) % engine.prime)
+        .collect();
+    let shares = engine.split_secret(secret, threshold, shares_count, &coefs);
+    let recovered = engine
+        .reconstruct_secret(&shares[0..threshold])
+        .map_err(|e| CliError::execution(e, json!({})))?;
+
+    let t83 = engine.verify_theorem_83_privacy(threshold - 1, threshold);
+    let t84 =
+        engine.verify_theorem_84_byzantine_fault_tolerance(shares_count, (shares_count - 1) / 3);
+
+    let text = format!(
+        "Shamir (k, n)-Threshold Secret Sharing:\n  Secret: {secret}\n  Threshold (k): {threshold}\n  Total Shares (n): {shares_count}\n  Recovered: {recovered}\n  Theorem 83 Privacy Bound: {t83}\n  Theorem 84 Byzantine Fault Tolerance: {t84}"
+    );
+
+    Ok(success(
+        "swarm secret-share",
+        json!({
+            "secret": secret,
+            "threshold": threshold,
+            "shares_count": shares_count,
+            "shares": shares,
+            "recovered_secret": recovered,
+            "theorem_83_privacy": t83,
+            "theorem_84_bft": t84,
+            "theorems": [83, 84]
+        }),
+        text,
+    ))
+}
+
+fn mpc_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "x", "y"])?;
+    let _cfg = load_config(&parsed)?;
+
+    let x: u64 = parsed
+        .value("x")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1234);
+    let y: u64 = parsed
+        .value("y")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5678);
+
+    let engine = pandora_runtime::swarm_mpc::ShamirMpcEngine::default();
+    let triple = pandora_runtime::swarm_mpc::BeaverTriple {
+        a: 333,
+        b: 444,
+        c: ((333u128 * 444u128) % engine.prime as u128) as u64,
+    };
+
+    let result = engine.homomorphic_multiply(x, y, &triple);
+    let expected = ((x as u128 * y as u128) % engine.prime as u128) as u64;
+    let t85 = engine.verify_theorem_85_constant_round(x, y, &triple);
+
+    let text = format!(
+        "Homomorphic MPC Beaver Triple Evaluation:\n  Inputs: x={x}, y={y}\n  Result: {result}\n  Expected: {expected}\n  Theorem 85 Constant-Round Multiplication: {t85}"
+    );
+
+    Ok(success(
+        "swarm mpc-eval",
+        json!({
+            "x": x,
+            "y": y,
+            "result": result,
+            "expected": expected,
+            "theorem_85_constant_round": t85,
+            "theorems": [85]
+        }),
+        text,
+    ))
 }
 
 #[cfg(test)]

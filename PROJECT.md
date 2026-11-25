@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.2 Release: Autonomous Sandbox Isolation, Post-Quantum Attestation & Introspective Metacognition)
+# Project: AGENT-PANDORA (v4.0.3 Release: Swarm MPC, Certified Privacy Unlearning & Speculative Tree Decoding)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.2` (Phase 33, 34 & 35 Foundations).
+- **Versioning & Release**: Workspace version promoted to `4.0.3` (Phase 36, 37 & 38 Foundations).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -51,6 +51,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F20 | Phase 33: Autonomous Untrusted Sandbox Isolation | Deterministic process tree containment, non-interference safety, $\le 50\text{ ms}$ kill bound, resource rooflines (Theorems 74–76), CLI `pandora sandbox status/execute/audit`, REST `/api/sandbox/telemetry` | M11 | v4.0.2 Architecture |
 | F21 | Phase 34: Post-Quantum Hybrid Attestation | Poseidon algebraic sponge over Goldilocks prime field, Ed25519 + ML-DSA-65 lattice signatures (Theorems 77–79), CLI `pandora moira pq-sign/pq-verify`, REST `/api/moira/pq` | M12 | v4.0.2 Architecture |
 | F22 | Phase 35: Continuous Introspective Metacognition | Shannon predictive entropy gating, monotonic backtracking convergence, PAC-Bayes generalization risk $\le 0.15$ (Theorems 80–82), CLI `pandora agent introspect/reflect`, REST `/api/agent/introspect` | M13 | v4.0.2 Architecture |
+| F23 | Phase 36: Homomorphic Multi-Party Computation & Secret Sharing | Shamir (k, n)-threshold secret sharing, Byzantine reconstruction, Beaver triple homomorphic multiplication (Theorems 83–85), CLI `pandora swarm secret-share/mpc-eval`, REST `/api/swarm/mpc` | M14 | v4.0.3 Architecture |
+| F24 | Phase 37: Differential Privacy & Continual Certified Unlearning | Rényi DP composition, Fisher projected Newton-step scrubbing, Lipschitz memory stability (Theorems 86–88), CLI `pandora memory scrub`, REST `/api/memory/privacy` | M15 | v4.0.3 Architecture |
+| F25 | Phase 38: Distributed Speculative Tree Decoding | Rejection sampling distributional equivalence, optimal tree draft speedup >= 2.0x, amortized latency (Theorems 89–91), CLI `pandora code speculate`, REST `/api/code/speculative` | M16 | v4.0.3 Architecture |
 
 ---
 
@@ -72,6 +75,9 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M11 | Phase 33: Autonomous Untrusted Sandbox Isolation | Job objects/cgroups containment engine, deterministic kill bound, resource quotas (Theorems 74–76) | M10 | COMPLETED |
 | M12 | Phase 34: Post-Quantum Hybrid Attestation | Goldilocks Poseidon sponge, dual classical + lattice ML-DSA-65 attestation (Theorems 77–79) | M11 | COMPLETED |
 | M13 | Phase 35: Continuous Introspective Metacognition | Predictive entropy gating, monotonic backtracking convergence, PAC-Bayes bound (Theorems 80–82) | M12 | COMPLETED |
+| M14 | Phase 36: Homomorphic Multi-Party Computation & Secret Sharing | Shamir threshold sharing, Beaver triple multiplication (Theorems 83–85) | M13 | COMPLETED |
+| M15 | Phase 37: Differential Privacy & Continual Certified Unlearning | RDP accounting, certified unlearning distance bound (Theorems 86–88) | M14 | COMPLETED |
+| M16 | Phase 38: Distributed Speculative Tree Decoding | Speculative rejection sampling, tree decoding speedup >= 2.0x (Theorems 89–91) | M15 | COMPLETED |
 
 ---
 

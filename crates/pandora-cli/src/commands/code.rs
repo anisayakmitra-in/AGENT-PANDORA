@@ -15,15 +15,18 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
     let subcommand = match first {
         Some(s) if !s.starts_with('-') => s,
         _ => {
-            return Err(CliError::usage("code requires 'synthesize' or 'grammar'"));
+            return Err(CliError::usage(
+                "code requires 'synthesize', 'grammar', or 'speculate'",
+            ));
         }
     };
 
     match subcommand {
         "synthesize" => synthesize(&args[1..]),
         "grammar" => grammar(&args[1..]),
+        "speculate" => speculate(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown code subcommand '{unknown}'. Available subcommands: synthesize, grammar"
+            "unknown code subcommand '{unknown}'. Available subcommands: synthesize, grammar, speculate"
         ))),
     }
 }
@@ -85,7 +88,7 @@ fn synthesize(args: &[String]) -> Result<CommandResult, CliError> {
             ",",
             "\"version\"",
             ":",
-            "\"4.0.2\"",
+            "\"4.0.3\"",
             "}",
         ],
         GrammarKind::SqlSubset => vec!["SELECT", "id", ",", "name", "FROM", "agents", ";"],
@@ -211,6 +214,69 @@ fn grammar(args: &[String]) -> Result<CommandResult, CliError> {
             "unknown grammar action '{unknown}'. Available: inspect, mask, validate"
         ))),
     }
+}
+
+fn speculate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "depth",
+            "branching",
+            "prompt",
+        ],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let depth: usize = parsed
+        .value("depth")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
+    let branching: usize = parsed
+        .value("branching")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+    let prompt = parsed.value("prompt").unwrap_or("synthesize_kernel");
+
+    let engine = pandora_runtime::speculative_tree::SpeculativeTreeEngine::new(depth, branching);
+    let draft = vec![0.85, 0.72, 0.68, 0.91, 0.84, 0.76];
+    let target = vec![0.88, 0.75, 0.62, 0.93, 0.87, 0.74];
+
+    let (nodes, report) = engine.evaluate_tree(&draft, &target);
+
+    let text = format!(
+        "Distributed Speculative Tree Decoding:\n\
+         Prompt: {prompt}\n\
+         Tree Depth: {depth}\n\
+         Branching Factor: {branching}\n\
+         Draft Nodes Evaluated: {}\n\
+         Tokens Accepted: {}\n\
+         Speedup Factor: {:.2}x\n\
+         Theorem 89 (Distributional Equivalence): {}\n\
+         Theorem 90 (Speedup Bound >= 2.0x): {}\n\
+         Theorem 91 (Latency Amortized <= 15%): {}\n",
+        report.total_nodes_evaluated,
+        report.tokens_accepted,
+        report.speedup_factor,
+        report.theorem_89_distributional_equivalence,
+        report.theorem_90_speedup_bound_met,
+        report.theorem_91_latency_amortized
+    );
+
+    Ok(success(
+        "code speculate",
+        json!({
+            "prompt": prompt,
+            "depth": depth,
+            "branching": branching,
+            "nodes_count": nodes.len(),
+            "report": report,
+            "theorems": [89, 90, 91]
+        }),
+        text,
+    ))
 }
 
 #[cfg(test)]

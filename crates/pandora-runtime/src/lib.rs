@@ -89,6 +89,7 @@ pub mod permit_store;
 pub mod pexer_ipc;
 pub mod pq_attestation;
 pub mod privacy_budget;
+pub mod privacy_engine;
 pub mod prompt_engine;
 pub mod prp_engine;
 mod receipt_id;
@@ -114,6 +115,7 @@ pub mod society_engine;
 pub mod spectral_topology;
 pub mod speculative_decoding;
 pub mod speculative_drafting;
+pub mod speculative_tree;
 pub mod storage_lifecycle;
 pub mod strategies;
 pub mod subagent;
@@ -121,6 +123,7 @@ pub mod subagent_store;
 pub mod swarm_bft;
 pub mod swarm_crdt;
 pub mod swarm_mesh;
+pub mod swarm_mpc;
 pub mod swarm_pipeline;
 pub mod synthetic_canvas;
 pub mod tool_engine;
@@ -430,6 +433,7 @@ pub use privacy_budget::{
     PrivacyError, PrivacyExpenditure, QueryReservation, RDP_ORDER_KEY_SCALE, RdpBudget, RdpOrder,
     STANDARD_RDP_ORDERS, key_to_order, order_to_key,
 };
+pub use privacy_engine::{PrivacyBudget, PrivacySupervisor, ScrubbingReceipt};
 pub use prompt_engine::{
     PresetKind, PromptEngine, PromptError, PromptPreset, StorageTier, validate_preset_name,
 };
@@ -485,6 +489,7 @@ pub use speculative_drafting::{
     SpeculativeDraftingEngine, SpeculativeError, UnifiedPatch, create_unified_diff,
     extract_ast_nodes, mask_comments_and_strings,
 };
+pub use speculative_tree::{SpeculativeAuditReport, SpeculativeTreeEngine, SpeculativeTreeNode};
 pub use storage_lifecycle::{
     MAX_STORAGE_LIFECYCLE_LIST, MAX_STORAGE_LIFECYCLE_RECEIPTS, StorageLifecycleReceipt,
     StorageLifecycleRecordResult, StorageLifecycleStore, StorageLifecycleStoreError,
@@ -508,6 +513,7 @@ pub use swarm_mesh::{
     BftConsensus, BloomFilter, ConsensusDecision, GossipMessage, GossipNode, Proposal, SwarmError,
     TaskDag, TaskNode, VectorClock, Vote,
 };
+pub use swarm_mpc::{BeaverTriple, MpcAuditReport, SecretShare, ShamirMpcEngine, mod_inv, mod_pow};
 pub use synthetic_canvas::{PNG_SIGNATURE, SyntheticCanvas, adler32, crc32};
 pub use tool_engine::{
     ToolContext, ToolDefinition, ToolEngine, ToolError, ToolInvocation, ToolPlan, ToolProfile,
