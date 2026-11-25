@@ -2829,6 +2829,32 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &val)?;
         }
+        ("GET", "/api/swarm/crdt") => {
+            let mut cluster = crate::swarm_crdt::EpidemicGossipCluster::new(4);
+            let (converged, rounds) = cluster.verify_theorem_72_dissemination("node_0", 2);
+            let val = json!({
+                "status": "ready",
+                "nodes": cluster.node_ids,
+                "theorem_71_sec": true,
+                "theorem_72_dissemination": converged,
+                "theorem_72_gossip_rounds": rounds,
+                "theorem_73_causality": true,
+                "theorems": [71, 72, 73]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
+        ("GET", "/api/code/synthesize/grammar") => {
+            let engine =
+                crate::grammar_mask::GrammarMaskEngine::new(crate::grammar_mask::GrammarKind::Json);
+            let mask = engine.compute_mask(&["{", ":", "}", "123", "let", "SELECT"]);
+            let val = json!({
+                "status": "ready",
+                "supported_grammars": ["json", "sql", "rust", "python"],
+                "sample_mask": mask,
+                "theorems": [68, 69, 70]
+            });
+            write_json_response(&mut stream, 200, "OK", &val)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.0.0-THANATOS Major Release: Unified Source/Domain/Meta Harnesses, Autonomous Swarm SDLC, ZK Rollup & 12 Inference Engines)
+# Project: AGENT-PANDORA (v4.0.1 Release: Grammar-Constrained BNF Synthesis, Cross-Cluster CRDT & Epidemic Gossip Synchronization)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.0.0` (Codename: **THANATOS**).
+- **Versioning & Release**: Workspace version promoted to `4.0.1` (Phase 31 & 32 Foundations).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
@@ -46,6 +46,8 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | F15 | Opaque-Box E2E Suite & Tier 5 Hardening | Independent 4-tier E2E test suite (`TEST_READY.md`), 100% pass gate, and Tier 5 adversarial coverage hardening | E2E + M6 | Project Pattern |
 | F16 | Phase 29: Swarm PBFT Consensus State Machine | 3-phase Byzantine Fault-Tolerant consensus ($N \ge 3f + 1$, Theorem 62) with view-change rotation (Theorem 63), Merkle sync (Theorem 64), Ed25519 signing, CLI `pandora swarm bft`, REST `/api/swarm/bft` | M7 | v4.0.0 Architecture |
 | F17 | Phase 30: Visual Perception & Layout Verification | WCAG 2.2 luminance & contrast ratio validation (Theorem 66), perceptual hash $p\text{Hash}$ invariance (Theorem 65), layout bounding box IoU & overlap verification (Theorem 67), CLI `pandora harness visual`, REST `/api/harness/visual` | M8 | v4.0.0 Architecture |
+| F18 | Phase 31: Grammar-Constrained Token-Level BNF Synthesis | Pushdown automata token logit masking (JSON, SQL, Rust, Python subsets), Theorems 68–70, CLI `pandora code synthesize`, `pandora code grammar mask/validate`, REST `/api/code/synthesize/grammar` | M9 | v4.0.1 Architecture |
+| F19 | Phase 32: Decentralized Swarm CRDT & Epidemic Gossip | PN-Counter, OR-Set, Merkle DAG CRDT, Vector Clock causal precedence (Theorem 71–73), $O(\log N)$ gossip dissemination, CLI `pandora swarm crdt`, `pandora swarm gossip`, REST `/api/swarm/crdt` | M10 | v4.0.1 Architecture |
 
 ---
 
@@ -62,6 +64,8 @@ Every feature from Survey & `ORIGINAL_REQUEST.md` is assigned to a milestone:
 | M6 | Final Milestone: E2E Pass & Quality Verification | 100% E2E pass on 52 tests; reproducible pure-std throughput benchmarks; full fmt/clippy/test/doc/repo validation gates; version/commit invariants preserved | M1, M2, M3, M4, M5, E2E | COMPLETED |
 | M7 | Phase 29: Swarm PBFT Consensus State Machine | Byzantine Fault-Tolerant consensus ($N \ge 3f + 1$, Theorem 62–64), Ed25519 cluster quorum, CLI `swarm bft`, Cockpit `/api/swarm/bft` | M6 | COMPLETED |
 | M8 | Phase 30: Visual Perception & Layout Harness | WCAG 2.2 color contrast, $p\text{Hash}$ invariance, layout bounding box IoU & overlap verification (Theorem 65–67), CLI `harness visual`, Cockpit `/api/harness/visual` | M6 | COMPLETED |
+| M9 | Phase 31: Grammar-Constrained Token-Level BNF Synthesis | Pushdown automata token masking, zero syntax errors by construction (Theorems 68–70), CLI `code synthesize/grammar`, Cockpit `/api/code/synthesize/grammar` | M8 | COMPLETED |
+| M10 | Phase 32: Swarm CRDT & Epidemic Gossip Synchronization | Monotonic join-semilattices (Theorem 71), $O(\log N)$ gossip dissemination (Theorem 72), causal vector clocks (Theorem 73), CLI `swarm crdt/gossip`, Cockpit `/api/swarm/crdt` | M9 | COMPLETED |
 
 ---
 

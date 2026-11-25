@@ -46,6 +46,7 @@ pub mod fleet;
 pub mod gateway;
 pub mod gepa;
 pub mod github_client;
+pub mod grammar_mask;
 pub mod graph_intelligence;
 pub mod hardware_autopilot;
 pub mod hardware_batch_dispatch;
@@ -116,6 +117,7 @@ pub mod strategies;
 pub mod subagent;
 pub mod subagent_store;
 pub mod swarm_bft;
+pub mod swarm_crdt;
 pub mod swarm_mesh;
 pub mod swarm_pipeline;
 pub mod synthetic_canvas;
@@ -302,6 +304,9 @@ pub use gepa::{
     GepaReflectiveMutator,
 };
 pub use github_client::{GitHubPackageClient, GitHubPackageDownload, GitHubPackageError};
+pub use grammar_mask::{
+    GrammarKind, GrammarMaskEngine, GrammarMaskResult, GrammarSynthesisReport, PushdownFrame,
+};
 pub use graph_intelligence::{
     GraphEdge, GraphError, GraphInput, GraphIntelligenceEngine, GraphKind, GraphNode,
     GraphNodeKind, GraphScope, GraphSnapshot, GraphStore, GraphStoreError, MAX_GRAPH_EDGES,
@@ -485,6 +490,10 @@ pub use subagent::{
 pub use subagent_store::{
     ClaimedSubagent, SubagentPreparation, SubagentRecord, SubagentScope, SubagentStore,
     SubagentStoreError,
+};
+pub use swarm_crdt::{
+    CausalOrdering, EpidemicGossipCluster, MerkleDagCrdt, MerkleDagNode, OrSet, PnCounter,
+    VectorClock as CrdtVectorClock,
 };
 pub use swarm_mesh::{
     BftConsensus, BloomFilter, ConsensusDecision, GossipMessage, GossipNode, Proposal, SwarmError,

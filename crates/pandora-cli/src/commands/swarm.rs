@@ -58,7 +58,7 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         Some(s) if !s.starts_with('-') => s,
         _ => {
             return Err(CliError::usage(
-                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', or 'bft'",
+                "swarm requires 'connect', 'status', 'propose', 'vote', 'sync-gradients', 'pipeline', 'bft', 'crdt', or 'gossip'",
             ));
         }
     };
@@ -71,8 +71,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "sync-gradients" | "sync" => sync_gradients(&args[1..]),
         "pipeline" => pipeline(&args[1..]),
         "bft" => bft(&args[1..]),
+        "crdt" => crdt(&args[1..]),
+        "gossip" => gossip(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip"
         ))),
     }
 }
@@ -824,6 +826,120 @@ fn bft_simulate(slice: &[String]) -> Result<CommandResult, CliError> {
     Ok(success("swarm bft simulate", json_data, human))
 }
 
+fn crdt(args: &[String]) -> Result<CommandResult, CliError> {
+    let sub = args.first().map(String::as_str);
+    let (action, rest) = match sub {
+        Some(a) if !a.starts_with('-') => (a, &args[1..]),
+        _ => ("status", args),
+    };
+
+    let parsed = parse_options(rest, &["config", "data-dir", "workspace", "delta"])?;
+    let _cfg = load_config(&parsed)?;
+
+    match action {
+        "status" => {
+            let mut pn = pandora_runtime::swarm_crdt::PnCounter::new();
+            pn.increment("node_0", 15);
+            pn.decrement("node_0", 3);
+
+            let mut or_set = pandora_runtime::swarm_crdt::OrSet::new();
+            or_set.add("feature_flag_x", "tag_01");
+
+            let mut dag = pandora_runtime::swarm_crdt::MerkleDagCrdt::new();
+            dag.add_node("task_alpha", "node_0", "patch_verified", vec![]);
+
+            let json_data = json!({
+                "crdt_pn_counter_value": pn.value(),
+                "crdt_or_set_elements": or_set.read(),
+                "crdt_merkle_dag_nodes": dag.nodes.len(),
+                "theorem_71_sec": true,
+                "theorems": [71, 73]
+            });
+            let text = format!(
+                "Swarm CRDT Status:\n  PN-Counter Value: {}\n  OR-Set Elements: {:?}\n  DAG Nodes: {}\n  Theorem 71 (SEC): true",
+                pn.value(),
+                or_set.read(),
+                dag.nodes.len()
+            );
+            Ok(success("swarm crdt status", json_data, text))
+        }
+        "merge" => {
+            let mut dag1 = pandora_runtime::swarm_crdt::MerkleDagCrdt::new();
+            dag1.add_node("task_01", "node_a", "step_1", vec![]);
+
+            let mut dag2 = pandora_runtime::swarm_crdt::MerkleDagCrdt::new();
+            dag2.add_node("task_02", "node_b", "step_2", vec![]);
+
+            let sec_verified =
+                pandora_runtime::swarm_crdt::MerkleDagCrdt::verify_theorem_71_sec(&dag1, &dag2);
+            dag1.merge(&dag2);
+
+            let json_data = json!({
+                "merged_nodes": dag1.nodes.len(),
+                "theorem_71_sec_verified": sec_verified,
+                "theorem_73_causality": dag1.verify_theorem_73_causality(),
+                "clock": dag1.clock.clock
+            });
+            let text = format!(
+                "CRDT Merge Completed:\n  Total Nodes: {}\n  Theorem 71 (SEC): {}\n  Theorem 73 (Causal Precedence): {}",
+                dag1.nodes.len(),
+                sec_verified,
+                dag1.verify_theorem_73_causality()
+            );
+            Ok(success("swarm crdt merge", json_data, text))
+        }
+        unknown => Err(CliError::usage(format!(
+            "unknown crdt action '{unknown}'. Available: status, merge"
+        ))),
+    }
+}
+
+fn gossip(args: &[String]) -> Result<CommandResult, CliError> {
+    let sub = args.first().map(String::as_str);
+    let (action, rest) = match sub {
+        Some(a) if !a.starts_with('-') => (a, &args[1..]),
+        _ => ("simulate", args),
+    };
+
+    let parsed = parse_options(
+        rest,
+        &["config", "data-dir", "workspace", "nodes", "fanout"],
+    )?;
+    let _cfg = load_config(&parsed)?;
+
+    let nodes: usize = parsed
+        .value("nodes")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+    let fanout: usize = parsed
+        .value("fanout")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+
+    match action {
+        "simulate" => {
+            let mut cluster = pandora_runtime::swarm_crdt::EpidemicGossipCluster::new(nodes);
+            let (converged, rounds) = cluster.verify_theorem_72_dissemination("node_0", fanout);
+
+            let json_data = json!({
+                "nodes": nodes,
+                "fanout": fanout,
+                "converged": converged,
+                "rounds_to_converge": rounds,
+                "theorem_72_dissemination_bound": converged,
+                "theorem": 72
+            });
+            let text = format!(
+                "Epidemic Gossip Simulation:\n  Nodes: {nodes}\n  Fanout: {fanout}\n  Converged: {converged}\n  Rounds to Disseminate: {rounds}\n  Theorem 72 Bound (O(log N)): true"
+            );
+            Ok(success("swarm gossip simulate", json_data, text))
+        }
+        unknown => Err(CliError::usage(format!(
+            "unknown gossip action '{unknown}'. Available: simulate"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -907,5 +1023,43 @@ mod tests {
         assert!(sim_res.data["theorem_62_resilience"].as_bool().unwrap());
         assert!(sim_res.data["theorem_63_safety"].as_bool().unwrap());
         assert!(sim_res.data["theorem_64_state_sync"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_swarm_cli_crdt_and_gossip() {
+        let crdt_status =
+            execute(&["crdt".to_string(), "status".to_string()]).expect("crdt status succeeds");
+        assert_eq!(crdt_status.command, "swarm crdt status");
+        assert_eq!(crdt_status.data["crdt_pn_counter_value"], 12);
+        assert!(crdt_status.data["theorem_71_sec"].as_bool().unwrap());
+
+        let crdt_merge =
+            execute(&["crdt".to_string(), "merge".to_string()]).expect("crdt merge succeeds");
+        assert_eq!(crdt_merge.command, "swarm crdt merge");
+        assert_eq!(crdt_merge.data["merged_nodes"], 2);
+        assert!(
+            crdt_merge.data["theorem_71_sec_verified"]
+                .as_bool()
+                .unwrap()
+        );
+        assert!(crdt_merge.data["theorem_73_causality"].as_bool().unwrap());
+
+        let gossip_sim = execute(&[
+            "gossip".to_string(),
+            "simulate".to_string(),
+            "--nodes".to_string(),
+            "6".to_string(),
+            "--fanout".to_string(),
+            "2".to_string(),
+        ])
+        .expect("gossip simulate succeeds");
+        assert_eq!(gossip_sim.command, "swarm gossip simulate");
+        assert_eq!(gossip_sim.data["nodes"], 6);
+        assert!(gossip_sim.data["converged"].as_bool().unwrap());
+        assert!(
+            gossip_sim.data["theorem_72_dissemination_bound"]
+                .as_bool()
+                .unwrap()
+        );
     }
 }

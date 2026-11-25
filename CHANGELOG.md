@@ -1,5 +1,26 @@
 # Changelog
 
+## v4.0.1
+
+### Grammar-Constrained Token-Level BNF Synthesis Engine, Decentralized Cross-Cluster Swarm CRDT & Epidemic Gossip Synchronization
+- **Phase 31: Grammar-Constrained Token-Level BNF / Pushdown Automata Synthesis Engine (crates/pandora-runtime/src/grammar_mask.rs, crates/pandora-cli/src/commands/code.rs)**:
+  - Implemented neural-symbolic token masking engine over Pushdown Automata (PDA) state transitions across JSON, SQL subset, Rust subset, and Python subset grammars.
+  - Enforced Theorem 68 (Grammar-Constrained Decoding Soundness): $\Pr[\text{ParseError}] = 0$ for terminal states.
+  - Enforced Theorem 69 (Context-Free State Transition Invariance): Monoid closure and stack boundedness under valid token streams.
+  - Enforced Theorem 70 (Adaptive Prefix Pruning Complexity): Worst-case mask computation bounded by $O(k \cdot |\Sigma|)$ within inference roofline.
+  - Added CLI subcommands `pandora code synthesize`, `pandora code grammar mask`, and `pandora code grammar validate`.
+  - Added REST endpoint `GET /api/code/synthesize/grammar` to CockpitWebServer.
+- **Phase 32: Decentralized Cross-Cluster Swarm CRDT & Epidemic Gossip Synchronization (crates/pandora-runtime/src/swarm_crdt.rs, crates/pandora-cli/src/commands/swarm.rs)**:
+  - Implemented state-based CRDTs: PnCounter (positive-negative counter), OrSet (observed-remove set with unique add/remove tags), and MerkleDagCrdt (distributed causal task DAG).
+  - Enforced Theorem 71 (Strong Eventual Consistency of Monotonic Join-Semilattices): Guaranteed convergence $A \sqcup B = B \sqcup A$ and idempotency $A \sqcup A = A$ across network splits.
+  - Enforced Theorem 72 (Epidemic Gossip Dissemination Latency Bounds): Bounded gossip propagation across $N$ nodes in $O(\log N)$ rounds with high probability.
+  - Enforced Theorem 73 (Causal Precedence Preservation via Vector Clocks): Strict vector clock ordering $V(e_1) < V(e_2) \iff e_1 \prec e_2$.
+  - Added CLI subcommands `pandora swarm crdt status`, `pandora swarm crdt merge`, and `pandora swarm gossip simulate`.
+  - Added REST endpoint `GET /api/swarm/crdt` to CockpitWebServer.
+- **Platform Invariants**:
+  - Preserved `#![forbid(unsafe_code)]` strictly across all 7 workspace crates.
+  - TypeScript SDK (`npm/pandora-cli`) synchronized and built under `v4.0.1`.
+
 ## v4.0.0
 
 ### THANATOS: Unified Source, Domain & Meta Harness Tier Orchestration, Genomic PAC-Bayes Evolutionary Adaptation, Autonomous Swarm Coding SDLC & 12 Inference Engines
