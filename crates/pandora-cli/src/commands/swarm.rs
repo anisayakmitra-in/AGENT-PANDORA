@@ -103,8 +103,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "superfluid-weight-audit" => superfluid_weight_audit(&args[1..]),
         "betti-numbers" => betti_numbers(&args[1..]),
         "spectral-cheeger-audit" => spectral_cheeger_audit(&args[1..]),
+        "kan-extension" => kan_extension(&args[1..]),
+        "adjoint-sync" => adjoint_sync(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit, betti-numbers, spectral-cheeger-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit, betti-numbers, spectral-cheeger-audit, kan-extension, adjoint-sync"
         ))),
     }
 }
@@ -2189,6 +2191,100 @@ fn spectral_cheeger_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "spectral_report": rep,
             "theorems": [220]
+        }),
+        text,
+    ))
+}
+
+fn kan_extension(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "source-dim",
+            "target-dim",
+        ],
+    )?;
+
+    let s_dim = parsed
+        .value("source-dim")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+    let t_dim = parsed
+        .value("target-dim")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+
+    let engine = pandora_runtime::categorical_memory::CategoricalMemoryEngine::default();
+    let rep = engine.evaluate_kan_extension(s_dim, t_dim);
+
+    let text = format!(
+        "Left Kan Extension Memory Alignment:\n  Source Category Dim: {}\n  Target Category Dim: {}\n  Universal Factorization Error: {:.6}\n  Commutes: {}\n  Theorems: 227 (Left Kan Extension Alignment)",
+        rep.source_category_dim,
+        rep.target_category_dim,
+        rep.universal_factorization_error,
+        rep.natural_transformation_commutes
+    );
+
+    Ok(success(
+        "swarm kan-extension",
+        json!({
+            "kan_report": rep,
+            "theorems": [227]
+        }),
+        text,
+    ))
+}
+
+fn adjoint_sync(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "episodic",
+            "semantic",
+            "depth",
+        ],
+    )?;
+
+    let episodic = parsed
+        .value("episodic")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(32);
+    let semantic = parsed
+        .value("semantic")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+    let depth = parsed
+        .value("depth")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::categorical_memory::CategoricalMemoryEngine::default();
+    let adj = engine.audit_adjoint_sync(episodic, semantic);
+    let mon = engine.verify_monoidal_coherence(depth);
+
+    let text = format!(
+        "Adjoint Epistemic Sync & Monoidal Coherence:\n  Episodic Events: {}\n  Semantic Concepts: {}\n  Adjunction Bijection Verified: {}\n  Monoidal Tensor Depth: {}\n  Mac Lane Coherence Certified: {}\n  Theorems: 228 (Adjoint Sync), 229 (Monoidal Coherence)",
+        adj.episodic_events_count,
+        adj.semantic_concepts_count,
+        adj.adjunction_bijection_verified,
+        mon.tensor_depth,
+        mon.maclane_coherence_certified
+    );
+
+    Ok(success(
+        "swarm adjoint-sync",
+        json!({
+            "adjoint_report": adj,
+            "monoidal_report": mon,
+            "theorems": [228, 229]
         }),
         text,
     ))

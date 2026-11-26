@@ -132,6 +132,11 @@ impl CognitiveSubsystem {
         crate::sheaf_context::SheafContextEngine::default()
     }
 
+    /// Access the Conformal Risk Control & Finite-Sample PAC Bounds engine (Theorems 233–235).
+    pub fn conformal_risk(&self) -> crate::conformal_risk::ConformalRiskEngine {
+        crate::conformal_risk::ConformalRiskEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -153,7 +158,7 @@ impl CognitiveSubsystem {
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
                 134, 135, 136, 143, 144, 145, 152, 153, 154, 161, 162, 163, 170, 171, 172, 179,
                 180, 181, 188, 189, 190, 197, 198, 199, 206, 207, 208, 215, 216, 217, 224, 225,
-                226,
+                226, 233, 234, 235,
             ],
         }
     }

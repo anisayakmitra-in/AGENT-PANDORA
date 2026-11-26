@@ -322,15 +322,15 @@ fn test_cockpit_web_phase79_80_81_routes_and_centennial_suite() {
     // 4. Cockpit Overview & Centennial Suite (217 Theorems)
     let (code, val) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(val["architecture_version"], "4.1.8");
+    assert_eq!(val["architecture_version"], "4.1.9");
     assert_eq!(val["codename"], "THANATOS");
-    assert_eq!(val["total_theorems_enforced"], 226);
+    assert_eq!(val["total_theorems_enforced"], 235);
     assert!(
         val["formal_verification"]["all_proofs_valid"]
             .as_bool()
             .unwrap()
     );
-    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 226);
+    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 235);
 
     // Shutdown
     shutdown_handle.store(true, Ordering::SeqCst);

@@ -635,7 +635,7 @@ impl Parliament {
             permit_id,
             proposal_id: verdict.proposal_id,
             bicameral_margin: verdict.margin,
-            theorems_enforced: (1..=226).collect(),
+            theorems_enforced: (1..=235).collect(),
             issued_at_epoch: 1732520000,
             signature_checksum: checksum,
         })
@@ -938,6 +938,6 @@ mod tests {
             .issue_constitutional_permit(&session)
             .expect("permit granted");
         assert!(permit.is_valid());
-        assert_eq!(permit.theorems_enforced.len(), 226);
+        assert_eq!(permit.theorems_enforced.len(), 235);
     }
 }

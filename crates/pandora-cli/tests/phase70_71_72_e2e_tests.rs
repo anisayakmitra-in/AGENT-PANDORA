@@ -302,8 +302,8 @@ fn test_cockpit_web_phase70_71_72_routes_and_centennial_suite() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.8");
-    assert_eq!(overview["total_theorems_enforced"], 226);
+    assert_eq!(overview["architecture_version"], "4.1.9");
+    assert_eq!(overview["total_theorems_enforced"], 235);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

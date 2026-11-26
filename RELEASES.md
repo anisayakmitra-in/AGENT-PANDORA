@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, `v4.1.7`, and `v4.1.8`. The active release identity
-is `v4.1.8`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, `v4.1.7`, `v4.1.8`, and `v4.1.9`. The active release identity
+is `v4.1.9`.
 
 ## Source-bound release scope
 
@@ -33,6 +33,15 @@ Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
 
+
+## v4.1.9
+
+This release delivers Phases 85–87 of the architectural roadmap under codename **THANATOS**:
+- **Phase 85: Categorical Memory & Kan Extension Alignment** (`categorical_memory.rs`, Theorems 227–229, universal Left Kan Extension factorization $\text{Lan}_K F: \mathcal{D} \to \mathcal{M}$ with minimal lossy compression across agent ontology charts, adjoint functor epistemic synchronization $F \dashv G$ between episodic observation and semantic belief, and symmetric monoidal tensor coherence $(\mathcal{M}, \otimes, I)$ satisfying Mac Lane pentagon and hexagon commutators, CLI `pandora swarm kan-extension|adjoint-sync`, REST `/api/swarm/categorical-memory`).
+- **Phase 86: Game-Theoretic Mechanism Design & Core Equivalence** (`game_theoretic_core.rs`, Theorems 230–232, Vickrey-Clarke-Groves strategy-proof dominant truthfulness under Clarke pivot payments $p_i(v)$, unique Aumann-Shapley axiomatic cost attribution $\phi_i(v)$ satisfying efficiency, symmetry, dummy, and additivity, and supermodular coalition core non-emptiness guaranteeing defection-proof stigmergic stability, CLI `pandora crypto vcg-auction-audit|shapley-core-eval`, REST `/api/crypto/game-theoretic-core`).
+- **Phase 87: Conformal Risk Control & Finite-Sample PAC Bounds** (`conformal_risk.rs`, Theorems 233–235, distribution-free exact split conformal prediction coverage $1 - \alpha \le \Pr[Y \in C(X)] \le 1 - \alpha + \frac{1}{n+1}$, weighted non-exchangeable covariate shift correction via Radon-Nikodym derivative $w(x)$, and finite-sample anytime-valid PAC-Bayes generalization bound with time-uniform martingale risk guarantee, CLI `pandora cognitive conformal-coverage|pac-risk-audit`, REST `/api/cognitive/conformal-risk`).
+- **Tripartite Governance & Centennial Suite**: Expanded constitutional permits to `(1..=235)`, updated Parliament assertions to 235 theorems, and machine-checked Lean 4 & Coq formal proofs for Theorems 227, 230, 233.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/categorical-memory`, `/api/crypto/game-theoretic-core`, `/api/cognitive/conformal-risk`, and updated `/api/cockpit/overview` (`architecture_version: "4.1.9"`, `codename: "THANATOS"`, `total_theorems_enforced: 235`).
 
 ## v4.1.8
 

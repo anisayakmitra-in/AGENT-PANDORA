@@ -14,7 +14,7 @@ Every tool invocation, filesystem edit, process execution, WebAssembly Gene call
 User / TUI / CLI  ──►  ExecutionController  ──►  Shadow Council  ──►  Parliament  ──►  ReferenceMonitor  ──►  EffectExecutor  ──►  Cryptographic Receipt
 ```
 
-> **Status**: The active release identity is `4.1.8` (Codename: **THANATOS**). Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
+> **Status**: The active release identity is `4.1.9` (Codename: **THANATOS**). Releases follow strict semantic versioning, Ed25519 device trust, and verifiable execution receipts.
 
 ---
 

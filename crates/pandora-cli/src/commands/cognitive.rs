@@ -49,8 +49,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "natural-gradient-eval" => natural_gradient_eval(&args[1..]),
         "sheaf-gluing-check" => sheaf_gluing_check(&args[1..]),
         "cohomology-obstruction" => cohomology_obstruction(&args[1..]),
+        "conformal-coverage" => conformal_coverage(&args[1..]),
+        "pac-risk-audit" => pac_risk_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval', 'sheaf-gluing-check', 'cohomology-obstruction'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval', 'sheaf-gluing-check', 'cohomology-obstruction', 'conformal-coverage', 'pac-risk-audit'"
         ))),
     }
 }
@@ -1396,6 +1398,106 @@ fn cohomology_obstruction(args: &[String]) -> Result<CommandResult, CliError> {
             "obstruction": obs,
             "repair": rep,
             "theorems": [225, 226]
+        }),
+        display,
+    ))
+}
+
+fn conformal_coverage(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "samples",
+            "alpha",
+            "density-ratio",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let samples = parsed
+        .value("samples")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+    let alpha = parsed
+        .value("alpha")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.10);
+    let density_ratio = parsed
+        .value("density-ratio")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.5);
+
+    let engine = pandora_runtime::conformal_risk::ConformalRiskEngine::default();
+    let cov = engine.evaluate_conformal_coverage(samples, alpha);
+    let shift = engine.evaluate_covariate_shift(density_ratio, alpha);
+
+    let display = format!(
+        "Conformal Risk Coverage & Shift Adaptation:\n\
+         Calibration Samples: {}\n\
+         Nominal Miscoverage Alpha: {:.2}\n\
+         Empirical Coverage: {:.4}\n\
+         Prediction Interval Radius: {:.4}\n\
+         Shift-Corrected Target Valid: {}\n\
+         Theorems: 233 (Exact Conformal Coverage), 234 (Shift-Corrected Conformal)",
+        cov.calibration_samples_count,
+        cov.nominal_miscoverage_alpha,
+        cov.empirical_coverage,
+        cov.prediction_interval_radius,
+        shift.target_coverage_valid
+    );
+
+    Ok(success(
+        "cognitive conformal-coverage",
+        json!({
+            "conformal_report": cov,
+            "shift_report": shift,
+            "theorems": [233, 234]
+        }),
+        display,
+    ))
+}
+
+fn pac_risk_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["tau", "kl", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let tau = parsed
+        .value("tau")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(64);
+    let kl = parsed
+        .value("kl")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.50);
+
+    let engine = pandora_runtime::conformal_risk::ConformalRiskEngine::default();
+    let rep = engine.audit_pac_bayes_risk(tau, kl);
+
+    let display = format!(
+        "Anytime-Valid PAC-Bayes Risk Generalization Bound:\n\
+         Sequential Stopping Time Tau: {}\n\
+         KL Divergence Posterior-Prior: {:.4}\n\
+         Empirical Risk Hat: {:.4}\n\
+         Anytime Generalization Bound: {:.4}\n\
+         Martingale Risk Certified: {}\n\
+         Theorems: 235 (Anytime-Valid PAC-Bayes Generalization Bound)",
+        rep.sequential_stopping_time_tau,
+        rep.kl_divergence_posterior_prior,
+        rep.empirical_risk_hat,
+        rep.anytime_generalization_bound,
+        rep.martingale_risk_certified
+    );
+
+    Ok(success(
+        "cognitive pac-risk-audit",
+        json!({
+            "pac_bayes_report": rep,
+            "theorems": [235]
         }),
         display,
     ))

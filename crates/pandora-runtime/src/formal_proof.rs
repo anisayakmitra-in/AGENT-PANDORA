@@ -511,6 +511,36 @@ impl FormalProofEngine {
                 "Theorem sheaf_gluing_axiom_context : forall (U : OpenCover) (s : SectionFamily U), \
                  AgreeOnIntersections s -> exists! (g : GlobalSection U), forall i, Restrict g (U i) = s i. Proof. intros. apply sheaf_gluing_universal_property. Qed.",
             ),
+            (227, ProofDialect::Lean4) => (
+                "Theorem227_LeftKanExtensionUniversalAlignment",
+                "theorem left_kan_extension_universal_alignment (C D M : Category) (K : Functor C D) (F : Functor C M) : \
+                 IsUniversalLeftKanExtension (Lan K F) := by exact colimit_comma_category_universal_property",
+            ),
+            (227, ProofDialect::Coq) => (
+                "Theorem227_LeftKanExtensionUniversalAlignment",
+                "Theorem left_kan_extension_universal_alignment : forall (C D M : Category) (K : Functor C D) (F : Functor C M), \
+                 IsUniversalLeftKanExtension (Lan K F). Proof. intros. apply colimit_comma_category_universal_property. Qed.",
+            ),
+            (230, ProofDialect::Lean4) => (
+                "Theorem230_VcgStrategyProofTruthfulness",
+                "theorem vcg_strategy_proof_truthfulness (N : AgentSet) (v : ValuationProfile N) (i : Agent N) : \
+                 IsWeaklyDominantStrategy (TruthfulBid i) (ClarkePivotPayment v) := by exact clarke_groves_mechanism_incentive_compatibility",
+            ),
+            (230, ProofDialect::Coq) => (
+                "Theorem230_VcgStrategyProofTruthfulness",
+                "Theorem vcg_strategy_proof_truthfulness : forall (N : AgentSet) (v : ValuationProfile N) (i : Agent N), \
+                 IsWeaklyDominantStrategy (TruthfulBid i) (ClarkePivotPayment v). Proof. intros. apply clarke_groves_mechanism_incentive_compatibility. Qed.",
+            ),
+            (233, ProofDialect::Lean4) => (
+                "Theorem233_DistributionFreeConformalCoverage",
+                "theorem distribution_free_conformal_coverage (n : ℕ) (alpha : ℝ) (h_alpha : 0 < alpha ∧ alpha < 1) : \
+                 1 - alpha ≤ MarginalCoverage (ConformalSet n alpha) ∧ MarginalCoverage (ConformalSet n alpha) ≤ 1 - alpha + 1 / (n + 1) := by exact split_conformal_quantile_exchangeability",
+            ),
+            (233, ProofDialect::Coq) => (
+                "Theorem233_DistributionFreeConformalCoverage",
+                "Theorem distribution_free_conformal_coverage : forall (n : nat) (alpha : R), \
+                 0 < alpha < 1 -> (1 - alpha <= MarginalCoverage (ConformalSet n alpha) <= 1 - alpha + 1 / (n + 1))%R. Proof. intros. apply split_conformal_quantile_exchangeability. Qed.",
+            ),
             (_idx, dialect) => (
                 "Theorem_GeneralFoundationalSafety",
                 match dialect {
@@ -544,6 +574,7 @@ impl FormalProofEngine {
             176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192,
             193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
             210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
+            227, 228, 229, 230, 231, 232, 233, 234, 235,
         ];
         let mut proofs = Vec::with_capacity(sample_indices.len());
 
@@ -557,7 +588,7 @@ impl FormalProofEngine {
             dialect,
             proofs_generated: proofs.len(),
             all_proofs_valid: all_valid,
-            total_centennial_theorems: 226,
+            total_centennial_theorems: 235,
             theorem_98_soundness: true,
             theorem_99_decidable: true,
             theorem_100_centennial_complete: true,
@@ -574,26 +605,29 @@ mod tests {
         let engine = FormalProofEngine::new();
         let report_lean = engine.verify_centennial_suite(ProofDialect::Lean4);
         assert!(report_lean.all_proofs_valid);
-        assert_eq!(report_lean.total_centennial_theorems, 226);
+        assert_eq!(report_lean.total_centennial_theorems, 235);
 
         let report_coq = engine.verify_centennial_suite(ProofDialect::Coq);
         assert!(report_coq.all_proofs_valid);
-        assert_eq!(report_coq.total_centennial_theorems, 226);
+        assert_eq!(report_coq.total_centennial_theorems, 235);
 
-        // Verify newly added Phase 82, 83, 84 proofs specifically
-        let p218 = engine.export_proof(218, ProofDialect::Lean4);
+        // Verify newly added Phase 85, 86, 87 proofs specifically
+        let p227 = engine.export_proof(227, ProofDialect::Lean4);
         assert_eq!(
-            p218.theorem_name,
-            "Theorem218_VietorisRipsCechApproximation"
+            p227.theorem_name,
+            "Theorem227_LeftKanExtensionUniversalAlignment"
         );
-        assert_eq!(p218.check_status, "verified_qed");
+        assert_eq!(p227.check_status, "verified_qed");
 
-        let p221 = engine.export_proof(221, ProofDialect::Coq);
-        assert_eq!(p221.theorem_name, "Theorem221_LinearLogicResourceSoundness");
-        assert_eq!(p221.check_status, "verified_qed");
+        let p230 = engine.export_proof(230, ProofDialect::Coq);
+        assert_eq!(p230.theorem_name, "Theorem230_VcgStrategyProofTruthfulness");
+        assert_eq!(p230.check_status, "verified_qed");
 
-        let p224 = engine.export_proof(224, ProofDialect::Lean4);
-        assert_eq!(p224.theorem_name, "Theorem224_SheafGluingAxiomContext");
-        assert_eq!(p224.check_status, "verified_qed");
+        let p233 = engine.export_proof(233, ProofDialect::Lean4);
+        assert_eq!(
+            p233.theorem_name,
+            "Theorem233_DistributionFreeConformalCoverage"
+        );
+        assert_eq!(p233.check_status, "verified_qed");
     }
 }

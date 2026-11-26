@@ -53,8 +53,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "io-punctured-audit" => io_punctured_audit(&args[1..]),
         "linear-token-eval" => linear_token_eval(&args[1..]),
         "non-interference-audit" => non_interference_audit(&args[1..]),
+        "vcg-auction-audit" => vcg_auction_audit(&args[1..]),
+        "shapley-core-eval" => shapley_core_eval(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit', 'linear-token-eval', 'non-interference-audit'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit', 'linear-token-eval', 'non-interference-audit', 'vcg-auction-audit', 'shapley-core-eval'"
         ))),
     }
 }
@@ -1364,6 +1366,87 @@ fn non_interference_audit(args: &[String]) -> Result<CommandResult, CliError> {
             "non_interference": rep,
             "affine_reclamation": recl,
             "theorems": [222, 223]
+        }),
+        display,
+    ))
+}
+
+fn vcg_auction_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["valuations", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let vals: Vec<f64> = parsed
+        .value("valuations")
+        .map(|v| {
+            v.split(',')
+                .filter_map(|s| s.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![12.0, 9.5, 6.0, 3.0]);
+
+    let engine = pandora_runtime::game_theoretic_core::GameTheoreticCoreEngine::default();
+    let rep = engine.evaluate_vcg_auction(&vals);
+
+    let display = format!(
+        "VCG Auction Strategy-Proof Dominant Truthfulness:\n\
+         Bidders Count: {}\n\
+         Winning Bidder: {}\n\
+         Declared Valuation: {:.2}\n\
+         Clarke Pivot Payment: {:.2}\n\
+         Truthfulness Dominant Strategy: {}\n\
+         Theorems: 230 (VCG Strategy-Proof Dominant Truthfulness)",
+        rep.bidders_count,
+        rep.winning_bidder_id,
+        rep.declared_valuation,
+        rep.clarke_pivot_payment,
+        rep.truthfulness_dominant_strategy_holds
+    );
+
+    Ok(success(
+        "crypto vcg-auction-audit",
+        json!({
+            "vcg_report": rep,
+            "theorems": [230]
+        }),
+        display,
+    ))
+}
+
+fn shapley_core_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["agents", "config", "data-dir", "workspace", "json"])?;
+
+    let num_agents = parsed
+        .value("agents")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::game_theoretic_core::GameTheoreticCoreEngine::default();
+    let attr = engine.evaluate_shapley_attribution(num_agents);
+    let stab = engine.evaluate_coalition_stability(num_agents);
+
+    let display = format!(
+        "Aumann-Shapley Cost Attribution & Core Stability:\n\
+         Coalition Size: {}\n\
+         Grand Coalition Value: {:.4}\n\
+         Axiomatic Efficiency Satisfied: {}\n\
+         Supermodularity Verified: {}\n\
+         Core Non-Empty & Stable: {}\n\
+         Theorems: 231 (Shapley Axiomatic Cost Attribution), 232 (Coalition Core Stability)",
+        attr.coalition_size,
+        attr.grand_coalition_value,
+        attr.axiomatic_efficiency_satisfied,
+        stab.supermodularity_verified,
+        stab.imputation_in_core
+    );
+
+    Ok(success(
+        "crypto shapley-core-eval",
+        json!({
+            "attribution_report": attr,
+            "stability_report": stab,
+            "theorems": [231, 232]
         }),
         display,
     ))

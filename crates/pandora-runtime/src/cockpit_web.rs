@@ -3532,6 +3532,45 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/categorical-memory") => {
+            let engine = crate::categorical_memory::CategoricalMemoryEngine::default();
+            let kan = engine.evaluate_kan_extension(16, 16);
+            let adj = engine.audit_adjoint_sync(32, 16);
+            let mon = engine.verify_monoidal_coherence(4);
+            let resp = serde_json::json!({
+                "kan_extension": kan,
+                "adjoint_sync": adj,
+                "monoidal_coherence": mon,
+                "theorems_enforced": [227, 228, 229]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/game-theoretic-core") => {
+            let engine = crate::game_theoretic_core::GameTheoreticCoreEngine::default();
+            let vcg = engine.evaluate_vcg_auction(&[12.5, 9.0, 5.5, 3.0]);
+            let attr = engine.evaluate_shapley_attribution(4);
+            let stab = engine.evaluate_coalition_stability(4);
+            let resp = serde_json::json!({
+                "vcg": vcg,
+                "attribution": attr,
+                "stability": stab,
+                "theorems_enforced": [230, 231, 232]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/conformal-risk") => {
+            let engine = crate::conformal_risk::ConformalRiskEngine::default();
+            let conf = engine.evaluate_conformal_coverage(100, 0.10);
+            let shift = engine.evaluate_covariate_shift(2.5, 0.10);
+            let pac = engine.audit_pac_bayes_risk(64, 0.50);
+            let resp = serde_json::json!({
+                "conformal_coverage": conf,
+                "covariate_shift": shift,
+                "pac_bayes_risk": pac,
+                "theorems_enforced": [233, 234, 235]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;
