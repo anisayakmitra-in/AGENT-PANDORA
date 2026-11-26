@@ -43,8 +43,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "casimir-audit" => casimir_audit(&args[1..]),
         "koopman-decompose" => koopman_decompose(&args[1..]),
         "spectral-stability-audit" => spectral_stability_audit(&args[1..]),
+        "tur-bound-eval" => tur_bound_eval(&args[1..]),
+        "dissipation-audit" => dissipation_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit'"
         ))),
     }
 }
@@ -1080,6 +1082,120 @@ fn spectral_stability_audit(args: &[String]) -> Result<CommandResult, CliError> 
         json!({
             "spectral_stability": rep,
             "theorems": [199]
+        }),
+        display,
+    ))
+}
+
+fn tur_bound_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "current",
+            "variance",
+            "entropy-rate",
+            "sigma",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let current = parsed
+        .value("current")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    let variance = parsed
+        .value("variance")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let sigma = parsed
+        .value("entropy-rate")
+        .or_else(|| parsed.value("sigma"))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(5.0);
+
+    let engine =
+        pandora_runtime::thermodynamic_uncertainty::ThermodynamicUncertaintyEngine::default();
+    let rep = engine.evaluate_tur(current, variance, sigma);
+
+    let display = format!(
+        "Neural Thermodynamic Uncertainty Relation (TUR) Evaluation:\n\
+         Current <J>: {:.4}\n\
+         Variance Var(J): {:.4}\n\
+         Entropy Production Rate sigma: {:.4}\n\
+         Relative Uncertainty: {:.6}\n\
+         TUR Lower Bound: {:.6}\n\
+         TUR Precision-Dissipation Bound Satisfied: {}\n\
+         Theorem 206 (Universal TUR Bound) Enforced: {}",
+        rep.observed_current_j,
+        rep.variance_current_j,
+        rep.entropy_production_sigma,
+        rep.relative_uncertainty,
+        rep.tur_lower_bound,
+        rep.tur_bound_satisfied,
+        rep.theorem_206_tur_bound_verified
+    );
+
+    Ok(success(
+        "cognitive tur-bound-eval",
+        json!({
+            "tur_bound": rep,
+            "theorems": [206]
+        }),
+        display,
+    ))
+}
+
+fn dissipation_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "states",
+            "temperature",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let states = parsed
+        .value("states")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+    let temperature = parsed
+        .value("temperature")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(300.0);
+
+    let engine =
+        pandora_runtime::thermodynamic_uncertainty::ThermodynamicUncertaintyEngine::default();
+    let rep = engine.audit_dissipation(states, &[2.0, 3.0, 1.5], &[1.0, 1.0, 0.8], temperature);
+
+    let display = format!(
+        "Cognitive Dissipation & Carnot Efficiency Audit:\n\
+         States: {}\n\
+         Temperature: {:.1} K\n\
+         Entropy Production Rate: {:.4}\n\
+         Detailed Balance Asymmetry: {:.4}\n\
+         Carnot Efficiency Bound: {:.4}\n\
+         Landauer Dissipation Limit: {:.4e} J\n\
+         Theorems: 207 (Entropy Production Rate), 208 (Carnot Decision Efficiency)",
+        rep.num_states,
+        rep.temperature_kelvin,
+        rep.entropy_production_rate,
+        rep.detailed_balance_deviation,
+        rep.carnot_efficiency_limit,
+        rep.min_landauer_dissipation_joules
+    );
+
+    Ok(success(
+        "cognitive dissipation-audit",
+        json!({
+            "dissipation_audit": rep,
+            "theorems": [207, 208]
         }),
         display,
     ))

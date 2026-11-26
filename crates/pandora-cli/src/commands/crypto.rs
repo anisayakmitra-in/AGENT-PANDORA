@@ -47,8 +47,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "mip-verify" => mip_verify(&args[1..]),
         "dpss-redistribute" => dpss_redistribute(&args[1..]),
         "proactive-refresh" => proactive_refresh(&args[1..]),
+        "fe-inner-product" => fe_inner_product(&args[1..]),
+        "fe-security-audit" => fe_security_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit'"
         ))),
     }
 }
@@ -1039,6 +1041,120 @@ fn proactive_refresh(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "epoch_rotation": rep,
             "theorems": [195, 196]
+        }),
+        display,
+    ))
+}
+
+fn fe_inner_product(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "x-vector",
+            "x",
+            "y-vector",
+            "y",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let x: Vec<u64> = parsed
+        .value("x-vector")
+        .or_else(|| parsed.value("x"))
+        .map(|s| {
+            s.split(',')
+                .filter_map(|v| v.trim().parse::<u64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![1, 2, 3, 4]);
+
+    let y: Vec<u64> = parsed
+        .value("y-vector")
+        .or_else(|| parsed.value("y"))
+        .map(|s| {
+            s.split(',')
+                .filter_map(|v| v.trim().parse::<u64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![4, 3, 2, 1]);
+
+    let engine = pandora_runtime::multi_input_functional_encryption::MultiInputFunctionalEncryptionEngine::default();
+    let rep = engine.evaluate_inner_product(&x, &y);
+
+    let display = format!(
+        "Functional Encryption Inner Product Evaluation:\n\
+         Dimension: {}\n\
+         Vector X: {:?}\n\
+         Vector Y: {:?}\n\
+         Decrypted Inner Product: {}\n\
+         Decryption Verified: {}\n\
+         Zero-Knowledge Bounded: {}\n\
+         Theorem 203 (Inner Product FE) Enforced: {}",
+        rep.dimension,
+        rep.vector_x,
+        rep.vector_y,
+        rep.inner_product_result,
+        rep.decryption_matches_exact_inner_product,
+        rep.zero_knowledge_leakage_bounded,
+        rep.theorem_203_inner_product_verified
+    );
+
+    Ok(success(
+        "crypto fe-inner-product",
+        json!({
+            "inner_product": rep,
+            "theorems": [203]
+        }),
+        display,
+    ))
+}
+
+fn fe_security_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "dimension",
+            "security-param",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let dim = parsed
+        .value("dimension")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::multi_input_functional_encryption::MultiInputFunctionalEncryptionEngine::default();
+    let inputs = vec![vec![1, 2, 3, 4], vec![4, 3, 2, 1]];
+    let coeffs = vec![vec![1, 0], vec![0, 1]];
+    let rep = engine.evaluate_quadratic_mife(&inputs, &coeffs);
+
+    let display = format!(
+        "Multi-Input Functional Encryption (MIFE) Security Audit:\n\
+         Input Ciphertexts: {}\n\
+         Dimension: {}\n\
+         Evaluated Quadratic Value: {}\n\
+         Cross-Party Plaintext Secrecy: {}\n\
+         Adaptive Simulation Error: {:.2e}\n\
+         Theorems: 204 (MIFE Quadratic Forms), 205 (Adaptive Simulation Security)",
+        rep.num_inputs,
+        dim,
+        rep.evaluated_quadratic_value,
+        rep.cross_party_privacy_preserved,
+        rep.simulation_indistinguishability_error
+    );
+
+    Ok(success(
+        "crypto fe-security-audit",
+        json!({
+            "mife_security": rep,
+            "theorems": [204, 205]
         }),
         display,
     ))

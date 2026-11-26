@@ -97,8 +97,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "exceptional-audit" => exceptional_audit(&args[1..]),
         "hoti-quadrupole-eval" => hoti_quadrupole_eval(&args[1..]),
         "corner-state-audit" => corner_state_audit(&args[1..]),
+        "anyon-interfere" => anyon_interfere(&args[1..]),
+        "thermal-hall-audit" => thermal_hall_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit"
         ))),
     }
 }
@@ -1920,6 +1922,110 @@ fn corner_state_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "corner_state_audit": audit,
             "theorems": [192, 193]
+        }),
+        text,
+    ))
+}
+
+fn anyon_interfere(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "flux",
+            "filling-fraction",
+            "nu",
+            "quasiparticles",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "format",
+            "out",
+            "verbose",
+        ],
+    )?;
+
+    let flux = parsed
+        .value("flux")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    let filling_fraction = parsed
+        .value("filling-fraction")
+        .or_else(|| parsed.value("nu"))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0 / 3.0);
+    let quasiparticles = parsed
+        .value("quasiparticles")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+
+    let engine = pandora_runtime::anyonic_interferometry::AnyonicInterferometryEngine::default();
+    let rep = engine.evaluate_interference(flux, filling_fraction, quasiparticles);
+
+    let text = format!(
+        "Anyonic Quantum Hall Fabry-Pérot Interference:\n  Magnetic Flux: {:.3} Phi_0\n  Filling Fraction nu: {:.4}\n  Bulk Quasiparticles: {}\n  Braid Phase: {:.4} rad\n  Total Phase Shift: {:.4} rad\n  Conductance Oscillation: {:.4}\n  Fractional Statistics Detected: {}\n  Theorems: 200 (Bicentennial Anyonic Interferometry), 201 (Monodromy Parity)",
+        rep.magnetic_flux_phi,
+        rep.filling_fraction_nu,
+        rep.bulk_quasiparticles_count,
+        rep.braid_phase_radians,
+        rep.total_phase_shift_radians,
+        rep.conductance_oscillation,
+        rep.fractional_statistics_detected
+    );
+
+    Ok(success(
+        "swarm anyon-interfere",
+        json!({
+            "interference": rep,
+            "theorems": [200, 201]
+        }),
+        text,
+    ))
+}
+
+fn thermal_hall_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "temperature",
+            "central-charge",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "format",
+            "out",
+            "verbose",
+        ],
+    )?;
+
+    let temperature = parsed
+        .value("temperature")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.05);
+    let central_charge = parsed
+        .value("central-charge")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+
+    let engine = pandora_runtime::anyonic_interferometry::AnyonicInterferometryEngine::default();
+    let rep = engine.audit_thermal_hall(temperature, central_charge);
+
+    let text = format!(
+        "Chiral Edge Mode Thermal Hall Conductance Audit:\n  Temperature: {:.3} K\n  Chiral Central Charge c_-: {:.2}\n  Quantized Thermal Hall Conductance: {:.6}\n  CFT Universality Certified: {}\n  Disorder Immunity Error: {:.2e}\n  Theorem 202 Enforced: {}",
+        rep.temperature_kelvin,
+        rep.chiral_central_charge,
+        rep.quantized_thermal_conductance,
+        rep.cft_universality_certified,
+        rep.disorder_immunity_error,
+        rep.theorem_202_thermal_hall_quantized
+    );
+
+    Ok(success(
+        "swarm thermal-hall-audit",
+        json!({
+            "thermal_hall": rep,
+            "theorems": [202]
         }),
         text,
     ))

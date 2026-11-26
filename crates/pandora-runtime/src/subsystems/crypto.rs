@@ -123,6 +123,13 @@ impl CryptoSubsystem {
         crate::proactive_secret_redistribution::ProactiveSecretRedistributionEngine::default()
     }
 
+    /// Access the Multi-Input Functional Encryption (MIFE) engine (Theorems 203–205).
+    pub fn multi_input_functional_encryption(
+        &self,
+    ) -> crate::multi_input_functional_encryption::MultiInputFunctionalEncryptionEngine {
+        crate::multi_input_functional_encryption::MultiInputFunctionalEncryptionEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -138,7 +145,7 @@ impl CryptoSubsystem {
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
                 132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160, 167, 168, 169, 176, 177,
-                178, 185, 186, 187, 194, 195, 196,
+                178, 185, 186, 187, 194, 195, 196, 203, 204, 205,
             ],
         }
     }

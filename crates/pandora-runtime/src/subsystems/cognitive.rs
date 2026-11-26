@@ -115,6 +115,13 @@ impl CognitiveSubsystem {
         crate::koopman_operator::KoopmanOperatorEngine::default()
     }
 
+    /// Access the Neural Thermodynamic Uncertainty Relations (TUR) & Dissipation engine (Theorems 206–208).
+    pub fn thermodynamic_uncertainty(
+        &self,
+    ) -> crate::thermodynamic_uncertainty::ThermodynamicUncertaintyEngine {
+        crate::thermodynamic_uncertainty::ThermodynamicUncertaintyEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -135,7 +142,7 @@ impl CognitiveSubsystem {
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
                 134, 135, 136, 143, 144, 145, 152, 153, 154, 161, 162, 163, 170, 171, 172, 179,
-                180, 181, 188, 189, 190, 197, 198, 199,
+                180, 181, 188, 189, 190, 197, 198, 199, 206, 207, 208,
             ],
         }
     }

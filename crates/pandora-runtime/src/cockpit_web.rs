@@ -3420,6 +3420,41 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/anyonic-interferometry") => {
+            let engine = crate::anyonic_interferometry::AnyonicInterferometryEngine::default();
+            let interference = engine.evaluate_interference(1.0, 1.0 / 3.0, 2);
+            let thermal_hall = engine.audit_thermal_hall(0.05, 1.0);
+            let resp = serde_json::json!({
+                "interference": interference,
+                "thermal_hall": thermal_hall,
+                "theorems_enforced": [200, 201, 202]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/multi-input-functional-encryption") => {
+            let engine = crate::multi_input_functional_encryption::MultiInputFunctionalEncryptionEngine::default();
+            let ip = engine.evaluate_inner_product(&[1, 2, 3, 4], &[4, 3, 2, 1]);
+            let mife = engine
+                .evaluate_quadratic_mife(&[vec![1, 2], vec![3, 4]], &[vec![1, 0], vec![0, 1]]);
+            let resp = serde_json::json!({
+                "inner_product": ip,
+                "mife_quadratic": mife,
+                "theorems_enforced": [203, 204, 205]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/thermodynamic-tur") => {
+            let engine =
+                crate::thermodynamic_uncertainty::ThermodynamicUncertaintyEngine::default();
+            let tur = engine.evaluate_tur(1.0, 0.5, 5.0);
+            let dissipation = engine.audit_dissipation(4, &[2.0, 3.0], &[1.0, 1.0], 300.0);
+            let resp = serde_json::json!({
+                "tur_bound": tur,
+                "dissipation": dissipation,
+                "theorems_enforced": [206, 207, 208]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

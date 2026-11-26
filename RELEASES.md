@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, and `v4.1.5`. The active release identity
-is `v4.1.5`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, and `v4.1.6`. The active release identity
+is `v4.1.6`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,16 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+
+## v4.1.6
+
+This release delivers Phases 76–78 of the architectural roadmap under codename **THANATOS**:
+- **Phase 76: Anyonic Quantum Hall Interferometry & Fractional Statistics** (`anyonic_interferometry.rs`, Theorems 200–202, Bicentennial Theorem 200 establishing Fabry-Pérot anyonic interference oscillation $G_L \propto \cos(2\pi \nu \Phi/\Phi_0 + 2 N_{\text{qp}} \theta_{\text{braid}})$, braiding monodromy phase shift $\Delta \theta = 2\pi / m$ for non-destructive topological charge readout, and 1D chiral boundary quantized thermal Hall conductance $\kappa_{xy} = c_- \frac{\pi^2 k_B^2}{3h} T$, CLI `pandora swarm anyon-interfere|thermal-hall-audit`, REST `/api/swarm/anyonic-interferometry`).
+- **Phase 77: Multi-Input Functional Encryption (MIFE) for Inner Products & Quadratic Forms** (`multi_input_functional_encryption.rs`, Theorems 203–205, inner-product functional key evaluation revealing strictly $\langle x, y \rangle \pmod p$ without plaintext leakage, multi-input functional evaluation of quadratic forms $F(x_1, \dots, x_m) = \sum_{i,j} a_{ij} \langle x_i, x_j \rangle$, and adaptive simulation security $\text{Adv} \le \text{negl}(\lambda)$, CLI `pandora crypto fe-inner-product|fe-security-audit`, REST `/api/crypto/multi-input-functional-encryption`).
+- **Phase 78: Neural Thermodynamic Uncertainty Relations (TUR) & Non-Equilibrium Dissipation** (`thermodynamic_uncertainty.rs`, Theorems 206–208, Barato-Seifert precision-dissipation tradeoff $\frac{\text{Var}(J)}{\langle J \rangle^2} \ge \frac{2 k_B}{\sigma}$, Schnakenberg non-equilibrium entropy production rate $\sigma \ge 0$, and Carnot-optimal cognitive decision efficiency $\eta \le \eta_{\text{Carnot}}$ with minimum Landauer dissipation, CLI `pandora cognitive tur-bound-eval|dissipation-audit`, REST `/api/cognitive/thermodynamic-tur`).
+- **Constitutional Governance & Formal Proofs**: Upgraded Parliament and Tripartite Governance to issue `ConstitutionalPermit` validating all **208 Bicentennial Theorems** (`(1..=208)`). Formal Proof Engine verified in Lean 4 and Coq up to Theorem 208.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/anyonic-interferometry`, `/api/crypto/multi-input-functional-encryption`, `/api/cognitive/thermodynamic-tur`, and updated `/api/cockpit/overview` (`architecture_version: "4.1.6"`, `codename: "THANATOS"`, `total_theorems_enforced: 208`).
 
 
 ## v4.1.5
