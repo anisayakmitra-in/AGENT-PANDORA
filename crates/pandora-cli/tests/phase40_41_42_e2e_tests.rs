@@ -277,8 +277,8 @@ fn test_cockpit_web_phase40_41_42_rest_endpoints() {
     // 4. Olympus Centennial Overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["total_theorems_enforced"], 208);
-    assert_eq!(overview["architecture_version"], "4.1.6");
+    assert_eq!(overview["total_theorems_enforced"], 217);
+    assert_eq!(overview["architecture_version"], "4.1.7");
     assert_eq!(overview["codename"], "THANATOS");
     assert_eq!(overview["formal_verification"]["all_proofs_valid"], true);
 

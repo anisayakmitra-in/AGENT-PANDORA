@@ -45,8 +45,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "spectral-stability-audit" => spectral_stability_audit(&args[1..]),
         "tur-bound-eval" => tur_bound_eval(&args[1..]),
         "dissipation-audit" => dissipation_audit(&args[1..]),
+        "info-geo-dual" => info_geo_dual(&args[1..]),
+        "natural-gradient-eval" => natural_gradient_eval(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval'"
         ))),
     }
 }
@@ -1196,6 +1198,123 @@ fn dissipation_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "dissipation_audit": rep,
             "theorems": [207, 208]
+        }),
+        display,
+    ))
+}
+
+fn info_geo_dual(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "alpha",
+            "dimension",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let alpha = parsed
+        .value("alpha")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    let dim = parsed
+        .value("dimension")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::information_geometry::InformationGeometryEngine::default();
+    let rep = engine.evaluate_dual_connections(alpha, dim);
+    let pyth = engine.evaluate_pythagorean_projection(0.25, 0.75, 1.00);
+
+    let display = format!(
+        "Information-Geometric Dual Connections & Pythagorean Projection:\n\
+         Alpha Parameter: {:.2}\n\
+         Manifold Dimension: {}\n\
+         Metric Compatibility Residual: {:.2e}\n\
+         Duality Invariance Holds: {}\n\
+         Pythagorean Defect: {:.2e}\n\
+         Theorems: 215 (Amari-Chentsov Dual Connections), 217 (Generalized Pythagorean Theorem)",
+        rep.alpha_parameter,
+        rep.manifold_dimension,
+        rep.metric_compatibility_residual,
+        rep.duality_invariance_holds,
+        pyth.pythagorean_defect
+    );
+
+    Ok(success(
+        "cognitive info-geo-dual",
+        json!({
+            "dual_connection": rep,
+            "pythagorean": pyth,
+            "theorems": [215, 217]
+        }),
+        display,
+    ))
+}
+
+fn natural_gradient_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "loss-grad",
+            "metric-diag",
+            "learning-rate",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let lr = parsed
+        .value("learning-rate")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.01);
+    let loss_grad: Vec<f64> = parsed
+        .value("loss-grad")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|v| v.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .filter(|v: &Vec<f64>| !v.is_empty())
+        .unwrap_or_else(|| vec![0.5, -0.2, 0.1]);
+    let metric_diag: Vec<f64> = parsed
+        .value("metric-diag")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|v| v.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .filter(|v: &Vec<f64>| !v.is_empty())
+        .unwrap_or_else(|| vec![1.0, 2.0, 0.5]);
+
+    let engine = pandora_runtime::information_geometry::InformationGeometryEngine::default();
+    let rep = engine.evaluate_natural_gradient(&loss_grad, &metric_diag, lr);
+
+    let display = format!(
+        "Riemannian Natural Gradient Evaluation:\n\
+         Original Gradient Norm: {:.4}\n\
+         Natural Gradient Norm: {:.4}\n\
+         Learning Rate: {:.4}\n\
+         Step Update: {:?}\n\
+         Invariance Error: {:.2e}\n\
+         Theorems: 216 (Natural Gradient Parameterization Invariance)",
+        rep.original_gradient_norm,
+        rep.natural_gradient_norm,
+        rep.learning_rate,
+        rep.step_update,
+        rep.parameterization_invariance_error
+    );
+
+    Ok(success(
+        "cognitive natural-gradient-eval",
+        json!({
+            "natural_gradient": rep,
+            "theorems": [216]
         }),
         display,
     ))

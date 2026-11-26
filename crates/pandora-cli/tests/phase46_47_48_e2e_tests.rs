@@ -211,9 +211,9 @@ fn test_cockpit_web_phase46_47_48_rest_endpoints() {
     // 4. Test /api/olympus/overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.6");
+    assert_eq!(overview["architecture_version"], "4.1.7");
     assert_eq!(overview["codename"], "THANATOS");
-    assert_eq!(overview["total_theorems_enforced"], 208);
+    assert_eq!(overview["total_theorems_enforced"], 217);
 
     shutdown_handle.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(("127.0.0.1", port));

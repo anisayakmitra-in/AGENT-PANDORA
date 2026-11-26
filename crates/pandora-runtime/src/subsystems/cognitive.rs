@@ -122,6 +122,11 @@ impl CognitiveSubsystem {
         crate::thermodynamic_uncertainty::ThermodynamicUncertaintyEngine::default()
     }
 
+    /// Access the Information-Geometric Amari-Chentsov Dual Connections & Natural Gradient engine (Theorems 215–217).
+    pub fn information_geometry(&self) -> crate::information_geometry::InformationGeometryEngine {
+        crate::information_geometry::InformationGeometryEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -142,7 +147,7 @@ impl CognitiveSubsystem {
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
                 134, 135, 136, 143, 144, 145, 152, 153, 154, 161, 162, 163, 170, 171, 172, 179,
-                180, 181, 188, 189, 190, 197, 198, 199, 206, 207, 208,
+                180, 181, 188, 189, 190, 197, 198, 199, 206, 207, 208, 215, 216, 217,
             ],
         }
     }

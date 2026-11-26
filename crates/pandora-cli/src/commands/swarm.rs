@@ -99,8 +99,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "corner-state-audit" => corner_state_audit(&args[1..]),
         "anyon-interfere" => anyon_interfere(&args[1..]),
         "thermal-hall-audit" => thermal_hall_audit(&args[1..]),
+        "moire-flat-band" => moire_flat_band(&args[1..]),
+        "superfluid-weight-audit" => superfluid_weight_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit"
         ))),
     }
 }
@@ -2026,6 +2028,95 @@ fn thermal_hall_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "thermal_hall": rep,
             "theorems": [202]
+        }),
+        text,
+    ))
+}
+
+fn moire_flat_band(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "angle",
+            "interlayer-coupling",
+        ],
+    )?;
+
+    let angle = parsed
+        .value("angle")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.08);
+    let alpha = parsed
+        .value("interlayer-coupling")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.57735);
+
+    let engine = pandora_runtime::moire_topology::MoireTopologyEngine::default();
+    let rep = engine.evaluate_flat_band(angle, alpha);
+
+    let text = format!(
+        "Twisted Bilayer Moiré Flat-Band Dispersion:\n  Twist Angle: {:.2}°\n  Interlayer Ratio Alpha: {:.4}\n  Dirac Velocity Ratio: {:.4e}\n  Flat Bandwidth: {:.2} meV\n  Magic Regime: {}\n  Theorem 209 Enforced: {}",
+        rep.twist_angle_deg,
+        rep.interlayer_ratio_alpha,
+        rep.dirac_velocity_ratio,
+        rep.flat_band_width_mev,
+        rep.is_magic_regime,
+        rep.theorem_209_velocity_vanishing
+    );
+
+    Ok(success(
+        "swarm moire-flat-band",
+        json!({
+            "flat_band": rep,
+            "theorems": [209]
+        }),
+        text,
+    ))
+}
+
+fn superfluid_weight_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "gap",
+            "metric-trace",
+        ],
+    )?;
+
+    let gap = parsed
+        .value("gap")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+    let trace = parsed
+        .value("metric-trace")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.45);
+
+    let engine = pandora_runtime::moire_topology::MoireTopologyEngine::default();
+    let rep = engine.audit_superfluid_weight(gap, trace);
+
+    let text = format!(
+        "Moiré Flat-Band Superfluid Weight Audit:\n  Superconducting Gap: {:.2}\n  Quantum Metric Trace: {:.4}\n  Superfluid Weight D_s: {:.4}\n  Geometric Lower Bound: {:.4}\n  Theorem 211 Enforced: {}",
+        rep.superconducting_gap_delta,
+        rep.integrated_quantum_metric_trace,
+        rep.superfluid_weight_ds,
+        rep.geometric_lower_bound,
+        rep.theorem_211_superfluid_bound_verified
+    );
+
+    Ok(success(
+        "swarm superfluid-weight-audit",
+        json!({
+            "superfluid": rep,
+            "theorems": [211]
         }),
         text,
     ))

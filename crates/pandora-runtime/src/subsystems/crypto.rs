@@ -130,6 +130,13 @@ impl CryptoSubsystem {
         crate::multi_input_functional_encryption::MultiInputFunctionalEncryptionEngine::default()
     }
 
+    /// Access the Indistinguishability Obfuscation ($i\mathcal{O}$) & Punctured PRF engine (Theorems 212–214).
+    pub fn indistinguishability_obfuscation(
+        &self,
+    ) -> crate::indistinguishability_obfuscation::IndistinguishabilityObfuscationEngine {
+        crate::indistinguishability_obfuscation::IndistinguishabilityObfuscationEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -145,7 +152,7 @@ impl CryptoSubsystem {
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
                 132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160, 167, 168, 169, 176, 177,
-                178, 185, 186, 187, 194, 195, 196, 203, 204, 205,
+                178, 185, 186, 187, 194, 195, 196, 203, 204, 205, 212, 213, 214,
             ],
         }
     }

@@ -49,8 +49,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "proactive-refresh" => proactive_refresh(&args[1..]),
         "fe-inner-product" => fe_inner_product(&args[1..]),
         "fe-security-audit" => fe_security_audit(&args[1..]),
+        "io-obfuscate" => io_obfuscate(&args[1..]),
+        "io-punctured-audit" => io_punctured_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit'"
         ))),
     }
 }
@@ -1155,6 +1157,113 @@ fn fe_security_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "mife_security": rep,
             "theorems": [204, 205]
+        }),
+        display,
+    ))
+}
+
+fn io_obfuscate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "circuit-depth",
+            "inputs",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let depth = parsed
+        .value("circuit-depth")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+    let inputs = parsed
+        .value("inputs")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::indistinguishability_obfuscation::IndistinguishabilityObfuscationEngine::default();
+    let rep = engine.obfuscate_and_evaluate(depth, inputs);
+
+    let display = format!(
+        "Indistinguishability Obfuscation (iO) Circuit Evaluation:\n\
+         Circuit Depth: {}\n\
+         Num Inputs: {}\n\
+         Original Output Digest: {}\n\
+         Obfuscated Output Digest: {}\n\
+         Evaluation Errors: {}\n\
+         Functionality Preserved: {}\n\
+         Theorem 212 Enforced: {}",
+        rep.circuit_depth,
+        rep.num_inputs,
+        rep.original_output_digest,
+        rep.obfuscated_output_digest,
+        rep.evaluation_errors,
+        rep.theorem_212_functionality_preserved,
+        rep.theorem_212_functionality_preserved
+    );
+
+    Ok(success(
+        "crypto io-obfuscate",
+        json!({
+            "obfuscated_circuit": rep,
+            "theorems": [212]
+        }),
+        display,
+    ))
+}
+
+fn io_punctured_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "seed",
+            "puncture-point",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let seed = parsed
+        .value("seed")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(424242);
+    let puncture = parsed
+        .value("puncture-point")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5);
+
+    let engine = pandora_runtime::indistinguishability_obfuscation::IndistinguishabilityObfuscationEngine::default();
+    let rep = engine.audit_punctured_prf(seed, puncture, puncture + 1);
+    let soundness = engine.audit_io_soundness(100, 128);
+
+    let display = format!(
+        "Punctured PRF & iO Soundness Audit:\n\
+         Master Seed: {}\n\
+         Punctured Point: {}\n\
+         Evaluation Match: {}\n\
+         Puncture Point Masked: {}\n\
+         Adversary Distinguishing Advantage: {:.2e}\n\
+         Negligible Bound: {:.2e}\n\
+         Theorems Enforced: 213, 214",
+        rep.master_seed,
+        rep.punctured_point,
+        rep.evaluation_match,
+        rep.puncture_point_masked,
+        soundness.adversary_distinguishing_advantage,
+        soundness.negligible_bound
+    );
+
+    Ok(success(
+        "crypto io-punctured-audit",
+        json!({
+            "punctured_prf": rep,
+            "soundness": soundness,
+            "theorems": [213, 214]
         }),
         display,
     ))

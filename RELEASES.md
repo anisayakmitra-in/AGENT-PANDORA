@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, and `v4.1.6`. The active release identity
-is `v4.1.6`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, and `v4.1.7`. The active release identity
+is `v4.1.7`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,16 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+
+## v4.1.7
+
+This release delivers Phases 79–81 of the architectural roadmap under codename **THANATOS**:
+- **Phase 79: Twisted Bilayer Moiré Flat Bands & Topological Superconductivity** (`moire_topology.rs`, Theorems 209–211, Bistritzer-MacDonald Dirac velocity vanishing $v_F(\alpha^*) = 0$ at magic angle $\theta \approx 1.08^\circ$ with flat bandwidth collapse $W \le \epsilon_{\text{flat}}$, valley-projected Chern number quantization $C_K = -C_{K'} = \pm 1$ and Wilson loop winding $\mathcal{W} = 1$, and quantum geometric superfluid weight lower bound $D_s \ge \frac{4 e^2}{\hbar^2} \Delta_{\text{sc}} \int \text{Tr}(g) \frac{d^2k}{(2\pi)^2}$, CLI `pandora swarm moire-flat-band|superfluid-weight-audit`, REST `/api/swarm/moire-topology`).
+- **Phase 80: Indistinguishability Obfuscation ($i\mathcal{O}$) & Punctured PRF Verifiable Delegation** (`indistinguishability_obfuscation.rs`, Theorems 212–214, arithmetic circuit functionality preservation $\Pr[\widetilde{C}(x) \ne C(x)] = 0$, simulation-based indistinguishability for functionally equivalent circuits $|\Pr[\mathcal{D}(\widetilde{C}_0) = 1] - \Pr[\mathcal{D}(\widetilde{C}_1) = 1]| \le \text{negl}(\lambda)$ under sub-exponential LWE/LPN, and punctured PRF security invariance $F(K_{\{x^*\}}, x) = F(K, x)$, CLI `pandora crypto io-obfuscate|io-punctured-audit`, REST `/api/crypto/indistinguishability-obfuscation`).
+- **Phase 81: Information-Geometric Amari-Chentsov Dual Connections & Natural Gradient** (`information_geometry.rs`, Theorems 215–217, Amari-Chentsov dual affine connection metric compatibility $Z g(X, Y) = g(\nabla_Z^{(\alpha)} X, Y) + g(X, \nabla_Z^{(-\alpha)} Y)$, Riemannian natural gradient parameterization invariance $\widetilde{\nabla} \mathcal{L} = g^{-1}(\theta) \nabla_\theta \mathcal{L}$, and generalized Pythagorean projection decomposition $D_{\text{KL}}(P \parallel R) = D_{\text{KL}}(P \parallel Q) + D_{\text{KL}}(Q \parallel R)$, CLI `pandora cognitive info-geo-dual|natural-gradient-eval`, REST `/api/cognitive/information-geometry`).
+- **Constitutional Governance & Formal Proofs**: Upgraded Parliament and Tripartite Governance to issue `ConstitutionalPermit` validating all **217 Bicentennial Theorems** (`(1..=217)`). Formal Proof Engine verified in Lean 4 and Coq up to Theorem 217.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/moire-topology`, `/api/crypto/indistinguishability-obfuscation`, `/api/cognitive/information-geometry`, and updated `/api/cockpit/overview` (`architecture_version: "4.1.7"`, `codename: "THANATOS"`, `total_theorems_enforced: 217`).
 
 
 ## v4.1.6

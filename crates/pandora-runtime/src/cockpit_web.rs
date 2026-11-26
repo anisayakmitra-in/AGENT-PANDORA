@@ -3455,6 +3455,46 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/moire-topology") => {
+            let engine = crate::moire_topology::MoireTopologyEngine::default();
+            let flat_band = engine.evaluate_flat_band(1.08, 0.57735);
+            let valley_chern = engine.audit_valley_chern(5.0);
+            let superfluid = engine.audit_superfluid_weight(1.5, 0.45);
+            let resp = serde_json::json!({
+                "flat_band": flat_band,
+                "valley_chern": valley_chern,
+                "superfluid": superfluid,
+                "theorems_enforced": [209, 210, 211]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/indistinguishability-obfuscation") => {
+            let engine = crate::indistinguishability_obfuscation::IndistinguishabilityObfuscationEngine::default();
+            let circuit = engine.obfuscate_and_evaluate(4, 4);
+            let soundness = engine.audit_io_soundness(100, 128);
+            let punctured = engine.audit_punctured_prf(424242, 5, 3);
+            let resp = serde_json::json!({
+                "circuit": circuit,
+                "soundness": soundness,
+                "punctured_prf": punctured,
+                "theorems_enforced": [212, 213, 214]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/information-geometry") => {
+            let engine = crate::information_geometry::InformationGeometryEngine::default();
+            let dual = engine.evaluate_dual_connections(1.0, 4);
+            let nat_grad =
+                engine.evaluate_natural_gradient(&[0.5, -0.2, 0.1], &[1.0, 2.0, 0.5], 0.01);
+            let pyth = engine.evaluate_pythagorean_projection(0.25, 0.75, 1.00);
+            let resp = serde_json::json!({
+                "dual_connection": dual,
+                "natural_gradient": nat_grad,
+                "pythagorean": pyth,
+                "theorems_enforced": [215, 216, 217]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

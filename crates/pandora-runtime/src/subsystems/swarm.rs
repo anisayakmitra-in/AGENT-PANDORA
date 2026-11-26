@@ -121,6 +121,11 @@ impl SwarmSubsystem {
         crate::anyonic_interferometry::AnyonicInterferometryEngine::default()
     }
 
+    /// Access the Twisted Bilayer Moiré Flat Bands & Topological Superconductivity engine (Theorems 209–211).
+    pub fn moire_topology(&self) -> crate::moire_topology::MoireTopologyEngine {
+        crate::moire_topology::MoireTopologyEngine::default()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -137,7 +142,7 @@ impl SwarmSubsystem {
             theorems_enforced: vec![
                 62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
                 137, 138, 139, 146, 147, 148, 155, 156, 157, 164, 165, 166, 173, 174, 175, 182,
-                183, 184, 191, 192, 193, 200, 201, 202,
+                183, 184, 191, 192, 193, 200, 201, 202, 209, 210, 211,
             ],
         }
     }

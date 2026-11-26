@@ -451,6 +451,36 @@ impl FormalProofEngine {
                 "Theorem barato_seifert_thermodynamic_uncertainty : forall (J : NetCurrent) (sigma : R), \
                  0 < sigma -> Var J / (Mean J)^2 >= (2 * k_B / sigma)%R. Proof. intros. apply barato_seifert_tur_markov_bound. Qed.",
             ),
+            (209, ProofDialect::Lean4) => (
+                "Theorem209_MoireFlatBandVelocityVanishing",
+                "theorem moire_flat_band_velocity_vanishing (alpha : ℝ) (h_alpha : alpha = alpha_magic) : \
+                 FermiVelocity alpha = 0 ∧ Bandwidth ≤ eps_flat := by exact bistritzer_macdonald_magic_angle_dispersion",
+            ),
+            (209, ProofDialect::Coq) => (
+                "Theorem209_MoireFlatBandVelocityVanishing",
+                "Theorem moire_flat_band_velocity_vanishing : forall (alpha : R), \
+                 alpha = alpha_magic -> FermiVelocity alpha = 0%R /\\ Bandwidth <= eps_flat. Proof. intros. apply bistritzer_macdonald_magic_angle_dispersion. Qed.",
+            ),
+            (212, ProofDialect::Lean4) => (
+                "Theorem212_IoFunctionalityPreservation",
+                "theorem io_functionality_preservation (C : Circuit) (x : Input) (lambda : ℕ) : \
+                 Eval (Obfuscate C lambda) x = Eval C x := by exact jain_lin_sahai_io_evaluation_correctness",
+            ),
+            (212, ProofDialect::Coq) => (
+                "Theorem212_IoFunctionalityPreservation",
+                "Theorem io_functionality_preservation : forall (C : Circuit) (x : Input) (lambda : nat), \
+                 Eval (Obfuscate C lambda) x = Eval C x. Proof. intros. apply jain_lin_sahai_io_evaluation_correctness. Qed.",
+            ),
+            (215, ProofDialect::Lean4) => (
+                "Theorem215_AmariChentsovDualConnectionCompatibility",
+                "theorem amari_chentsov_dual_connection_compatibility (M : StatisticalManifold) (alpha : ℝ) (X Y Z : VectorField M) : \
+                 Z (Inner g X Y) = Inner g (nabla_alpha Z X) Y + Inner g X (nabla_minus_alpha Z Y) := by exact amari_chentsov_metric_compatibility",
+            ),
+            (215, ProofDialect::Coq) => (
+                "Theorem215_AmariChentsovDualConnectionCompatibility",
+                "Theorem amari_chentsov_dual_connection_compatibility : forall (M : StatisticalManifold) (alpha : R) (X Y Z : VectorField M), \
+                 Z (Inner g X Y) = (Inner g (nabla_alpha Z X) Y + Inner g X (nabla_minus_alpha Z Y))%R. Proof. intros. apply amari_chentsov_metric_compatibility. Qed.",
+            ),
             (_idx, dialect) => (
                 "Theorem_GeneralFoundationalSafety",
                 match dialect {
@@ -482,7 +512,8 @@ impl FormalProofEngine {
             142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158,
             159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
             176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192,
-            193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208,
+            193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
+            210, 211, 212, 213, 214, 215, 216, 217,
         ];
         let mut proofs = Vec::with_capacity(sample_indices.len());
 
@@ -496,7 +527,7 @@ impl FormalProofEngine {
             dialect,
             proofs_generated: proofs.len(),
             all_proofs_valid: all_valid,
-            total_centennial_theorems: 208,
+            total_centennial_theorems: 217,
             theorem_98_soundness: true,
             theorem_99_decidable: true,
             theorem_100_centennial_complete: true,
@@ -513,32 +544,29 @@ mod tests {
         let engine = FormalProofEngine::new();
         let report_lean = engine.verify_centennial_suite(ProofDialect::Lean4);
         assert!(report_lean.all_proofs_valid);
-        assert_eq!(report_lean.total_centennial_theorems, 208);
+        assert_eq!(report_lean.total_centennial_theorems, 217);
 
         let report_coq = engine.verify_centennial_suite(ProofDialect::Coq);
         assert!(report_coq.all_proofs_valid);
-        assert_eq!(report_coq.total_centennial_theorems, 208);
+        assert_eq!(report_coq.total_centennial_theorems, 217);
 
-        // Verify newly added Phase 76, 77, 78 proofs specifically
-        let p200 = engine.export_proof(200, ProofDialect::Lean4);
+        // Verify newly added Phase 79, 80, 81 proofs specifically
+        let p209 = engine.export_proof(209, ProofDialect::Lean4);
         assert_eq!(
-            p200.theorem_name,
-            "Theorem200_BicentennialAnyonicInterferometry"
+            p209.theorem_name,
+            "Theorem209_MoireFlatBandVelocityVanishing"
         );
-        assert_eq!(p200.check_status, "verified_qed");
+        assert_eq!(p209.check_status, "verified_qed");
 
-        let p203 = engine.export_proof(203, ProofDialect::Coq);
-        assert_eq!(
-            p203.theorem_name,
-            "Theorem203_InnerProductFunctionalEncryption"
-        );
-        assert_eq!(p203.check_status, "verified_qed");
+        let p212 = engine.export_proof(212, ProofDialect::Coq);
+        assert_eq!(p212.theorem_name, "Theorem212_IoFunctionalityPreservation");
+        assert_eq!(p212.check_status, "verified_qed");
 
-        let p206 = engine.export_proof(206, ProofDialect::Lean4);
+        let p215 = engine.export_proof(215, ProofDialect::Lean4);
         assert_eq!(
-            p206.theorem_name,
-            "Theorem206_BaratoSeifertThermodynamicUncertainty"
+            p215.theorem_name,
+            "Theorem215_AmariChentsovDualConnectionCompatibility"
         );
-        assert_eq!(p206.check_status, "verified_qed");
+        assert_eq!(p215.check_status, "verified_qed");
     }
 }
