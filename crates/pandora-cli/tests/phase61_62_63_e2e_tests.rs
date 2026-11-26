@@ -41,7 +41,7 @@ impl TestEnv {
         fs::create_dir_all(&data).expect("create data dir");
 
         let default_config = serde_json::json!({
-            "version": "4.1.1",
+            "version": "4.1.2",
             "active_model": "thanatos-supercluster",
             "max_tool_iterations": 10,
             "cost_limit_dollars": 5.0,
@@ -266,8 +266,8 @@ fn test_cockpit_web_v411_routes_and_thanatos_overview() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.1");
-    assert_eq!(overview["total_theorems_enforced"], 163);
+    assert_eq!(overview["architecture_version"], "4.1.2");
+    assert_eq!(overview["total_theorems_enforced"], 172);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

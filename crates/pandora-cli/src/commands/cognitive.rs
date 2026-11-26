@@ -35,8 +35,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "energy-audit" => energy_audit(&args[1..]),
         "mfg-master-solve" => mfg_master_solve(&args[1..]),
         "lions-derivative" => lions_derivative(&args[1..]),
+        "jump-simulate" => jump_simulate(&args[1..]),
+        "generator-audit" => generator_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit'"
         ))),
     }
 }
@@ -710,4 +712,85 @@ fn lions_derivative(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("cognitive lions-derivative", json!(rep), display))
+}
+
+fn jump_simulate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "particles",
+            "dim",
+            "steps",
+            "dt",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let particles = parsed
+        .value("particles")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20);
+    let dim = parsed
+        .value("dim")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+    let steps = parsed
+        .value("steps")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10);
+    let dt = parsed
+        .value("dt")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.01);
+
+    let engine = pandora_runtime::mckean_vlasov_jump::MckeanVlasovJumpEngine::default();
+    let res = engine.simulate_particles(particles, dim, steps, dt);
+
+    let display = format!(
+        "McKean-Vlasov Neural Jump-Diffusion Particle Simulation\n\
+         Particles: {}\n\
+         Dimension: {}\n\
+         Total Jumps: {}\n\
+         Propagation of Chaos Error: {:.4e}\n\
+         Well-Posed (Thm 170): {}\n\
+         Chaos Bound Satisfied (Thm 172): {}\n\
+         Theorems: 170 (Jump Well-Posedness), 172 (Propagation of Chaos)",
+        res.particle_count,
+        res.dimension,
+        res.jump_count_total,
+        res.propagation_of_chaos_error,
+        res.theorem_170_well_posed,
+        res.theorem_172_chaos_bound_satisfied
+    );
+
+    Ok(success("cognitive jump-simulate", json!(res), display))
+}
+
+fn generator_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["points", "config", "data-dir", "workspace", "json"])?;
+    let pts_str = parsed.value("points").unwrap_or("0.1,0.5,1.0");
+    let points: Vec<f64> = pts_str
+        .split(',')
+        .filter_map(|s| s.trim().parse::<f64>().ok())
+        .collect();
+
+    let engine = pandora_runtime::mckean_vlasov_jump::MckeanVlasovJumpEngine::default();
+    let audit = engine.audit_generator(&points);
+
+    let display = format!(
+        "Non-Local Fractional Infinitesimal Generator Audit\n\
+         Total Mass Deviation: {:.4e}\n\
+         Non-Local Integral Energy: {:.4e}\n\
+         Dissipation Bound: {:.4}\n\
+         Generator Conserved: {}\n\
+         Theorems: 171 (Non-Local Conservation)",
+        audit.total_mass_deviation,
+        audit.non_local_integral_energy,
+        audit.dissipation_bound,
+        audit.theorem_171_generator_conserved
+    );
+
+    Ok(success("cognitive generator-audit", json!(audit), display))
 }

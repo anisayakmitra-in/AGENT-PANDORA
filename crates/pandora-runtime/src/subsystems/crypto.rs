@@ -101,6 +101,11 @@ impl CryptoSubsystem {
         crate::blind_mpc::BlindMpcEngine::default()
     }
 
+    /// Access the Post-Quantum Lattice zk-SNARK engine (Theorems 167–169).
+    pub fn lattice_zk_snark(&self) -> crate::lattice_zk_snark::LatticeZkSnarkEngine {
+        crate::lattice_zk_snark::LatticeZkSnarkEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -115,7 +120,7 @@ impl CryptoSubsystem {
             mpc_report: mpc_rep,
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
-                132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160,
+                132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160, 167, 168, 169,
             ],
         }
     }

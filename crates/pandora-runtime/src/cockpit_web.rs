@@ -3265,6 +3265,50 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/topological-memory") => {
+            let engine =
+                crate::topological_quantum_memory::TopologicalQuantumMemoryEngine::default();
+            let rot = engine.synthesize_braid_rotation(1.5, 16);
+            let block = engine.allocate_memory_block(5, 4);
+            let fusion = engine.measure_syndrome_and_fuse(0.01, &[0, 1, 0, 1]);
+            let resp = serde_json::json!({
+                "rotation": rot,
+                "memory_block": block,
+                "fusion": fusion,
+                "theorems_enforced": [164, 165, 166]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/lattice-zk") => {
+            let engine = crate::lattice_zk_snark::LatticeZkSnarkEngine::default();
+            let coeffs = vec![42, -99, 1337, 2048];
+            let rows = vec![crate::lattice_zk_snark::PlonkishGateRow {
+                left_wire: 1.0,
+                right_wire: 2.0,
+                out_wire: 3.0,
+                selector_mult: 0.0,
+                selector_add: 1.0,
+            }];
+            let proof = engine.prove(&coeffs, &rows, 500);
+            let report = engine.verify(&proof);
+            let resp = serde_json::json!({
+                "proof": proof,
+                "verification_report": report,
+                "theorems_enforced": [167, 168, 169]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/mckean-vlasov-jump") => {
+            let engine = crate::mckean_vlasov_jump::MckeanVlasovJumpEngine::default();
+            let sim = engine.simulate_particles(10, 2, 5, 0.02);
+            let audit = engine.audit_generator(&[0.1, 0.5, 1.0]);
+            let resp = serde_json::json!({
+                "simulation": sim,
+                "audit": audit,
+                "theorems_enforced": [170, 171, 172]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

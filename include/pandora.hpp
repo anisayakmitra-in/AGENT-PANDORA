@@ -1,6 +1,6 @@
 /**
  * @file pandora.hpp
- * @brief Modern C++20 Header-Only Client for AGENT-PANDORA v4.1.1.
+ * @brief Modern C++20 Header-Only Client for AGENT-PANDORA v4.1.2.
  *
  * Implements RAII resource management, structured envelope handling,
  * and vector dot product acceleration.

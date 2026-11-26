@@ -39,8 +39,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "fe-decrypt" => fe_decrypt(&args[1..]),
         "blind-ot" => blind_ot(&args[1..]),
         "mpc-multiply" => mpc_multiply(&args[1..]),
+        "lattice-prove" => lattice_prove(&args[1..]),
+        "lattice-verify" => lattice_verify(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify'"
         ))),
     }
 }
@@ -643,4 +645,104 @@ fn mpc_multiply(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto mpc-multiply", json!(res), display))
+}
+
+fn lattice_prove(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "coeffs",
+            "queries",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let coeff_str = parsed.value("coeffs").unwrap_or("42,-99,1337,2048");
+    let coeffs: Vec<i64> = coeff_str
+        .split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect();
+    let queries = parsed
+        .value("queries")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(500);
+
+    let engine = pandora_runtime::lattice_zk_snark::LatticeZkSnarkEngine::default();
+    let rows = vec![pandora_runtime::lattice_zk_snark::PlonkishGateRow {
+        left_wire: 1.0,
+        right_wire: 2.0,
+        out_wire: 3.0,
+        selector_mult: 0.0,
+        selector_add: 1.0,
+    }];
+    let proof = engine.prove(&coeffs, &rows, queries);
+
+    let display = format!(
+        "Post-Quantum Lattice zk-SNARK Proof Generation\n\
+         Ring Dimension: {}\n\
+         Commitment Digest: {}\n\
+         Grand Product Eval: {:.6}\n\
+         Fiat-Shamir Challenge: {}\n\
+         QROM Simulation Bound: {:.4e}\n\
+         Proof Valid: {}\n\
+         Theorems: 167 (Ring-SIS Soundness), 168 (PlonKish Permutation), 169 (QROM NIZK)",
+        proof.commitment.ring_dimension,
+        proof.commitment.commitment_digest,
+        proof.grand_product_eval,
+        proof.fiat_shamir_challenge,
+        proof.qrom_simulation_bound,
+        proof.proof_valid
+    );
+
+    Ok(success("crypto lattice-prove", json!(proof), display))
+}
+
+fn lattice_verify(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "coeffs",
+            "queries",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let coeff_str = parsed.value("coeffs").unwrap_or("42,-99,1337,2048");
+    let coeffs: Vec<i64> = coeff_str
+        .split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect();
+    let queries = parsed
+        .value("queries")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(500);
+
+    let engine = pandora_runtime::lattice_zk_snark::LatticeZkSnarkEngine::default();
+    let rows = vec![pandora_runtime::lattice_zk_snark::PlonkishGateRow {
+        left_wire: 1.0,
+        right_wire: 2.0,
+        out_wire: 3.0,
+        selector_mult: 0.0,
+        selector_add: 1.0,
+    }];
+    let proof = engine.prove(&coeffs, &rows, queries);
+    let report = engine.verify(&proof);
+
+    let display = format!(
+        "Post-Quantum Lattice zk-SNARK Verification\n\
+         Commitment Sound (Thm 167): {}\n\
+         Permutation Sound (Thm 168): {}\n\
+         QROM NIZK Verified (Thm 169): {}\n\
+         Verification Passed: {}",
+        report.theorem_167_commitment_sound,
+        report.theorem_168_permutation_sound,
+        report.theorem_169_qrom_nizk_verified,
+        report.verification_passed
+    );
+
+    Ok(success("crypto lattice-verify", json!(report), display))
 }

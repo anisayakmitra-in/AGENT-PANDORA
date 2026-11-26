@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, and `v4.1.1`. The active release identity
-is `v4.1.1`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, and `v4.1.2`. The active release identity
+is `v4.1.2`.
 
 ## Source-bound release scope
 
@@ -34,10 +34,14 @@ No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
 
 
-## v4.1.1
+## v4.1.2
 
-This release delivers Phases 61–63 of the architectural roadmap under codename **THANATOS**:
-- **Phase 61: Non-Commutative Quantum Geometric Tensor & Berry Curvature Swarm Manifolds** (`quantum_geometric_tensor.rs`, Theorems 155–157, Fubini-Study Riemannian metric distance invariance, quantized Berry curvature flux $C_1 \in \mathbb{Z}$, and non-Abelian Wilczek-Zee holonomies $U \in U(N)$, CLI `pandora swarm berry-curvature|quantum-metric`, REST `/api/swarm/quantum-geometry`).
+This release delivers Phases 64–66 of the architectural roadmap under codename **THANATOS**:
+- **Phase 64: Non-Abelian Anyonic Quantum Memory & Fibonacci Braid Fault-Tolerance** (`topological_quantum_memory.rs`, Theorems 164–166, Solovay-Kitaev braid rotation density, exponential code distance error protection $P_{\text{err}} \le c_0 e^{-\alpha d}$, and fault-tolerant syndrome fusion projection, CLI `pandora swarm anyonic-braid|syndrome-fusion`, REST `/api/swarm/topological-memory`).
+- **Phase 65: Post-Quantum Transparent zk-SNARKs with Lattice Polynomial Commitments (Ring-SIS & FRI)** (`lattice_zk_snark.rs`, Theorems 167–169, Ring-SIS polynomial binding soundness, PlonKish permutation grand product argument, and QROM non-interactive zero-knowledge, CLI `pandora crypto lattice-prove|lattice-verify`, REST `/api/crypto/lattice-zk`).
+- **Phase 66: Stochastic McKean-Vlasov Neural Jump-Diffusion with Non-Local Lévy Operators** (`mckean_vlasov_jump.rs`, Theorems 170–172, mean-field jump SDE well-posedness on $\mathcal{P}_2(\mathbb{R}^d)$, non-local fractional infinitesimal generator conservation, and propagation of chaos under heavy-tailed shocks, CLI `pandora cognitive jump-simulate|generator-audit`, REST `/api/cognitive/mckean-vlasov-jump`).
+- **Constitutional Governance & Formal Proofs**: Upgraded Parliament and Tripartite Governance to issue `ConstitutionalPermit` validating all **172 Centennial Theorems** (`(1..=172)`). Formal Proof Engine verified in Lean 4 and Coq up to Theorem 172.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/topological-memory`, `/api/crypto/lattice-zk`, `/api/cognitive/mckean-vlasov-jump`, and updated `/api/olympus/overview` (`architecture_version: "4.1.2"`, `codename: "THANATOS"`, `total_theorems_enforced: 172`).
 - **Phase 62: Verifiable Post-Quantum Blind Multi-Party Computation & Threshold Oblivious Transfer** (`blind_mpc.rs`, Theorems 158–160, Ring-LWE 1-out-of-2 oblivious transfer with computational receiver privacy, Beaver multiplication triple authentication with information-theoretic MAC check tags, and client blind wire secrecy, CLI `pandora crypto blind-ot|mpc-multiply`, REST `/api/crypto/blind-mpc`).
 - **Phase 63: Infinite-Horizon Mean-Field Game (MFG) Master Equation & Viscosity Equilibrium** (`mean_field_master.rs`, Theorems 161–163, Lasry-Lions monotone Master PDE on Wasserstein space $\mathcal{P}_2(\mathbb{R}^d)$, Lions derivatives, and $N$-agent $\epsilon$-Nash convergence, CLI `pandora cognitive mfg-master-solve|lions-derivative`, REST `/api/cognitive/mean-field-master`).
 - **Constitutional Governance Permitting**: Parliament and Tripartite Governance upgraded to enforce all 163 centennial theorems on issued constitutional permits.

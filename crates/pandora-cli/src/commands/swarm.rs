@@ -89,8 +89,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "tqft-entropy" => tqft_entropy(&args[1..]),
         "berry-curvature" => berry_curvature(&args[1..]),
         "quantum-metric" => quantum_metric(&args[1..]),
+        "anyonic-braid" => anyonic_braid(&args[1..]),
+        "syndrome-fusion" => syndrome_fusion(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion"
         ))),
     }
 }
@@ -1509,6 +1511,97 @@ fn quantum_metric(args: &[String]) -> Result<CommandResult, CliError> {
             "gauge_invariant_ds2": tensor.gauge_invariant_ds2,
             "holonomy": holonomy,
             "theorems": [155, 157]
+        }),
+        text,
+    ))
+}
+
+fn anyonic_braid(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "target",
+            "max-length",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let target = parsed
+        .value("target")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+    let max_length = parsed
+        .value("max-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+
+    let engine =
+        pandora_runtime::topological_quantum_memory::TopologicalQuantumMemoryEngine::default();
+    let report = engine.synthesize_braid_rotation(target, max_length);
+    let block = engine.allocate_memory_block(5, 4);
+
+    let text = format!(
+        "Fibonacci Anyonic Braid Synthesis:\n  Target Angle: {:.4}\n  Achieved: {:.4}\n  Error: {:.4e}\n  Word Length: {}\n  Solovay-Kitaev Bound: {:.2}\n  Logical Fidelity: {:.6}\n  Theorems: 164 (Braiding Density), 165 (Decoherence Invariance)",
+        report.target_rotation_angle,
+        report.achieved_rotation_angle,
+        report.approximation_error,
+        report.word_length,
+        report.solovay_kitaev_depth_bound,
+        block.logical_state_fidelity
+    );
+
+    Ok(success(
+        "swarm anyonic-braid",
+        json!({
+            "report": report,
+            "memory_block": block,
+            "theorems": [164, 165]
+        }),
+        text,
+    ))
+}
+
+fn syndrome_fusion(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "physical-error",
+            "syndromes",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let physical_error = parsed
+        .value("physical-error")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.01);
+    let syn_str = parsed.value("syndromes").unwrap_or("0,1,0,1");
+    let syndromes: Vec<u8> = syn_str
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u8>().ok())
+        .collect();
+
+    let engine =
+        pandora_runtime::topological_quantum_memory::TopologicalQuantumMemoryEngine::default();
+    let report = engine.measure_syndrome_and_fuse(physical_error, &syndromes);
+
+    let text = format!(
+        "Topological Syndrome Measurement & Fusion:\n  Primary Outcome: {:?}\n  Recovery Success: {}\n  Post-Fusion Fidelity: {:.6}\n  Recovery Probability: {:.6}\n  Theorem: 166 (Fault-Tolerant Fusion)",
+        report.primary_outcome,
+        report.recovery_success,
+        report.post_fusion_fidelity,
+        report.theorem_166_recovery_probability
+    );
+
+    Ok(success(
+        "swarm syndrome-fusion",
+        json!({
+            "fusion_report": report,
+            "theorems": [166]
         }),
         text,
     ))
