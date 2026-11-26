@@ -3309,6 +3309,42 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/majorana-braiding") => {
+            let engine = crate::majorana_braiding::MajoranaBraidingEngine::default();
+            let wire = engine.inspect_wire(0.8, 1.2);
+            let braid = engine.braid_zero_modes(1, 10.0);
+            let audit = engine.audit_parity_protection();
+            let resp = serde_json::json!({
+                "wire_state": wire,
+                "braid_report": braid,
+                "parity_audit": audit,
+                "theorems_enforced": [173, 174, 175]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/verifiable-delay") => {
+            let engine = crate::verifiable_delay::VerifiableDelayEngine::default();
+            let eval = engine.evaluate(7, 10);
+            let report = engine.verify(&eval.proof);
+            let resp = serde_json::json!({
+                "evaluation": eval,
+                "verification": report,
+                "theorems_enforced": [176, 177, 178]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/path-integral-thermo") => {
+            let engine =
+                crate::path_integral_thermodynamics::PathIntegralThermodynamicsEngine::default();
+            let jarzynski = engine.evaluate_jarzynski_work(1.5, 0.5, 50);
+            let audit = engine.audit_free_energy(2.2, 1.8);
+            let resp = serde_json::json!({
+                "jarzynski": jarzynski,
+                "audit": audit,
+                "theorems_enforced": [179, 180, 181]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

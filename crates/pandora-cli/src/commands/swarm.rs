@@ -91,8 +91,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "quantum-metric" => quantum_metric(&args[1..]),
         "anyonic-braid" => anyonic_braid(&args[1..]),
         "syndrome-fusion" => syndrome_fusion(&args[1..]),
+        "majorana-braid" => majorana_braid(&args[1..]),
+        "parity-audit" => parity_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit"
         ))),
     }
 }
@@ -1602,6 +1604,93 @@ fn syndrome_fusion(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "fusion_report": report,
             "theorems": [166]
+        }),
+        text,
+    ))
+}
+
+fn majorana_braid(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "parity",
+            "adiabatic-time",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let parity = parsed
+        .value("parity")
+        .and_then(|v| v.parse::<i8>().ok())
+        .unwrap_or(1);
+    let time = parsed
+        .value("adiabatic-time")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(10.0);
+
+    let engine = pandora_runtime::majorana_braiding::MajoranaBraidingEngine::default();
+    let wire = engine.inspect_wire(0.8, 1.2);
+    let braid = engine.braid_zero_modes(parity, time);
+
+    let text = format!(
+        "Majorana Zero-Mode T-Junction Braiding:\n  Initial Parity: {}\n  Final Parity: {}\n  Berry Phase: {:.4}\n  Unitary Fidelity: {:.6}\n  Zero-Bias Conductance: {:.4e}\n  Theorems: 173 (Majorana Clifford G_0), 174 (Braiding Unitary)",
+        braid.initial_parity,
+        braid.final_parity,
+        braid.geometric_phase,
+        braid.unitary_fidelity,
+        wire.zero_bias_conductance
+    );
+
+    Ok(success(
+        "swarm majorana-braid",
+        json!({
+            "wire_state": wire,
+            "braid_report": braid,
+            "theorems": [173, 174]
+        }),
+        text,
+    ))
+}
+
+fn parity_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "wire-length",
+            "coherence",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let length = parsed
+        .value("wire-length")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(15.0);
+    let coherence = parsed
+        .value("coherence")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+
+    let engine = pandora_runtime::majorana_braiding::MajoranaBraidingEngine::new(length, coherence);
+    let audit = engine.audit_parity_protection();
+
+    let text = format!(
+        "Fermion Parity Quasiparticle Decoherence Immunity Audit:\n  Wire Length / xi: {:.2}\n  Protection Factor: {:.4e}\n  Local Noise Suppression: {:.2} dB\n  Quasiparticle Immune: {}\n  Theorem: 175 (Parity Local Protection)",
+        audit.wire_length / audit.coherence_length,
+        audit.protection_factor,
+        audit.local_noise_suppression_db,
+        audit.theorem_175_quasiparticle_immune
+    );
+
+    Ok(success(
+        "swarm parity-audit",
+        json!({
+            "parity_audit": audit,
+            "theorems": [175]
         }),
         text,
     ))

@@ -41,8 +41,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "mpc-multiply" => mpc_multiply(&args[1..]),
         "lattice-prove" => lattice_prove(&args[1..]),
         "lattice-verify" => lattice_verify(&args[1..]),
+        "vdf-evaluate" => vdf_evaluate(&args[1..]),
+        "vdf-verify" => vdf_verify(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify'"
         ))),
     }
 }
@@ -745,4 +747,68 @@ fn lattice_verify(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto lattice-verify", json!(report), display))
+}
+
+fn vdf_evaluate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["seed", "steps", "config", "data-dir", "workspace", "json"],
+    )?;
+    let seed = parsed
+        .value("seed")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(7);
+    let steps = parsed
+        .value("steps")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+
+    let engine = pandora_runtime::verifiable_delay::VerifiableDelayEngine::default();
+    let res = engine.evaluate(seed, steps);
+
+    let display = format!(
+        "Verifiable Delay Function (VDF) Evaluation\n\
+         Input Seed x: {}\n\
+         Delay Steps T: {}\n\
+         Output y: {}\n\
+         Wesolowski Proof pi: {}\n\
+         Beacon Randomness: {}\n\
+         Theorems: 176 (Sequential Time-Lock), 177 (Wesolowski Proof), 178 (Unbiased Beacon)",
+        res.input_x, res.delay_steps_t, res.output_y, res.proof.proof_pi, res.beacon_randomness
+    );
+
+    Ok(success("crypto vdf-evaluate", json!(res), display))
+}
+
+fn vdf_verify(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["seed", "steps", "config", "data-dir", "workspace", "json"],
+    )?;
+    let seed = parsed
+        .value("seed")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(7);
+    let steps = parsed
+        .value("steps")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+
+    let engine = pandora_runtime::verifiable_delay::VerifiableDelayEngine::default();
+    let res = engine.evaluate(seed, steps);
+    let report = engine.verify(&res.proof);
+
+    let display = format!(
+        "Verifiable Delay Function (VDF) Verification\n\
+         Time-Lock Valid (Thm 176): {}\n\
+         Soundness Verified (Thm 177): {}\n\
+         Beacon Unbiased (Thm 178): {}\n\
+         Verification Passed: {}",
+        report.theorem_176_time_lock_valid,
+        report.theorem_177_soundness_verified,
+        report.theorem_178_beacon_unbiased,
+        report.verification_passed
+    );
+
+    Ok(success("crypto vdf-verify", json!(report), display))
 }

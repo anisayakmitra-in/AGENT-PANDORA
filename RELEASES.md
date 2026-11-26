@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, and `v4.1.2`. The active release identity
-is `v4.1.2`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, and `v4.1.3`. The active release identity
+is `v4.1.3`.
 
 ## Source-bound release scope
 
@@ -33,6 +33,15 @@ Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
 
+
+## v4.1.3
+
+This release delivers Phases 67–69 of the architectural roadmap under codename **THANATOS**:
+- **Phase 67: Topological Defect Entanglement & Majorana Zero-Mode Braiding in 1D Kitaev Superconducting Swarm Wires** (`majorana_braiding.rs`, Theorems 173–175, Majorana Clifford algebra $\{\gamma_i, \gamma_j\} = 2\delta_{ij}$, zero-bias conductance quantization $G_0 = 2e^2/h$, T-junction adiabatic non-Abelian braiding unitary $U_{ij} = \frac{1}{\sqrt{2}}(1 + \gamma_i \gamma_j)$, and exponential fermion parity protection, CLI `pandora swarm majorana-braid|parity-audit`, REST `/api/swarm/majorana-braiding`).
+- **Phase 68: Multi-Party Verifiable Delay Functions (VDF) with Wesolowski Proofs** (`verifiable_delay.rs`, Theorems 176–178, repeated squaring time-lock non-parallelizability, succinct Wesolowski proof knowledge soundness $\pi = x^{\lfloor 2^T/\ell \rfloor} \pmod N$, and threshold distributed beacon randomness unbiasability, CLI `pandora crypto vdf-evaluate|vdf-verify`, REST `/api/crypto/verifiable-delay`).
+- **Phase 69: Non-Equilibrium Path-Integral Swarm Thermodynamics & Jarzynski Equality** (`path_integral_thermodynamics.rs`, Theorems 179–181, Feynman-Kac non-equilibrium action $\mathcal{S}[x]$, Jarzynski exact identity $\langle e^{-\beta W} \rangle = e^{-\beta \Delta F}$, and Crooks dissipation bound $\langle W_{\text{diss}} \rangle \ge 0$, CLI `pandora cognitive jarzynski-eval|free-energy-audit`, REST `/api/cognitive/path-integral-thermo`).
+- **Constitutional Governance & Formal Proofs**: Upgraded Parliament and Tripartite Governance to issue `ConstitutionalPermit` validating all **181 Centennial Theorems** (`(1..=181)`). Formal Proof Engine verified in Lean 4 and Coq up to Theorem 181.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/majorana-braiding`, `/api/crypto/verifiable-delay`, `/api/cognitive/path-integral-thermo`, and updated `/api/olympus/overview` (`architecture_version: "4.1.3"`, `codename: "THANATOS"`, `total_theorems_enforced: 181`).
 
 ## v4.1.2
 

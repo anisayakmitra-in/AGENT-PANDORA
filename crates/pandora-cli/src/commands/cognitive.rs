@@ -37,8 +37,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "lions-derivative" => lions_derivative(&args[1..]),
         "jump-simulate" => jump_simulate(&args[1..]),
         "generator-audit" => generator_audit(&args[1..]),
+        "jarzynski-eval" => jarzynski_eval(&args[1..]),
+        "free-energy-audit" => free_energy_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit'"
         ))),
     }
 }
@@ -793,4 +795,94 @@ fn generator_audit(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("cognitive generator-audit", json!(audit), display))
+}
+
+fn jarzynski_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "delta-f",
+            "speed",
+            "samples",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let delta_f = parsed
+        .value("delta-f")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+    let speed = parsed
+        .value("speed")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let samples = parsed
+        .value("samples")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(50);
+
+    let engine =
+        pandora_runtime::path_integral_thermodynamics::PathIntegralThermodynamicsEngine::default();
+    let rep = engine.evaluate_jarzynski_work(delta_f, speed, samples);
+
+    let display = format!(
+        "Non-Equilibrium Jarzynski Work-Free Energy Relation Evaluation\n\
+         Samples: {}\n\
+         Inverse Temp beta: {:.4}\n\
+         Mean Work: {:.4}\n\
+         Nominal Delta F: {:.4}\n\
+         Jarzynski Average <exp(-beta*W)>: {:.6}\n\
+         Residual Error: {:.4e}\n\
+         Equality Satisfied: {}\n\
+         Theorems: 179 (Path Action), 180 (Jarzynski Equality)",
+        rep.sample_count,
+        rep.inverse_temperature_beta,
+        rep.mean_work,
+        rep.free_energy_difference_delta_f,
+        rep.jarzynski_average,
+        rep.jarzynski_residual,
+        rep.theorem_180_equality_satisfied
+    );
+
+    Ok(success("cognitive jarzynski-eval", json!(rep), display))
+}
+
+fn free_energy_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["work", "delta-f", "config", "data-dir", "workspace", "json"],
+    )?;
+    let work = parsed
+        .value("work")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.2);
+    let delta_f = parsed
+        .value("delta-f")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.8);
+
+    let engine =
+        pandora_runtime::path_integral_thermodynamics::PathIntegralThermodynamicsEngine::default();
+    let audit = engine.audit_free_energy(work, delta_f);
+
+    let display = format!(
+        "Crooks Fluctuation & Second Law Dissipation Audit\n\
+         Dissipated Work Mean: {:.4}\n\
+         KL Divergence Entropy Production: {:.4}\n\
+         Second Law Satisfied: {}\n\
+         Crooks Verified: {}\n\
+         Theorems: 181 (Crooks & Second Law Dissipation)",
+        audit.dissipated_work_mean,
+        audit.kl_divergence_entropy_production,
+        audit.second_law_satisfied,
+        audit.theorem_181_crooks_verified
+    );
+
+    Ok(success(
+        "cognitive free-energy-audit",
+        json!(audit),
+        display,
+    ))
 }
