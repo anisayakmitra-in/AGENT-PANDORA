@@ -3,10 +3,10 @@
 //! Phase 85, 86, 87 End-to-End Integration Tests (v4.1.9, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 85: Categorical Memory & Kan Extension Alignment (Theorems 227–229)
-//! - Phase 86: Game-Theoretic Mechanism Design & Core Equivalence (Theorems 230–232)
-//! - Phase 87: Conformal Risk Control & Finite-Sample PAC Bounds (Theorems 233–235)
-//! - Cockpit Web REST endpoints & Centennial Verification Suite (Theorems 1–235)
+//! - Phase 85: Categorical Memory & Kan Extension Alignment (Theorems 227â€“229)
+//! - Phase 86: Game-Theoretic Mechanism Design & Core Equivalence (Theorems 230â€“232)
+//! - Phase 87: Conformal Risk Control & Finite-Sample PAC Bounds (Theorems 233â€“235)
+//! - Cockpit Web REST endpoints & Centennial Verification Suite (Theorems 1â€“235)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -321,15 +321,15 @@ fn test_cockpit_web_phase85_86_87_routes_and_centennial_suite() {
     // 4. Cockpit Overview & Centennial Suite (235 Theorems)
     let (code, val) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(val["architecture_version"], "4.1.9");
+    assert_eq!(val["architecture_version"], "4.2.0");
     assert_eq!(val["codename"], "THANATOS");
-    assert_eq!(val["total_theorems_enforced"], 235);
+    assert_eq!(val["total_theorems_enforced"], 244);
     assert!(
         val["formal_verification"]["all_proofs_valid"]
             .as_bool()
             .unwrap()
     );
-    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 235);
+    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 244);
 
     // Shutdown
     shutdown_handle.store(true, Ordering::SeqCst);

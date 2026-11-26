@@ -55,8 +55,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "non-interference-audit" => non_interference_audit(&args[1..]),
         "vcg-auction-audit" => vcg_auction_audit(&args[1..]),
         "shapley-core-eval" => shapley_core_eval(&args[1..]),
+        "threshold-zk-prove" => threshold_zk_prove(&args[1..]),
+        "fiat-shamir-audit" => fiat_shamir_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit', 'linear-token-eval', 'non-interference-audit', 'vcg-auction-audit', 'shapley-core-eval'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit', 'linear-token-eval', 'non-interference-audit', 'vcg-auction-audit', 'shapley-core-eval', 'threshold-zk-prove', 'fiat-shamir-audit'"
         ))),
     }
 }
@@ -1447,6 +1449,103 @@ fn shapley_core_eval(args: &[String]) -> Result<CommandResult, CliError> {
             "attribution_report": attr,
             "stability_report": stab,
             "theorems": [231, 232]
+        }),
+        display,
+    ))
+}
+
+fn threshold_zk_prove(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "threshold",
+            "parties",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let threshold = parsed
+        .value("threshold")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3);
+    let parties = parsed
+        .value("parties")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5);
+
+    let engine = pandora_runtime::threshold_zk::ThresholdZkEngine::default();
+    let rep = engine.evaluate_threshold_sigma(threshold, parties);
+
+    let display = format!(
+        "Post-Quantum Threshold Zero-Knowledge Proof:\n\
+         Threshold T: {}\n\
+         Total Parties N: {}\n\
+         Protocol Completeness Verified: {}\n\
+         Statistical Zero-Knowledge Slack: {:.6e}\n\
+         Theorems: 239 (Post-Quantum Threshold Zero-Knowledge Arguments)",
+        rep.threshold_t,
+        rep.total_parties_n,
+        rep.protocol_completeness_verified,
+        rep.statistical_zero_knowledge_slack
+    );
+
+    Ok(success(
+        "crypto threshold-zk-prove",
+        json!({
+            "threshold_sigma": rep,
+            "theorems": [239]
+        }),
+        display,
+    ))
+}
+
+fn fiat_shamir_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["forks", "bits", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let forks = parsed
+        .value("forks")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+    let bits = parsed
+        .value("bits")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(256);
+
+    let engine = pandora_runtime::threshold_zk::ThresholdZkEngine::default();
+    let ext = engine.audit_witness_extraction(forks);
+    let fs = engine.verify_fiat_shamir_non_malleability(bits);
+
+    let display = format!(
+        "Post-Quantum Fiat-Shamir Transform & Special Soundness:\n\
+         Transcript Forks Count: {}\n\
+         Extraction Success Probability: {:.4}\n\
+         Module-LWE Slack Norm: {:.4}\n\
+         Witness Extracted Valid: {}\n\
+         Challenge Entropy Bits: {}\n\
+         Simulation Soundness Certified: {}\n\
+         Non-Malleability Advantage: {:.6e}\n\
+         Theorems: 240 (Special Soundness & Extraction), 241 (Simulation-Sound Fiat-Shamir)",
+        ext.transcript_forks_count,
+        ext.extraction_success_probability,
+        ext.module_lwe_slack_norm,
+        ext.witness_extracted_valid,
+        fs.challenge_entropy_bits,
+        fs.simulation_soundness_certified,
+        fs.non_malleability_advantage
+    );
+
+    Ok(success(
+        "crypto fiat-shamir-audit",
+        json!({
+            "witness_extraction": ext,
+            "fiat_shamir": fs,
+            "theorems": [240, 241]
         }),
         display,
     ))

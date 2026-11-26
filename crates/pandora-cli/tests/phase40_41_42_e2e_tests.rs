@@ -3,9 +3,9 @@
 //! Phase 40, Phase 41, & Phase 42 End-to-End Integration Tests
 //!
 //! Validates:
-//! - Phase 40: Distributed Multi-Tenant Mesh Orchestration & Cross-Cluster Atomic Commitments (Theorems 92–94)
-//! - Phase 41: Hyper-Dimensional Vector VFS & Holographic Cognitive Associative Memory (Theorems 95–97)
-//! - Phase 42: Formal Kernel Verification & Lean 4 / Coq Machine-Checked Proof Exports (Theorems 98–100)
+//! - Phase 40: Distributed Multi-Tenant Mesh Orchestration & Cross-Cluster Atomic Commitments (Theorems 92â€“94)
+//! - Phase 41: Hyper-Dimensional Vector VFS & Holographic Cognitive Associative Memory (Theorems 95â€“97)
+//! - Phase 42: Formal Kernel Verification & Lean 4 / Coq Machine-Checked Proof Exports (Theorems 98â€“100)
 //! - Cockpit Web REST Endpoints:
 //!   - `GET /api/swarm/mesh`
 //!   - `GET /api/memory/hyper`
@@ -222,7 +222,7 @@ fn test_phase42_formal_verification_cli() {
     let res = fixture.run_success(&["audit", "formal-verify", "--dialect", "lean4", "--json"]);
     assert_eq!(res["dialect"], "lean4");
     assert_eq!(res["all_proofs_valid"], true);
-    assert_eq!(res["total_centennial_theorems"], 181);
+    assert_eq!(res["total_centennial_theorems"], 244);
     assert_eq!(res["theorem_98_soundness"], true);
     assert_eq!(res["theorem_99_decidable"], true);
     assert_eq!(res["theorem_100_centennial_complete"], true);
@@ -231,7 +231,7 @@ fn test_phase42_formal_verification_cli() {
     let res = fixture.run_success(&["audit", "formal-verify", "--dialect", "coq", "--json"]);
     assert_eq!(res["dialect"], "coq");
     assert_eq!(res["all_proofs_valid"], true);
-    assert_eq!(res["total_centennial_theorems"], 181);
+    assert_eq!(res["total_centennial_theorems"], 244);
 }
 
 #[test]
@@ -271,14 +271,14 @@ fn test_cockpit_web_phase40_41_42_rest_endpoints() {
     let (code, formal) = query_http(port, "/api/audit/formal");
     assert_eq!(code, 200);
     assert_eq!(formal["all_proofs_valid"], true);
-    assert_eq!(formal["total_centennial_theorems"], 181);
+    assert_eq!(formal["total_centennial_theorems"], 244);
     assert_eq!(formal["theorem_100_centennial_complete"], true);
 
     // 4. Olympus Centennial Overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["total_theorems_enforced"], 235);
-    assert_eq!(overview["architecture_version"], "4.1.9");
+    assert_eq!(overview["total_theorems_enforced"], 244);
+    assert_eq!(overview["architecture_version"], "4.2.0");
     assert_eq!(overview["codename"], "THANATOS");
     assert_eq!(overview["formal_verification"]["all_proofs_valid"], true);
 

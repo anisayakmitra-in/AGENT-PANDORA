@@ -3,9 +3,9 @@
 //! Phase 43, 44, 45 End-to-End Integration Tests
 //!
 //! Validates:
-//! - Phase 43: Recursive ZK Rollups & STARK Proofs (Theorems 101–103)
-//! - Phase 44: Autonomous Self-Healing Kernel & Invariant Synthesis (Theorems 104–106)
-//! - Phase 45: Neuromorphic Spiking Context VFS & Temporal Memory Decay (Theorems 107–109)
+//! - Phase 43: Recursive ZK Rollups & STARK Proofs (Theorems 101â€“103)
+//! - Phase 44: Autonomous Self-Healing Kernel & Invariant Synthesis (Theorems 104â€“106)
+//! - Phase 45: Neuromorphic Spiking Context VFS & Temporal Memory Decay (Theorems 107â€“109)
 //! - Cockpit Web REST endpoints & Olympus System Overview
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
@@ -221,9 +221,9 @@ fn test_cockpit_web_phase43_44_45_rest_endpoints() {
     // 4. Test /api/olympus/overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
+    assert_eq!(overview["architecture_version"], "4.2.0");
     assert_eq!(overview["codename"], "THANATOS");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["total_theorems_enforced"], 244);
 
     shutdown_handle.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(("127.0.0.1", port));

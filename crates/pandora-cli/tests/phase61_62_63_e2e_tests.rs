@@ -3,10 +3,10 @@
 //! Phase 61, 62, 63 End-to-End Integration Tests (v4.1.1, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 61: Non-Commutative Quantum Geometric Tensor & Berry Curvature Swarm Manifolds (Theorems 155–157)
-//! - Phase 62: Verifiable Post-Quantum Blind Multi-Party Computation & Threshold Oblivious Transfer (Theorems 158–160)
-//! - Phase 63: Infinite-Horizon Mean-Field Game (MFG) Master Equation & Viscosity Equilibrium (Theorems 161–163)
-//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–163)
+//! - Phase 61: Non-Commutative Quantum Geometric Tensor & Berry Curvature Swarm Manifolds (Theorems 155â€“157)
+//! - Phase 62: Verifiable Post-Quantum Blind Multi-Party Computation & Threshold Oblivious Transfer (Theorems 158â€“160)
+//! - Phase 63: Infinite-Horizon Mean-Field Game (MFG) Master Equation & Viscosity Equilibrium (Theorems 161â€“163)
+//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1â€“163)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -266,8 +266,8 @@ fn test_cockpit_web_v411_routes_and_thanatos_overview() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

@@ -3,10 +3,10 @@
 //! Phase 58, 59, 60 End-to-End Integration Tests (v4.1.0, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 58: Topological Quantum Field Theory (TQFT) & Chern-Simons Invariants (Theorems 146–148)
-//! - Phase 59: Homomorphic Functional Encryption & Verifiable Inner-Product Decryption (Theorems 149–151)
-//! - Phase 60: Distributed Symplectic Hamiltonian Neural ODEs & Energy-Conserving Swarm Dynamics (Theorems 152–154)
-//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–154)
+//! - Phase 58: Topological Quantum Field Theory (TQFT) & Chern-Simons Invariants (Theorems 146â€“148)
+//! - Phase 59: Homomorphic Functional Encryption & Verifiable Inner-Product Decryption (Theorems 149â€“151)
+//! - Phase 60: Distributed Symplectic Hamiltonian Neural ODEs & Energy-Conserving Swarm Dynamics (Theorems 152â€“154)
+//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1â€“154)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -256,8 +256,8 @@ fn test_cockpit_web_v410_routes_and_thanatos_overview() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

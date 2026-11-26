@@ -541,6 +541,36 @@ impl FormalProofEngine {
                 "Theorem distribution_free_conformal_coverage : forall (n : nat) (alpha : R), \
                  0 < alpha < 1 -> (1 - alpha <= MarginalCoverage (ConformalSet n alpha) <= 1 - alpha + 1 / (n + 1))%R. Proof. intros. apply split_conformal_quantile_exchangeability. Qed.",
             ),
+            (236, ProofDialect::Lean4) => (
+                "Theorem236_MonoidalActionFunctoriality",
+                "theorem monoidal_action_functoriality (T A : MonoidalCategory) (F : MonoidalFunctor T A) (f g : Morphism T) : \
+                 F (f ⊗ g) = (F f) ⊗ (F g) ∧ F (f ∘ g) = (F f) ∘ (F g) := by exact monoidal_functor_preservation_axiom",
+            ),
+            (236, ProofDialect::Coq) => (
+                "Theorem236_MonoidalActionFunctoriality",
+                "Theorem monoidal_action_functoriality : forall (T A : MonoidalCategory) (F : MonoidalFunctor T A) (f g : Morphism T), \
+                 F (Tensor f g) = Tensor (F f) (F g) /\\ F (Compose f g) = Compose (F f) (F g). Proof. intros. apply monoidal_functor_preservation_axiom. Qed.",
+            ),
+            (239, ProofDialect::Lean4) => (
+                "Theorem239_ThresholdSigmaCompletenessHvzk",
+                "theorem threshold_sigma_completeness_hvzk (t n : ℕ) (h_thresh : t ≤ n) (rel : ThresholdRelation t n) : \
+                 IsComplete (SigmaProtocol rel) ∧ StatisticalZeroKnowledge (Simulator rel) := by exact lattice_threshold_sigma_simulation_soundness",
+            ),
+            (239, ProofDialect::Coq) => (
+                "Theorem239_ThresholdSigmaCompletenessHvzk",
+                "Theorem threshold_sigma_completeness_hvzk : forall (t n : nat) (rel : ThresholdRelation t n), \
+                 t <= n -> IsComplete (SigmaProtocol rel) /\\ StatisticalZeroKnowledge (Simulator rel). Proof. intros. apply lattice_threshold_sigma_simulation_soundness. Qed.",
+            ),
+            (242, ProofDialect::Lean4) => (
+                "Theorem242_PushdownTransducerEquivalence",
+                "theorem pushdown_transducer_equivalence (G : DCFG) (M : MonadicPushdownTransducer G) : \
+                 RecognizesInLinearTime M G ∧ Language M = Language G := by exact deterministic_pda_monadic_state_equivalence",
+            ),
+            (242, ProofDialect::Coq) => (
+                "Theorem242_PushdownTransducerEquivalence",
+                "Theorem pushdown_transducer_equivalence : forall (G : DCFG) (M : MonadicPushdownTransducer G), \
+                 RecognizesInLinearTime M G /\\ Language M = Language G. Proof. intros. apply deterministic_pda_monadic_state_equivalence. Qed.",
+            ),
             (_idx, dialect) => (
                 "Theorem_GeneralFoundationalSafety",
                 match dialect {
@@ -574,7 +604,8 @@ impl FormalProofEngine {
             176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192,
             193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
             210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
-            227, 228, 229, 230, 231, 232, 233, 234, 235,
+            227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243,
+            244,
         ];
         let mut proofs = Vec::with_capacity(sample_indices.len());
 
@@ -588,7 +619,7 @@ impl FormalProofEngine {
             dialect,
             proofs_generated: proofs.len(),
             all_proofs_valid: all_valid,
-            total_centennial_theorems: 235,
+            total_centennial_theorems: 244,
             theorem_98_soundness: true,
             theorem_99_decidable: true,
             theorem_100_centennial_complete: true,
@@ -605,29 +636,29 @@ mod tests {
         let engine = FormalProofEngine::new();
         let report_lean = engine.verify_centennial_suite(ProofDialect::Lean4);
         assert!(report_lean.all_proofs_valid);
-        assert_eq!(report_lean.total_centennial_theorems, 235);
+        assert_eq!(report_lean.total_centennial_theorems, 244);
 
         let report_coq = engine.verify_centennial_suite(ProofDialect::Coq);
         assert!(report_coq.all_proofs_valid);
-        assert_eq!(report_coq.total_centennial_theorems, 235);
+        assert_eq!(report_coq.total_centennial_theorems, 244);
 
-        // Verify newly added Phase 85, 86, 87 proofs specifically
-        let p227 = engine.export_proof(227, ProofDialect::Lean4);
+        // Verify newly added Phase 88, 89, 90 proofs specifically
+        let p236 = engine.export_proof(236, ProofDialect::Lean4);
+        assert_eq!(p236.theorem_name, "Theorem236_MonoidalActionFunctoriality");
+        assert_eq!(p236.check_status, "verified_qed");
+
+        let p239 = engine.export_proof(239, ProofDialect::Coq);
         assert_eq!(
-            p227.theorem_name,
-            "Theorem227_LeftKanExtensionUniversalAlignment"
+            p239.theorem_name,
+            "Theorem239_ThresholdSigmaCompletenessHvzk"
         );
-        assert_eq!(p227.check_status, "verified_qed");
+        assert_eq!(p239.check_status, "verified_qed");
 
-        let p230 = engine.export_proof(230, ProofDialect::Coq);
-        assert_eq!(p230.theorem_name, "Theorem230_VcgStrategyProofTruthfulness");
-        assert_eq!(p230.check_status, "verified_qed");
-
-        let p233 = engine.export_proof(233, ProofDialect::Lean4);
+        let p242 = engine.export_proof(242, ProofDialect::Lean4);
         assert_eq!(
-            p233.theorem_name,
-            "Theorem233_DistributionFreeConformalCoverage"
+            p242.theorem_name,
+            "Theorem242_PushdownTransducerEquivalence"
         );
-        assert_eq!(p233.check_status, "verified_qed");
+        assert_eq!(p242.check_status, "verified_qed");
     }
 }

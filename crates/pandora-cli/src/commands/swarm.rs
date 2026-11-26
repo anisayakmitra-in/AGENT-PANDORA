@@ -105,8 +105,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "spectral-cheeger-audit" => spectral_cheeger_audit(&args[1..]),
         "kan-extension" => kan_extension(&args[1..]),
         "adjoint-sync" => adjoint_sync(&args[1..]),
+        "monoidal-action-eval" => monoidal_action_eval(&args[1..]),
+        "braided-consensus-audit" => braided_consensus_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit, betti-numbers, spectral-cheeger-audit, kan-extension, adjoint-sync"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit, betti-numbers, spectral-cheeger-audit, kan-extension, adjoint-sync, monoidal-action-eval, braided-consensus-audit"
         ))),
     }
 }
@@ -2285,6 +2287,75 @@ fn adjoint_sync(args: &[String]) -> Result<CommandResult, CliError> {
             "adjoint_report": adj,
             "monoidal_report": mon,
             "theorems": [228, 229]
+        }),
+        text,
+    ))
+}
+
+fn monoidal_action_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["config", "data-dir", "workspace", "json", "rank"])?;
+
+    let rank = parsed
+        .value("rank")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+
+    let engine = pandora_runtime::monoidal_action::MonoidalActionEngine::default();
+    let rep = engine.evaluate_action_functoriality(rank);
+
+    let text = format!(
+        "Monoidal Category Action Space & Higher-Order Consensus:\n  Sequential Composition Valid: {}\n  Tensor Product Preserved: {}\n  Functorial Divergence Residual: {:.6e}\n  Functoriality Verified: {}\n  Theorems: 236 (Monoidal Category Action Space)",
+        rep.sequential_composition_valid,
+        rep.tensor_product_preserved,
+        rep.functorial_divergence_residual,
+        rep.theorem_236_functoriality_verified
+    );
+
+    Ok(success(
+        "swarm monoidal-action-eval",
+        json!({
+            "monoidal_action": rep,
+            "theorems": [236]
+        }),
+        text,
+    ))
+}
+
+fn braided_consensus_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "json", "tiers", "agents"],
+    )?;
+
+    let tiers = parsed
+        .value("tiers")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3);
+    let agents = parsed
+        .value("agents")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(6);
+
+    let engine = pandora_runtime::monoidal_action::MonoidalActionEngine::default();
+    let rep = engine.audit_interchange_consensus(tiers);
+    let brd = engine.verify_braided_invariance(agents);
+
+    let text = format!(
+        "Braided Monoidal Consensus & Higher-Order Coherence:\n  Interchange Commutator Residual: {:.6e}\n  Deadlock-Free Consensus Certified: {}\n  Interchange Law Holds: {}\n  Braiding Symmetry Verified: {}\n  Yang-Baxter Hexagon Residual: {:.6e}\n  Permutation Invariance Guaranteed: {}\n  Theorems: 237 (Higher-Order 2-Category Consensus), 238 (Braided Monoidal Morphism Invariance)",
+        rep.interchange_commutator_residual,
+        rep.deadlock_free_consensus_certified,
+        rep.theorem_237_interchange_law_holds,
+        brd.braiding_symmetry_verified,
+        brd.yang_baxter_hexagon_residual,
+        brd.permutation_invariance_guaranteed
+    );
+
+    Ok(success(
+        "swarm braided-consensus-audit",
+        json!({
+            "interchange_consensus": rep,
+            "braided_morphism": brd,
+            "theorems": [237, 238]
         }),
         text,
     ))

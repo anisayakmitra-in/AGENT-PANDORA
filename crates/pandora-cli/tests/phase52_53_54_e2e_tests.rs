@@ -3,9 +3,9 @@
 //! Phase 52, 53, 54 End-to-End Integration Tests
 //!
 //! Validates:
-//! - Phase 52: Holographic Quantum Error Suppression & Fault-Tolerant Magic State Distillation (Theorems 128–130)
-//! - Phase 53: Fully Homomorphic Encryption (FHE) with CKKS Leveled Arithmetic (Theorems 131–133)
-//! - Phase 54: Mean-Field Stochastic Differential Games & McKean-Vlasov Swarm Control (Theorems 134–136)
+//! - Phase 52: Holographic Quantum Error Suppression & Fault-Tolerant Magic State Distillation (Theorems 128â€“130)
+//! - Phase 53: Fully Homomorphic Encryption (FHE) with CKKS Leveled Arithmetic (Theorems 131â€“133)
+//! - Phase 54: Mean-Field Stochastic Differential Games & McKean-Vlasov Swarm Control (Theorems 134â€“136)
 //! - Cockpit Web REST endpoints & Thanatos System Overview
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
@@ -216,9 +216,9 @@ fn test_cockpit_web_phase52_53_54_rest_endpoints() {
     // 4. GET /api/olympus/overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
+    assert_eq!(overview["architecture_version"], "4.2.0");
     assert_eq!(overview["codename"], "THANATOS");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["total_theorems_enforced"], 244);
 
     shutdown_handle.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(("127.0.0.1", port));

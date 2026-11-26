@@ -3,10 +3,10 @@
 //! Phase 64, 65, 66 End-to-End Integration Tests (v4.1.2, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 64: Non-Abelian Anyonic Quantum Memory & Fibonacci Braid Fault-Tolerance (Theorems 164–166)
-//! - Phase 65: Post-Quantum Transparent zk-SNARKs with Lattice Polynomial Commitments (Theorems 167–169)
-//! - Phase 66: Stochastic McKean-Vlasov Neural Jump-Diffusion with Non-Local Lévy Operators (Theorems 170–172)
-//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–172)
+//! - Phase 64: Non-Abelian Anyonic Quantum Memory & Fibonacci Braid Fault-Tolerance (Theorems 164â€“166)
+//! - Phase 65: Post-Quantum Transparent zk-SNARKs with Lattice Polynomial Commitments (Theorems 167â€“169)
+//! - Phase 66: Stochastic McKean-Vlasov Neural Jump-Diffusion with Non-Local LÃ©vy Operators (Theorems 170â€“172)
+//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1â€“172)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -275,8 +275,8 @@ fn test_cockpit_web_v412_routes_and_thanatos_overview() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

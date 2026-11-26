@@ -3,9 +3,9 @@
 //! Phase 46, 47, 48 End-to-End Integration Tests
 //!
 //! Validates:
-//! - Phase 46: Quantum Annealing Graph Partitioning & QUBO Scheduling (Theorems 110–112)
-//! - Phase 47: Homomorphic Federated Model Distillation (Theorems 113–115)
-//! - Phase 48: Causal Counterfactual Policy Inference & Do-Calculus (Theorems 116–118)
+//! - Phase 46: Quantum Annealing Graph Partitioning & QUBO Scheduling (Theorems 110â€“112)
+//! - Phase 47: Homomorphic Federated Model Distillation (Theorems 113â€“115)
+//! - Phase 48: Causal Counterfactual Policy Inference & Do-Calculus (Theorems 116â€“118)
 //! - Cockpit Web REST endpoints & Olympus System Overview
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
@@ -211,9 +211,9 @@ fn test_cockpit_web_phase46_47_48_rest_endpoints() {
     // 4. Test /api/olympus/overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
+    assert_eq!(overview["architecture_version"], "4.2.0");
     assert_eq!(overview["codename"], "THANATOS");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["total_theorems_enforced"], 244);
 
     shutdown_handle.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(("127.0.0.1", port));

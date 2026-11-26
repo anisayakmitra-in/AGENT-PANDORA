@@ -51,8 +51,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "cohomology-obstruction" => cohomology_obstruction(&args[1..]),
         "conformal-coverage" => conformal_coverage(&args[1..]),
         "pac-risk-audit" => pac_risk_audit(&args[1..]),
+        "grammar-mask-eval" => grammar_mask_eval(&args[1..]),
+        "pushdown-depth-audit" => pushdown_depth_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval', 'sheaf-gluing-check', 'cohomology-obstruction', 'conformal-coverage', 'pac-risk-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval', 'sheaf-gluing-check', 'cohomology-obstruction', 'conformal-coverage', 'pac-risk-audit', 'grammar-mask-eval', 'pushdown-depth-audit'"
         ))),
     }
 }
@@ -1498,6 +1500,103 @@ fn pac_risk_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "pac_bayes_report": rep,
             "theorems": [235]
+        }),
+        display,
+    ))
+}
+
+fn grammar_mask_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "rules",
+            "vocab-size",
+            "allowed",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let rules = parsed
+        .value("rules")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(12);
+    let vocab_size = parsed
+        .value("vocab-size")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(32000);
+    let allowed = parsed
+        .value("allowed")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(48);
+
+    let engine = pandora_runtime::pushdown_grammar::PushdownGrammarEngine::default();
+    let pda = engine.evaluate_pushdown_recognizer(rules);
+    let mask = engine.evaluate_grammar_masking(vocab_size, allowed);
+
+    let display = format!(
+        "Monadic Pushdown Grammar Recognizer & Masking Evaluation:\n\
+         Grammar Rule Nodes: {}\n\
+         Recognition Time Complexity Linear: {}\n\
+         State Transitions Verified: {}\n\
+         Vocab Size: {}\n\
+         Allowed Tokens Count: {}\n\
+         Masked Probability Mass: {:.4}\n\
+         Semantic Conformance Rate: {:.4}\n\
+         Theorems: 242 (Pushdown Equivalence), 243 (Grammar Masking Soundness)",
+        pda.grammar_rule_nodes_count,
+        pda.recognition_time_complexity_linear,
+        pda.state_transitions_verified,
+        mask.vocab_size,
+        mask.allowed_tokens_count,
+        mask.masked_probability_mass,
+        mask.semantic_conformance_rate
+    );
+
+    Ok(success(
+        "cognitive grammar-mask-eval",
+        json!({
+            "pushdown_recognizer": pda,
+            "grammar_masking": mask,
+            "theorems": [242, 243]
+        }),
+        display,
+    ))
+}
+
+fn pushdown_depth_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["depth", "config", "data-dir", "workspace", "json"])?;
+
+    let depth = parsed
+        .value("depth")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(14);
+
+    let engine = pandora_runtime::pushdown_grammar::PushdownGrammarEngine::default();
+    let rep = engine.audit_bounded_stack(depth);
+
+    let display = format!(
+        "Pushdown Stack Boundedness & Decidability Audit:\n\
+         Max Stack Depth Limit: {}\n\
+         Peak Stack Depth Observed: {}\n\
+         Stack Overflow Risk: {:.4}\n\
+         Decidability Certified: {}\n\
+         Bounded Memory Decidable: {}\n\
+         Theorems: 244 (Bounded Memory Pushdown Decidability)",
+        rep.max_stack_depth_limit,
+        rep.peak_stack_depth_observed,
+        rep.stack_overflow_risk,
+        rep.decidability_certified,
+        rep.theorem_244_bounded_memory_decidable
+    );
+
+    Ok(success(
+        "cognitive pushdown-depth-audit",
+        json!({
+            "bounded_stack": rep,
+            "theorems": [244]
         }),
         display,
     ))

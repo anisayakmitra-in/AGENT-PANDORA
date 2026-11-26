@@ -3,10 +3,10 @@
 //! Phase 73, 74, 75 End-to-End Integration Tests (v4.1.5, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 73: Higher-Order Topological Insulators & Corner Localization (Theorems 191–193)
-//! - Phase 74: Dynamic Proactive Secret Sharing (DPSS) & Asynchronous Redistribution (Theorems 194–196)
-//! - Phase 75: Nonlinear Koopman Operator Neural Dynamics & Spectral Decomposition (Theorems 197–199)
-//! - Cockpit Web REST endpoints & Centennial Verification Suite (Theorems 1–199)
+//! - Phase 73: Higher-Order Topological Insulators & Corner Localization (Theorems 191â€“193)
+//! - Phase 74: Dynamic Proactive Secret Sharing (DPSS) & Asynchronous Redistribution (Theorems 194â€“196)
+//! - Phase 75: Nonlinear Koopman Operator Neural Dynamics & Spectral Decomposition (Theorems 197â€“199)
+//! - Cockpit Web REST endpoints & Centennial Verification Suite (Theorems 1â€“199)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -386,8 +386,8 @@ fn test_cockpit_web_phase73_74_75_routes_and_centennial_suite() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

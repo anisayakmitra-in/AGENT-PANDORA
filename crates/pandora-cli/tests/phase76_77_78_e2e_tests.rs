@@ -3,10 +3,10 @@
 //! Phase 76, 77, 78 End-to-End Integration Tests (v4.1.6, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 76: Anyonic Quantum Hall Interferometry & Fractional Statistics (Theorems 200–202)
-//! - Phase 77: Functional Encryption for Inner Products & Quadratic Forms (Theorems 203–205)
-//! - Phase 78: Neural Thermodynamic Uncertainty Relations (TUR) & Dissipation (Theorems 206–208)
-//! - Cockpit Web REST endpoints & Bicentennial Verification Suite (Theorems 1–208)
+//! - Phase 76: Anyonic Quantum Hall Interferometry & Fractional Statistics (Theorems 200â€“202)
+//! - Phase 77: Functional Encryption for Inner Products & Quadratic Forms (Theorems 203â€“205)
+//! - Phase 78: Neural Thermodynamic Uncertainty Relations (TUR) & Dissipation (Theorems 206â€“208)
+//! - Cockpit Web REST endpoints & Bicentennial Verification Suite (Theorems 1â€“208)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -364,8 +364,8 @@ fn test_cockpit_web_phase76_77_78_routes_and_centennial_suite() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

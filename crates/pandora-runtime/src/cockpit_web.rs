@@ -3571,6 +3571,45 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/monoidal-action") => {
+            let engine = crate::monoidal_action::MonoidalActionEngine::default();
+            let act = engine.evaluate_action_functoriality(4);
+            let int = engine.audit_interchange_consensus(3);
+            let brd = engine.verify_braided_invariance(6);
+            let resp = serde_json::json!({
+                "action": act,
+                "interchange": int,
+                "braiding": brd,
+                "theorems_enforced": [236, 237, 238]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/threshold-zk") => {
+            let engine = crate::threshold_zk::ThresholdZkEngine::default();
+            let sig = engine.evaluate_threshold_sigma(3, 5);
+            let ext = engine.audit_witness_extraction(2);
+            let fs = engine.verify_fiat_shamir_non_malleability(256);
+            let resp = serde_json::json!({
+                "sigma": sig,
+                "extraction": ext,
+                "fiat_shamir": fs,
+                "theorems_enforced": [239, 240, 241]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/pushdown-grammar") => {
+            let engine = crate::pushdown_grammar::PushdownGrammarEngine::default();
+            let pda = engine.evaluate_pushdown_recognizer(12);
+            let mask = engine.evaluate_grammar_masking(32000, 48);
+            let bnd = engine.audit_bounded_stack(14);
+            let resp = serde_json::json!({
+                "pushdown": pda,
+                "masking": mask,
+                "bounded_stack": bnd,
+                "theorems_enforced": [242, 243, 244]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

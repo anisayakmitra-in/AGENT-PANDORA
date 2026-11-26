@@ -3,9 +3,9 @@
 //! Phase 49, 50, 51 End-to-End Integration Tests
 //!
 //! Validates:
-//! - Phase 49: Topological Quantum Error Correction & Surface Code Stabilizers (Theorems 119–121)
-//! - Phase 50: Zero-Knowledge PlonK Polynomial Commitments & KZG Schemes (Theorems 122–124)
-//! - Phase 51: Multi-Agent Mechanism Design & VCG Truthful Equilibrium (Theorems 125–127)
+//! - Phase 49: Topological Quantum Error Correction & Surface Code Stabilizers (Theorems 119â€“121)
+//! - Phase 50: Zero-Knowledge PlonK Polynomial Commitments & KZG Schemes (Theorems 122â€“124)
+//! - Phase 51: Multi-Agent Mechanism Design & VCG Truthful Equilibrium (Theorems 125â€“127)
 //! - Cockpit Web REST endpoints & Olympus System Overview
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
@@ -208,9 +208,9 @@ fn test_cockpit_web_phase49_50_51_rest_endpoints() {
     // 4. GET /api/olympus/overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
+    assert_eq!(overview["architecture_version"], "4.2.0");
     assert_eq!(overview["codename"], "THANATOS");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["total_theorems_enforced"], 244);
 
     shutdown_handle.store(true, Ordering::SeqCst);
     let _ = TcpStream::connect(("127.0.0.1", port));

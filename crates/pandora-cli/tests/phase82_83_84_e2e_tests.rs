@@ -3,10 +3,10 @@
 //! Phase 82, 83, 84 End-to-End Integration Tests (v4.1.8, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 82: Simplicial Complex Swarm Homology & Persistent Topology (Theorems 218–220)
-//! - Phase 83: Linear Logic Capability Monads & Non-Interference (Theorems 221–223)
-//! - Phase 84: Sheaf-Theoretic Context Consistency & Cohomology Obstruction (Theorems 224–226)
-//! - Cockpit Web REST endpoints & Centennial Verification Suite (Theorems 1–226)
+//! - Phase 82: Simplicial Complex Swarm Homology & Persistent Topology (Theorems 218â€“220)
+//! - Phase 83: Linear Logic Capability Monads & Non-Interference (Theorems 221â€“223)
+//! - Phase 84: Sheaf-Theoretic Context Consistency & Cohomology Obstruction (Theorems 224â€“226)
+//! - Cockpit Web REST endpoints & Centennial Verification Suite (Theorems 1â€“226)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -304,15 +304,15 @@ fn test_cockpit_web_phase82_83_84_routes_and_centennial_suite() {
     // 4. Cockpit Overview & Centennial Suite (226 Theorems)
     let (code, val) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(val["architecture_version"], "4.1.9");
+    assert_eq!(val["architecture_version"], "4.2.0");
     assert_eq!(val["codename"], "THANATOS");
-    assert_eq!(val["total_theorems_enforced"], 235);
+    assert_eq!(val["total_theorems_enforced"], 244);
     assert!(
         val["formal_verification"]["all_proofs_valid"]
             .as_bool()
             .unwrap()
     );
-    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 235);
+    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 244);
 
     // Shutdown
     shutdown_handle.store(true, Ordering::SeqCst);

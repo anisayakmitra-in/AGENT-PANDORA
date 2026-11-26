@@ -3,10 +3,10 @@
 //! Phase 79, 80, 81 End-to-End Integration Tests (v4.1.7, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 79: Twisted Bilayer Moiré Flat Bands & Topological Superconductivity (Theorems 209–211)
-//! - Phase 80: Indistinguishability Obfuscation (iO) & Punctured PRFs (Theorems 212–214)
-//! - Phase 81: Information-Geometric Dual Connections & Natural Gradient (Theorems 215–217)
-//! - Cockpit Web REST endpoints & Bicentennial Verification Suite (Theorems 1–217)
+//! - Phase 79: Twisted Bilayer MoirÃ© Flat Bands & Topological Superconductivity (Theorems 209â€“211)
+//! - Phase 80: Indistinguishability Obfuscation (iO) & Punctured PRFs (Theorems 212â€“214)
+//! - Phase 81: Information-Geometric Dual Connections & Natural Gradient (Theorems 215â€“217)
+//! - Cockpit Web REST endpoints & Bicentennial Verification Suite (Theorems 1â€“217)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -322,15 +322,15 @@ fn test_cockpit_web_phase79_80_81_routes_and_centennial_suite() {
     // 4. Cockpit Overview & Centennial Suite (217 Theorems)
     let (code, val) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(val["architecture_version"], "4.1.9");
+    assert_eq!(val["architecture_version"], "4.2.0");
     assert_eq!(val["codename"], "THANATOS");
-    assert_eq!(val["total_theorems_enforced"], 235);
+    assert_eq!(val["total_theorems_enforced"], 244);
     assert!(
         val["formal_verification"]["all_proofs_valid"]
             .as_bool()
             .unwrap()
     );
-    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 235);
+    assert_eq!(val["formal_verification"]["total_centennial_theorems"], 244);
 
     // Shutdown
     shutdown_handle.store(true, Ordering::SeqCst);

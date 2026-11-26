@@ -3,10 +3,10 @@
 //! Phase 67, 68, 69 End-to-End Integration Tests (v4.1.3, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 67: Topological Defect Entanglement & Majorana Zero-Mode Braiding in 1D Kitaev Superconducting Swarm Wires (Theorems 173–175)
-//! - Phase 68: Multi-Party Verifiable Delay Functions (VDF) with Wesolowski Proofs (Theorems 176–178)
-//! - Phase 69: Non-Equilibrium Path-Integral Swarm Thermodynamics & Jarzynski Equality (Theorems 179–181)
-//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–181)
+//! - Phase 67: Topological Defect Entanglement & Majorana Zero-Mode Braiding in 1D Kitaev Superconducting Swarm Wires (Theorems 173â€“175)
+//! - Phase 68: Multi-Party Verifiable Delay Functions (VDF) with Wesolowski Proofs (Theorems 176â€“178)
+//! - Phase 69: Non-Equilibrium Path-Integral Swarm Thermodynamics & Jarzynski Equality (Theorems 179â€“181)
+//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1â€“181)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -269,8 +269,8 @@ fn test_cockpit_web_v413_routes_and_thanatos_overview() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

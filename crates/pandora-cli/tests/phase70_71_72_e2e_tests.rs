@@ -3,10 +3,10 @@
 //! Phase 70, 71, 72 End-to-End Integration Tests (v4.1.4, Codename: THANATOS)
 //!
 //! Validates:
-//! - Phase 70: Non-Hermitian PT-Symmetric Swarm Topology & Exceptional Points (Theorems 182–184)
-//! - Phase 71: Multi-Prover Interactive Proofs (MIP*) & Entangled Non-Local Games (Theorems 185–187)
-//! - Phase 72: Stochastic Port-Hamiltonian Neural Systems & Energy-Casimir Consensus (Theorems 188–190)
-//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1–190)
+//! - Phase 70: Non-Hermitian PT-Symmetric Swarm Topology & Exceptional Points (Theorems 182â€“184)
+//! - Phase 71: Multi-Prover Interactive Proofs (MIP*) & Entangled Non-Local Games (Theorems 185â€“187)
+//! - Phase 72: Stochastic Port-Hamiltonian Neural Systems & Energy-Casimir Consensus (Theorems 188â€“190)
+//! - Cockpit Web REST endpoints & Formal Verification Suite (Theorems 1â€“190)
 
 use pandora_runtime::cockpit::{CockpitController, CockpitLayout};
 use pandora_runtime::cockpit_web::CockpitWebServer;
@@ -302,8 +302,8 @@ fn test_cockpit_web_phase70_71_72_routes_and_centennial_suite() {
     // 4. Cockpit Overview Route
     let (code, overview) = query_http(port, "/api/cockpit/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.9");
-    assert_eq!(overview["total_theorems_enforced"], 235);
+    assert_eq!(overview["architecture_version"], "4.2.0");
+    assert_eq!(overview["total_theorems_enforced"], 244);
     assert_eq!(overview["codename"], "THANATOS");
 
     shutdown_handle.store(true, Ordering::SeqCst);

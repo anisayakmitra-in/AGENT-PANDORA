@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, `v4.1.7`, `v4.1.8`, and `v4.1.9`. The active release identity
-is `v4.1.9`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, `v4.1.7`, `v4.1.8`, `v4.1.9`, and `v4.2.0`. The active release identity
+is `v4.2.0`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,16 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+
+## v4.2.0
+
+This release delivers Phases 88–90 of the architectural roadmap under codename **THANATOS**:
+- **Phase 88: Monoidal Functor Action Spaces & Higher-Order Consensus** (`monoidal_action.rs`, Theorems 236–238, monoidal category action space $\mathcal{M} \times \mathcal{S} \to \mathcal{S}$ preserving sequential and tensor compositions, higher-order 2-category interchange law $(\beta' \cdot \beta) * (\alpha' \cdot \alpha) = (\beta' * \alpha') \cdot (\beta * \alpha)$ certifying deadlock-free hierarchical consensus, and braided monoidal morphism invariance under Yang-Baxter hexagonal commutators, CLI `pandora swarm monoidal-action-eval|braided-consensus-audit`, REST `/api/swarm/monoidal-action`).
+- **Phase 89: Post-Quantum Threshold Zero-Knowledge Arguments** (`threshold_zk.rs`, Theorems 239–241, threshold $\Sigma$-protocol completeness and HVZK under Module-LWE lattices, special soundness with polynomial-time witness extraction from transcript forks, and distributed simulation-sound non-malleable Fiat-Shamir transformation, CLI `pandora crypto threshold-zk-prove|fiat-shamir-audit`, REST `/api/crypto/threshold-zk`).
+- **Phase 90: Monadic Pushdown Automata & Provably Bounded Context Grammars** (`pushdown_grammar.rs`, Theorems 242–244, deterministic monadic pushdown transducer equivalence in linear recognition time, grammar logits masking guaranteeing zero probability mass to syntactically invalid tokens, and bounded stack depth invariance ensuring decidability without memory exhaustion, CLI `pandora cognitive grammar-mask-eval|pushdown-depth-audit`, REST `/api/cognitive/pushdown-grammar`).
+- **Tripartite Governance & Centennial Suite**: Expanded constitutional permits to `(1..=244)`, updated Parliament assertions to 244 theorems, and machine-checked Lean 4 & Coq formal proofs for Theorems 236, 239, 242.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/monoidal-action`, `/api/crypto/threshold-zk`, `/api/cognitive/pushdown-grammar`, and updated `/api/cockpit/overview` (`architecture_version: "4.2.0"`, `codename: "THANATOS"`, `total_theorems_enforced: 244`).
 
 
 ## v4.1.9

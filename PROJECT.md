@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.1.9 Release: THANATOS - Categorical Memory, Game-Theoretic Core & Conformal Risk)
+# Project: AGENT-PANDORA (v4.2.0 Release: THANATOS - Monoidal Action Spaces, Threshold ZK & Pushdown Grammars)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.1.9` (Phases 85–87, Theorems 227–235).
+- **Versioning & Release**: Workspace version promoted to `4.2.0` (Phases 88–90, Theorems 236–244).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---
