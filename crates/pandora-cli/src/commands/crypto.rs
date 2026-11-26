@@ -43,8 +43,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "lattice-verify" => lattice_verify(&args[1..]),
         "vdf-evaluate" => vdf_evaluate(&args[1..]),
         "vdf-verify" => vdf_verify(&args[1..]),
+        "chsh-evaluate" => chsh_evaluate(&args[1..]),
+        "mip-verify" => mip_verify(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify'"
         ))),
     }
 }
@@ -811,4 +813,96 @@ fn vdf_verify(args: &[String]) -> Result<CommandResult, CliError> {
     );
 
     Ok(success("crypto vdf-verify", json!(report), display))
+}
+
+fn chsh_evaluate(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["rounds", "config", "data-dir", "workspace", "json"])?;
+    let rounds = parsed
+        .value("rounds")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1000);
+
+    let engine = pandora_runtime::quantum_mip::QuantumMipEngine::default();
+    let res = engine.evaluate_chsh_game(rounds);
+
+    let display = format!(
+        "CHSH Entangled Non-Local Game Evaluation:\n\
+         Rounds: {}\n\
+         Classical Wins: {}\n\
+         Quantum Wins: {}\n\
+         Quantum Win Rate: {:.6} (Tsirelson Bound: {:.6})\n\
+         CHSH Correlator S: {:.6} (Classical Bound: 2.0, Tsirelson: {:.6})\n\
+         Quantum Advantage Verified (Thm 185): {}",
+        res.rounds,
+        res.classical_wins,
+        res.quantum_wins,
+        res.quantum_win_rate,
+        res.tsirelson_bound,
+        res.chsh_correlator_s,
+        pandora_runtime::quantum_mip::CHSH_OPTIMAL_CORRELATOR,
+        res.theorem_185_quantum_advantage_verified
+    );
+
+    Ok(success("crypto chsh-evaluate", json!(res), display))
+}
+
+fn mip_verify(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "provers",
+            "rounds",
+            "correlator",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let provers = parsed
+        .value("provers")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3);
+    let rounds = parsed
+        .value("rounds")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(32);
+    let correlator = parsed
+        .value("correlator")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.80);
+
+    let engine = pandora_runtime::quantum_mip::QuantumMipEngine::default();
+    let mip = engine.verify_relativistic_mip(provers, rounds);
+    let rigidity = engine.certify_self_testing_rigidity(correlator);
+
+    let display = format!(
+        "Relativistic MIP* Verification & Self-Testing Rigidity:\n\
+         Provers: {}\n\
+         Rounds: {}\n\
+         Separation: {:.1} m (Verifier Latency: {} us)\n\
+         Zero-Knowledge Soundness: {:.8} (Thm 186: {})\n\
+         Observed Correlator: {:.4}\n\
+         EPR State Fidelity: {:.6}\n\
+         Self-Testing Rigidity Certified (Thm 187): {}",
+        mip.num_provers,
+        mip.interaction_rounds,
+        mip.space_like_separation_meters,
+        mip.verifier_latency_micros,
+        mip.zero_knowledge_soundness,
+        mip.theorem_186_relativistic_verified,
+        rigidity.observed_correlator,
+        rigidity.epr_state_fidelity,
+        rigidity.theorem_187_rigidity_certified
+    );
+
+    Ok(success(
+        "crypto mip-verify",
+        json!({
+            "relativistic_mip": mip,
+            "rigidity": rigidity,
+            "theorems": [186, 187]
+        }),
+        display,
+    ))
 }

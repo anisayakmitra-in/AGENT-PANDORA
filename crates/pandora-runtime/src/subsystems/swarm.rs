@@ -102,6 +102,13 @@ impl SwarmSubsystem {
         crate::majorana_braiding::MajoranaBraidingEngine::default()
     }
 
+    /// Access the Non-Hermitian PT-Symmetric Swarm Topology engine (Theorems 182–184).
+    pub fn non_hermitian_topology(
+        &self,
+    ) -> crate::non_hermitian_topology::NonHermitianTopologyEngine {
+        crate::non_hermitian_topology::NonHermitianTopologyEngine::default()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -117,7 +124,8 @@ impl SwarmSubsystem {
             gossip_converged: converged,
             theorems_enforced: vec![
                 62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
-                137, 138, 139, 146, 147, 148, 155, 156, 157, 164, 165, 166, 173, 174, 175,
+                137, 138, 139, 146, 147, 148, 155, 156, 157, 164, 165, 166, 173, 174, 175, 182,
+                183, 184,
             ],
         }
     }

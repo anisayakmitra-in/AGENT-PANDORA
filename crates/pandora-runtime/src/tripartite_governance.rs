@@ -595,7 +595,7 @@ mod tests {
             .ratify_with_enclave(&valid_prop, &eval)
             .expect("ratification succeeds");
         assert!(permit.is_valid());
-        assert_eq!(permit.theorems_enforced.len(), 181);
+        assert_eq!(permit.theorems_enforced.len(), 190);
 
         // 2. Dangerous proposal blocked by Shadow Council red-team veto
         let bad_prop =

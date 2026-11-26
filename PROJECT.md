@@ -1,4 +1,4 @@
-# Project: AGENT-PANDORA (v4.1.3 Release: THANATOS - Majorana Braiding, Verifiable Delay Functions & Path-Integral Thermodynamics)
+# Project: AGENT-PANDORA (v4.1.4 Release: THANATOS - Non-Hermitian PT-Topology, Entangled MIP* & Port-Hamiltonian Consensus)
 
 ## Architecture
 AGENT-PANDORA is an autonomous software engineering agent across 7 workspace crates:
@@ -19,7 +19,7 @@ Platform, Toolchain & Delivery Invariants:
 - Node: `v22.23.2` (`npm.cmd ci --ignore-scripts && npm.cmd run build`)
 - Python embed: `C:\Users\infin\.gemini\antigravity\scratch\sandbox-workspace\python-embed\python.exe` (for `scripts/validate_repo.py` and `scripts/validate_docs.py`)
 - `#![forbid(unsafe_code)]`: Preserved across `pandora-types`, `pandora-runtime`, `pandora-harnesses`, `pandora-provider`, `pandora-service`, `pandora-cli`.
-- **Versioning & Release**: Workspace version promoted to `4.1.3` (Phases 67–69, Theorems 173–181).
+- **Versioning & Release**: Workspace version promoted to `4.1.4` (Phases 70–72, Theorems 182–190).
 - **Zero Test Source Reading Rule**: Team members must NOT read test source code to understand expected behaviour before implementing.
 
 ---

@@ -111,6 +111,11 @@ impl CryptoSubsystem {
         crate::verifiable_delay::VerifiableDelayEngine::default()
     }
 
+    /// Access the Multi-Prover Interactive Proofs (MIP*) & Entangled Non-Local Game engine (Theorems 185–187).
+    pub fn quantum_mip(&self) -> crate::quantum_mip::QuantumMipEngine {
+        crate::quantum_mip::QuantumMipEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -126,7 +131,7 @@ impl CryptoSubsystem {
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
                 132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160, 167, 168, 169, 176, 177,
-                178,
+                178, 185, 186, 187,
             ],
         }
     }

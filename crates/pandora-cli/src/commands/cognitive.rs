@@ -39,8 +39,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "generator-audit" => generator_audit(&args[1..]),
         "jarzynski-eval" => jarzynski_eval(&args[1..]),
         "free-energy-audit" => free_energy_audit(&args[1..]),
+        "hamiltonian-eval" => hamiltonian_eval(&args[1..]),
+        "casimir-audit" => casimir_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit'"
         ))),
     }
 }
@@ -883,6 +885,88 @@ fn free_energy_audit(args: &[String]) -> Result<CommandResult, CliError> {
     Ok(success(
         "cognitive free-energy-audit",
         json!(audit),
+        display,
+    ))
+}
+
+fn hamiltonian_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let _parsed = parse_options(args, &["config", "data-dir", "workspace", "json"])?;
+
+    let engine = pandora_runtime::port_hamiltonian::PortHamiltonianEngine::default();
+    let j = vec![vec![0.0, 1.0], vec![-1.0, 0.0]];
+    let r = vec![vec![0.5, 0.0], vec![0.0, 0.5]];
+    let grad = vec![1.0, 2.0];
+    let state = engine.evaluate_port_hamiltonian(&j, &r, &grad);
+
+    let display = format!(
+        "Stochastic Port-Hamiltonian System Evaluation:\n\
+         Dimension: {}\n\
+         Total Energy H: {:.4}\n\
+         Dissipation Rate: {:.4}\n\
+         Skew-Symmetry Error: {:.6e}\n\
+         Passivity Verified (Thm 188): {}",
+        state.dimension,
+        state.total_energy_h,
+        state.dissipation_rate,
+        state.skew_symmetry_error,
+        state.theorem_188_passivity_verified
+    );
+
+    Ok(success("cognitive hamiltonian-eval", json!(state), display))
+}
+
+fn casimir_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "agents",
+            "delay-ms",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+    let agents = parsed
+        .value("agents")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
+    let delay_ms = parsed
+        .value("delay-ms")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(25.0);
+
+    let engine = pandora_runtime::port_hamiltonian::PortHamiltonianEngine::default();
+    let j = vec![vec![0.0, 1.0], vec![-1.0, 0.0]];
+    let r = vec![vec![0.5, 0.0], vec![0.0, 0.5]];
+    let casimir = engine.audit_casimir_invariants(&j, &r, &[vec![0.0, 0.0]]);
+    let consensus = engine.simulate_consensus(agents, delay_ms);
+
+    let display = format!(
+        "Energy-Casimir Invariant & Delayed Consensus Audit:\n\
+         Casimir Invariants Count: {}\n\
+         Gradient Kernel Norm: {:.6e}\n\
+         Casimir Conserved (Thm 189): {}\n\
+         Agents: {}\n\
+         Network Delay: {:.1} ms\n\
+         Consensus Variance: {:.6e}\n\
+         Consensus Verified (Thm 190): {}",
+        casimir.invariants.len(),
+        casimir.gradient_kernel_norm,
+        casimir.theorem_189_casimir_conserved,
+        consensus.num_agents,
+        consensus.network_delay_ms,
+        consensus.consensus_variance,
+        consensus.theorem_190_consensus_verified
+    );
+
+    Ok(success(
+        "cognitive casimir-audit",
+        json!({
+            "casimir_invariants": casimir,
+            "consensus": consensus,
+            "theorems": [189, 190]
+        }),
         display,
     ))
 }

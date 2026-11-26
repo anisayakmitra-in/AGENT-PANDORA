@@ -93,8 +93,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "syndrome-fusion" => syndrome_fusion(&args[1..]),
         "majorana-braid" => majorana_braid(&args[1..]),
         "parity-audit" => parity_audit(&args[1..]),
+        "pt-spectrum-eval" => pt_spectrum_eval(&args[1..]),
+        "exceptional-audit" => exceptional_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit"
         ))),
     }
 }
@@ -1691,6 +1693,113 @@ fn parity_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "parity_audit": audit,
             "theorems": [175]
+        }),
+        text,
+    ))
+}
+
+fn pt_spectrum_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "base-freq",
+            "coupling",
+            "gamma",
+            "nodes",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "format",
+            "out",
+            "verbose",
+        ],
+    )?;
+
+    let base_freq = parsed
+        .value("base-freq")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(10.0);
+    let coupling = parsed
+        .value("coupling")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.0);
+    let gamma = parsed
+        .value("gamma")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.8);
+
+    let engine = pandora_runtime::non_hermitian_topology::NonHermitianTopologyEngine::default();
+    let rep = engine.evaluate_pt_spectrum(base_freq, coupling, gamma);
+
+    let text = format!(
+        "PT-Symmetric Swarm Spectrum Evaluation:\n  Base Freq: {:.2}\n  Coupling t: {:.2}\n  Gain/Loss gamma: {:.2}\n  Real Eigenvalues: ({:.4}, {:.4})\n  PT-Unbroken: {}\n  Metric det(eta): {:.4}\n  Theorems: 182 (PT-Symmetry Real Spectrum)",
+        rep.base_frequency,
+        rep.coupling_t,
+        rep.gain_loss_gamma,
+        rep.real_eigenvalues.0,
+        rep.real_eigenvalues.1,
+        rep.is_pt_unbroken,
+        rep.metric_eta_det
+    );
+
+    Ok(success(
+        "swarm pt-spectrum-eval",
+        json!({
+            "pt_spectrum": rep,
+            "theorems": [182]
+        }),
+        text,
+    ))
+}
+
+fn exceptional_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "coupling",
+            "gamma",
+            "nodes",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "format",
+            "out",
+            "verbose",
+        ],
+    )?;
+
+    let coupling = parsed
+        .value("coupling")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.0);
+    let gamma = parsed
+        .value("gamma")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.0);
+
+    let engine = pandora_runtime::non_hermitian_topology::NonHermitianTopologyEngine::default();
+    let ep = engine.audit_exceptional_point(coupling, gamma);
+    let skin = engine.compute_skin_effect(16, 2.5, 0.5);
+
+    let text = format!(
+        "Exceptional Point Degeneracy & Non-Hermitian Skin Effect Audit:\n  Coupling t: {:.2}\n  Gain/Loss gamma: {:.2}\n  Discriminant: {:.4}\n  At Exceptional Point (EP2): {}\n  Chiral Isolation: {:.2} dB\n  Skin Winding Number: {}\n  Skin Accumulation Ratio: {:.2}\n  Theorems: 183 (EP2 Chiral Transport), 184 (Skin Effect)",
+        ep.coupling_t,
+        ep.gain_loss_gamma,
+        ep.discriminant,
+        ep.is_at_exceptional_point,
+        ep.chiral_isolation_db,
+        skin.winding_number,
+        skin.skin_effect_accumulation_ratio
+    );
+
+    Ok(success(
+        "swarm exceptional-audit",
+        json!({
+            "exceptional_point": ep,
+            "skin_effect": skin,
+            "theorems": [183, 184]
         }),
         text,
     ))

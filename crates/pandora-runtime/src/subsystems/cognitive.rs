@@ -105,6 +105,11 @@ impl CognitiveSubsystem {
         crate::path_integral_thermodynamics::PathIntegralThermodynamicsEngine::default()
     }
 
+    /// Access the Stochastic Port-Hamiltonian Neural Systems & Energy-Casimir Consensus engine (Theorems 188–190).
+    pub fn port_hamiltonian(&self) -> crate::port_hamiltonian::PortHamiltonianEngine {
+        crate::port_hamiltonian::PortHamiltonianEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -125,7 +130,7 @@ impl CognitiveSubsystem {
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
                 134, 135, 136, 143, 144, 145, 152, 153, 154, 161, 162, 163, 170, 171, 172, 179,
-                180, 181,
+                180, 181, 188, 189, 190,
             ],
         }
     }

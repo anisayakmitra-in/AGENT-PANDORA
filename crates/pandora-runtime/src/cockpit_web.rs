@@ -3345,6 +3345,48 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/pt-topology") => {
+            let engine = crate::non_hermitian_topology::NonHermitianTopologyEngine::default();
+            let spectrum = engine.evaluate_pt_spectrum(10.0, 2.0, 0.8);
+            let ep = engine.audit_exceptional_point(2.0, 2.0);
+            let skin = engine.compute_skin_effect(16, 2.5, 0.5);
+            let resp = serde_json::json!({
+                "spectrum": spectrum,
+                "exceptional_point": ep,
+                "skin_effect": skin,
+                "theorems_enforced": [182, 183, 184]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/quantum-mip") => {
+            let engine = crate::quantum_mip::QuantumMipEngine::default();
+            let chsh = engine.evaluate_chsh_game(1000);
+            let mip = engine.verify_relativistic_mip(3, 32);
+            let rigidity = engine.certify_self_testing_rigidity(chsh.chsh_correlator_s);
+            let resp = serde_json::json!({
+                "chsh_game": chsh,
+                "relativistic_mip": mip,
+                "rigidity": rigidity,
+                "theorems_enforced": [185, 186, 187]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/port-hamiltonian") => {
+            let engine = crate::port_hamiltonian::PortHamiltonianEngine::default();
+            let j = vec![vec![0.0, 1.0], vec![-1.0, 0.0]];
+            let r = vec![vec![0.5, 0.0], vec![0.0, 0.5]];
+            let grad = vec![1.0, 2.0];
+            let state = engine.evaluate_port_hamiltonian(&j, &r, &grad);
+            let casimir = engine.audit_casimir_invariants(&j, &r, &[vec![0.0, 0.0]]);
+            let consensus = engine.simulate_consensus(8, 25.0);
+            let resp = serde_json::json!({
+                "port_hamiltonian_state": state,
+                "casimir_invariants": casimir,
+                "consensus": consensus,
+                "theorems_enforced": [188, 189, 190]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;
