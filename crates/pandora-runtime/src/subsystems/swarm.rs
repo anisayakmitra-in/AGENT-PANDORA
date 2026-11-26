@@ -126,6 +126,11 @@ impl SwarmSubsystem {
         crate::moire_topology::MoireTopologyEngine::default()
     }
 
+    /// Access the Simplicial Complex Swarm Homology & Persistent Topology engine (Theorems 218–220).
+    pub fn simplicial_homology(&self) -> crate::simplicial_homology::SimplicialHomologyEngine {
+        crate::simplicial_homology::SimplicialHomologyEngine::default()
+    }
+
     /// Returns high-level operational status of the Swarm Subsystem.
     pub fn status(&self) -> SwarmSubsystemStatus {
         let mut counter = PnCounter::new();
@@ -142,7 +147,7 @@ impl SwarmSubsystem {
             theorems_enforced: vec![
                 62, 63, 64, 71, 72, 73, 92, 93, 94, 110, 111, 112, 119, 120, 121, 128, 129, 130,
                 137, 138, 139, 146, 147, 148, 155, 156, 157, 164, 165, 166, 173, 174, 175, 182,
-                183, 184, 191, 192, 193, 200, 201, 202, 209, 210, 211,
+                183, 184, 191, 192, 193, 200, 201, 202, 209, 210, 211, 218, 219, 220,
             ],
         }
     }

@@ -3495,6 +3495,43 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/simplicial-homology") => {
+            let engine = crate::simplicial_homology::SimplicialHomologyEngine::default();
+            let betti = engine.compute_betti_numbers(8, 1.2);
+            let spectral = engine.audit_spectral_cheeger(0.35);
+            let resp = serde_json::json!({
+                "betti": betti,
+                "spectral": spectral,
+                "theorems_enforced": [218, 219, 220]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/linear-capability") => {
+            let engine = crate::linear_capability::LinearCapabilityEngine::default();
+            let token = engine.evaluate_token_linearity("cap_token_lin_01", 2);
+            let non_int = engine.audit_non_interference("high_sec", "low_sec");
+            let recl = engine.evaluate_affine_reclamation(16);
+            let resp = serde_json::json!({
+                "token": token,
+                "non_interference": non_int,
+                "reclamation": recl,
+                "theorems_enforced": [221, 222, 223]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/sheaf-context") => {
+            let engine = crate::sheaf_context::SheafContextEngine::default();
+            let gluing = engine.evaluate_sheaf_gluing(4, true);
+            let obstruction = engine.audit_cohomology_obstruction(0.75);
+            let repair = engine.repair_minimal_cocycle(0.75);
+            let resp = serde_json::json!({
+                "gluing": gluing,
+                "obstruction": obstruction,
+                "repair": repair,
+                "theorems_enforced": [224, 225, 226]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

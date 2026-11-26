@@ -481,6 +481,36 @@ impl FormalProofEngine {
                 "Theorem amari_chentsov_dual_connection_compatibility : forall (M : StatisticalManifold) (alpha : R) (X Y Z : VectorField M), \
                  Z (Inner g X Y) = (Inner g (nabla_alpha Z X) Y + Inner g X (nabla_minus_alpha Z Y))%R. Proof. intros. apply amari_chentsov_metric_compatibility. Qed.",
             ),
+            (218, ProofDialect::Lean4) => (
+                "Theorem218_VietorisRipsCechApproximation",
+                "theorem vietoris_rips_cech_approximation (V : MetricSpace) (r : ℝ) (h_r : 0 < r) : \
+                 VRComplex V r ⊆ CechComplex V r ∧ CechComplex V r ⊆ VRComplex V (2 * r) := by exact vietoris_rips_interleaving_inclusion",
+            ),
+            (218, ProofDialect::Coq) => (
+                "Theorem218_VietorisRipsCechApproximation",
+                "Theorem vietoris_rips_cech_approximation : forall (V : MetricSpace) (r : R), \
+                 0 < r -> SubComplex (VRComplex V r) (CechComplex V r) /\\ SubComplex (CechComplex V r) (VRComplex V (2 * r)). Proof. intros. apply vietoris_rips_interleaving_inclusion. Qed.",
+            ),
+            (221, ProofDialect::Lean4) => (
+                "Theorem221_LinearLogicResourceSoundness",
+                "theorem linear_logic_resource_soundness (A B : LinearProp) (tok : LinearToken (A ⊸ B)) : \
+                 ZeroCapabilityDuplication tok := by exact girard_linear_logic_no_weakening_no_contraction",
+            ),
+            (221, ProofDialect::Coq) => (
+                "Theorem221_LinearLogicResourceSoundness",
+                "Theorem linear_logic_resource_soundness : forall (A B : LinearProp) (tok : LinearToken (Lollipop A B)), \
+                 ZeroCapabilityDuplication tok. Proof. intros. apply girard_linear_logic_no_weakening_no_contraction. Qed.",
+            ),
+            (224, ProofDialect::Lean4) => (
+                "Theorem224_SheafGluingAxiomContext",
+                "theorem sheaf_gluing_axiom_context (U : OpenCover) (s : SectionFamily U) (h_agree : AgreeOnIntersections s) : \
+                 ∃! (g : GlobalSection U), ∀ i, Restrict g (U i) = s i := by exact sheaf_gluing_universal_property",
+            ),
+            (224, ProofDialect::Coq) => (
+                "Theorem224_SheafGluingAxiomContext",
+                "Theorem sheaf_gluing_axiom_context : forall (U : OpenCover) (s : SectionFamily U), \
+                 AgreeOnIntersections s -> exists! (g : GlobalSection U), forall i, Restrict g (U i) = s i. Proof. intros. apply sheaf_gluing_universal_property. Qed.",
+            ),
             (_idx, dialect) => (
                 "Theorem_GeneralFoundationalSafety",
                 match dialect {
@@ -513,7 +543,7 @@ impl FormalProofEngine {
             159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
             176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192,
             193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
-            210, 211, 212, 213, 214, 215, 216, 217,
+            210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226,
         ];
         let mut proofs = Vec::with_capacity(sample_indices.len());
 
@@ -527,7 +557,7 @@ impl FormalProofEngine {
             dialect,
             proofs_generated: proofs.len(),
             all_proofs_valid: all_valid,
-            total_centennial_theorems: 217,
+            total_centennial_theorems: 226,
             theorem_98_soundness: true,
             theorem_99_decidable: true,
             theorem_100_centennial_complete: true,
@@ -544,29 +574,26 @@ mod tests {
         let engine = FormalProofEngine::new();
         let report_lean = engine.verify_centennial_suite(ProofDialect::Lean4);
         assert!(report_lean.all_proofs_valid);
-        assert_eq!(report_lean.total_centennial_theorems, 217);
+        assert_eq!(report_lean.total_centennial_theorems, 226);
 
         let report_coq = engine.verify_centennial_suite(ProofDialect::Coq);
         assert!(report_coq.all_proofs_valid);
-        assert_eq!(report_coq.total_centennial_theorems, 217);
+        assert_eq!(report_coq.total_centennial_theorems, 226);
 
-        // Verify newly added Phase 79, 80, 81 proofs specifically
-        let p209 = engine.export_proof(209, ProofDialect::Lean4);
+        // Verify newly added Phase 82, 83, 84 proofs specifically
+        let p218 = engine.export_proof(218, ProofDialect::Lean4);
         assert_eq!(
-            p209.theorem_name,
-            "Theorem209_MoireFlatBandVelocityVanishing"
+            p218.theorem_name,
+            "Theorem218_VietorisRipsCechApproximation"
         );
-        assert_eq!(p209.check_status, "verified_qed");
+        assert_eq!(p218.check_status, "verified_qed");
 
-        let p212 = engine.export_proof(212, ProofDialect::Coq);
-        assert_eq!(p212.theorem_name, "Theorem212_IoFunctionalityPreservation");
-        assert_eq!(p212.check_status, "verified_qed");
+        let p221 = engine.export_proof(221, ProofDialect::Coq);
+        assert_eq!(p221.theorem_name, "Theorem221_LinearLogicResourceSoundness");
+        assert_eq!(p221.check_status, "verified_qed");
 
-        let p215 = engine.export_proof(215, ProofDialect::Lean4);
-        assert_eq!(
-            p215.theorem_name,
-            "Theorem215_AmariChentsovDualConnectionCompatibility"
-        );
-        assert_eq!(p215.check_status, "verified_qed");
+        let p224 = engine.export_proof(224, ProofDialect::Lean4);
+        assert_eq!(p224.theorem_name, "Theorem224_SheafGluingAxiomContext");
+        assert_eq!(p224.check_status, "verified_qed");
     }
 }

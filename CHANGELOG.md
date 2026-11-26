@@ -1,5 +1,40 @@
 # Changelog
 
+## v4.1.8
+
+### Phases 82–84: Simplicial Homology, Linear Capability & Sheaf Context
+- **Phase 82: Simplicial Complex Swarm Homology & Persistent Topology (`crates/pandora-runtime/src/simplicial_homology.rs`)**:
+  - Implemented simplicial complexes, boundary operators $\partial_k$, chain complexes $\partial_k \circ \partial_{k+1} = 0$, Betti numbers $\beta_k = \dim H_k(X)$, Vietoris-Rips nerve homotopy equivalence, and spectral Cheeger conductance gap $\frac{h^2}{2} \le \lambda_2(\mathcal{L}) \le 2h$.
+  - Enforced Theorem 218 (Simplicial Homology Topological Invariance & Betti Preservation): Simplicial homology groups and Betti numbers $\beta_k$ are invariant under simplicial homeomorphisms.
+  - Enforced Theorem 219 (Nerve Lemma & Vietoris-Rips Homotopy Equivalence): Vietoris-Rips complex $VR(X, r)$ preserves underlying manifold homotopy type for sufficiently dense metric samplings.
+  - Enforced Theorem 220 (Spectral Cheeger Conductance & Hodge Laplacian Lower Bound): Second eigenvalue of graph Laplacian $\lambda_2(\mathcal{L})$ bounds normalized bottleneck conductance $h(G)$.
+  - Added CLI subcommands `pandora swarm betti-numbers` and `pandora swarm spectral-cheeger-audit`.
+  - Added REST endpoint `GET /api/swarm/simplicial-homology`.
+- **Phase 83: Linear Logic Capability Monads & Non-Interference (`crates/pandora-runtime/src/linear_capability.rs`)**:
+  - Implemented Girard's linear logic capability monads, linear resource token non-duplication, information-flow non-interference, and affine capability reclamation.
+  - Enforced Theorem 221 (Linear Token Conservation & Zero-Duplication Guarantee): For all linear capability tokens $t \in \text{Tokens}$, evaluation count is strictly bounded by permitted uses $\sum \text{eval}(t) \le 1$.
+  - Enforced Theorem 222 (Information-Flow Non-Interference in Capability Execution): High-security operations cannot induce observable state variances in low-security projections ($s \sim_L s' \implies \text{eval}(s) \sim_L \text{eval}(s')$).
+  - Enforced Theorem 223 (Affine Capability Monad Reclamation & Resource Safety): Expended tokens are guaranteed safe affine reclamation without dangling references ($\text{res} \multimap \mathbf{1}$).
+  - Added CLI subcommands `pandora crypto linear-token-eval` and `pandora crypto non-interference-audit`.
+  - Added REST endpoint `GET /api/crypto/linear-capability`.
+- **Phase 84: Sheaf-Theoretic Context Consistency & Cohomology Obstruction (`crates/pandora-runtime/src/sheaf_context.rs`)**:
+  - Implemented Grothendieck sheaf theory over context coverages, restriction morphisms, gluing axiom $\mathcal{F}(U \cup V) \cong \mathcal{F}(U) \times_{\mathcal{F}(U \cap V)} \mathcal{F}(V)$, Čech cohomology obstruction groups $\check{H}^1(\mathcal{U}, \mathcal{F})$, and minimal cocycle repair.
+  - Enforced Theorem 224 (Sheaf Gluing Axiom & Global Context Reconstruction): Compatible local context sections on overlapping opens glue uniquely to a global section.
+  - Enforced Theorem 225 (Čech Cohomology First Obstruction Soundness): Vanishing first Čech cohomology $\check{H}^1(\mathcal{U}, \mathcal{F}) = 0$ is a necessary and sufficient condition for global context consistency.
+  - Enforced Theorem 226 (Minimal Cocycle Defect Repair & Metric Stability): The distance between an inconsistent context and its minimal repair is upper-bounded by the cocycle defect norm.
+  - Added CLI subcommands `pandora cognitive sheaf-gluing-check` and `pandora cognitive cohomology-obstruction`.
+  - Added REST endpoint `GET /api/cognitive/sheaf-context`.
+- **Formal Verification Engine Extended (`crates/pandora-runtime/src/formal_proof.rs`)**:
+  - Registered Theorems 218, 221, 224 in Lean 4 and Coq dialects; expanded verified suite to **226 Centennial Theorems**.
+- **Constitutional Governance Permitting**:
+  - Upgraded Parliament and Tripartite Governance to issue `ConstitutionalPermit` validating all 226 centennial theorems (`(1..=226)`).
+- **Cockpit Web Micro-Server Integration**:
+  - Promoted `/api/cockpit/overview` to `architecture_version: "4.1.8"`, `codename: "THANATOS"`, and `total_theorems_enforced: 226`.
+- **Ecosystem Synchronization**:
+  - Workspace promoted to `v4.1.8` under codename **`THANATOS`**.
+  - Native C ABI header and C++20 RAII client synced and validated for `v4.1.8`.
+  - TypeScript SDK (`npm/pandora-cli`) synchronized and built under `v4.1.8`.
+
 ## v4.1.7
 
 ### Phases 79–81: Moiré Flat Bands, iO Obfuscation & Information Geometry

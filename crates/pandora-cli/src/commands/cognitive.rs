@@ -47,8 +47,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "dissipation-audit" => dissipation_audit(&args[1..]),
         "info-geo-dual" => info_geo_dual(&args[1..]),
         "natural-gradient-eval" => natural_gradient_eval(&args[1..]),
+        "sheaf-gluing-check" => sheaf_gluing_check(&args[1..]),
+        "cohomology-obstruction" => cohomology_obstruction(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit', 'tur-bound-eval', 'dissipation-audit', 'info-geo-dual', 'natural-gradient-eval', 'sheaf-gluing-check', 'cohomology-obstruction'"
         ))),
     }
 }
@@ -1315,6 +1317,85 @@ fn natural_gradient_eval(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "natural_gradient": rep,
             "theorems": [216]
+        }),
+        display,
+    ))
+}
+
+fn sheaf_gluing_check(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["covers", "agree", "config", "data-dir", "workspace", "json"],
+    )?;
+
+    let covers = parsed
+        .value("covers")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+    let agree = parsed
+        .value("agree")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(true);
+
+    let engine = pandora_runtime::sheaf_context::SheafContextEngine::default();
+    let rep = engine.evaluate_sheaf_gluing(covers, agree);
+
+    let display = format!(
+        "Sheaf-Theoretic Context Gluing Evaluation:\n\
+         Open Context Covers: {}\n\
+         Pairwise Restrictions Agree: {}\n\
+         Unique Global Section Exists: {}\n\
+         Gluing Residual: {:.2e}\n\
+         Theorems: 224 (Sheaf Gluing Axiom on Open Covers)",
+        rep.open_covers_count,
+        rep.pairwise_restrictions_agree,
+        rep.unique_global_section_exists,
+        rep.gluing_residual
+    );
+
+    Ok(success(
+        "cognitive sheaf-gluing-check",
+        json!({
+            "sheaf_gluing": rep,
+            "theorems": [224]
+        }),
+        display,
+    ))
+}
+
+fn cohomology_obstruction(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(args, &["defect", "config", "data-dir", "workspace", "json"])?;
+
+    let defect = parsed
+        .value("defect")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.75);
+
+    let engine = pandora_runtime::sheaf_context::SheafContextEngine::default();
+    let obs = engine.audit_cohomology_obstruction(defect);
+    let rep = engine.repair_minimal_cocycle(defect);
+
+    let display = format!(
+        "Čech Cohomology Obstruction & Minimal Cocycle Repair:\n\
+         Initial Cocycle Defect: {:.4}\n\
+         First Cohomology Rank H^1: {}\n\
+         Context Contradiction Detected: {}\n\
+         Repaired Cohomology Rank: {}\n\
+         Context Successfully Repaired: {}\n\
+         Theorems: 225 (First Čech Cohomology Obstruction), 226 (Cohomology Vanishing via Repair)",
+        obs.cech_1_cocycle_defect,
+        obs.first_cohomology_rank,
+        obs.context_contradiction_detected,
+        rep.final_cech_cohomology_rank,
+        rep.context_repaired
+    );
+
+    Ok(success(
+        "cognitive cohomology-obstruction",
+        json!({
+            "obstruction": obs,
+            "repair": rep,
+            "theorems": [225, 226]
         }),
         display,
     ))

@@ -127,6 +127,11 @@ impl CognitiveSubsystem {
         crate::information_geometry::InformationGeometryEngine::default()
     }
 
+    /// Access the Sheaf-Theoretic Context Consistency & Cohomology Obstruction engine (Theorems 224–226).
+    pub fn sheaf_context(&self) -> crate::sheaf_context::SheafContextEngine {
+        crate::sheaf_context::SheafContextEngine::default()
+    }
+
     /// Returns high-level operational status of the Cognitive Subsystem.
     pub fn status(&mut self) -> CognitiveSubsystemStatus {
         let draft = vec![0.8, 0.7, 0.6, 0.9];
@@ -147,7 +152,8 @@ impl CognitiveSubsystem {
             theorems_enforced: vec![
                 1, 2, 3, 9, 10, 68, 69, 70, 80, 81, 82, 89, 90, 91, 116, 117, 118, 125, 126, 127,
                 134, 135, 136, 143, 144, 145, 152, 153, 154, 161, 162, 163, 170, 171, 172, 179,
-                180, 181, 188, 189, 190, 197, 198, 199, 206, 207, 208, 215, 216, 217,
+                180, 181, 188, 189, 190, 197, 198, 199, 206, 207, 208, 215, 216, 217, 224, 225,
+                226,
             ],
         }
     }

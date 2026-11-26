@@ -101,8 +101,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "thermal-hall-audit" => thermal_hall_audit(&args[1..]),
         "moire-flat-band" => moire_flat_band(&args[1..]),
         "superfluid-weight-audit" => superfluid_weight_audit(&args[1..]),
+        "betti-numbers" => betti_numbers(&args[1..]),
+        "spectral-cheeger-audit" => spectral_cheeger_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit, anyon-interfere, thermal-hall-audit, moire-flat-band, superfluid-weight-audit, betti-numbers, spectral-cheeger-audit"
         ))),
     }
 }
@@ -2117,6 +2119,76 @@ fn superfluid_weight_audit(args: &[String]) -> Result<CommandResult, CliError> {
         json!({
             "superfluid": rep,
             "theorems": [211]
+        }),
+        text,
+    ))
+}
+
+fn betti_numbers(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "json", "nodes", "radius"],
+    )?;
+
+    let nodes = parsed
+        .value("nodes")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
+    let radius = parsed
+        .value("radius")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.2);
+
+    let engine = pandora_runtime::simplicial_homology::SimplicialHomologyEngine::default();
+    let rep = engine.compute_betti_numbers(nodes, radius);
+
+    let text = format!(
+        "Simplicial Swarm Homology & Persistent Betti Numbers:\n  Nodes: {}\n  Radius: {:.2}\n  Betti 0 (Components): {}\n  Betti 1 (Holes): {}\n  Connected Consensus: {}\n  Theorems: 218 (Čech Approximation), 219 (Persistent Betti Invariant)",
+        rep.num_nodes,
+        rep.communication_radius,
+        rep.betti_0,
+        rep.betti_1,
+        rep.is_connected_consensus
+    );
+
+    Ok(success(
+        "swarm betti-numbers",
+        json!({
+            "betti_report": rep,
+            "theorems": [218, 219]
+        }),
+        text,
+    ))
+}
+
+fn spectral_cheeger_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &["config", "data-dir", "workspace", "json", "lambda2"],
+    )?;
+
+    let lambda2 = parsed
+        .value("lambda2")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.35);
+
+    let engine = pandora_runtime::simplicial_homology::SimplicialHomologyEngine::default();
+    let rep = engine.audit_spectral_cheeger(lambda2);
+
+    let text = format!(
+        "Spectral Expander Gap & Cheeger Conductance Audit:\n  Laplacian Eigenvalue Lambda_2: {:.4}\n  Cheeger Conductance Lower Bound: {:.4}\n  Gossip Mixing Time Bound: {:.2} steps\n  Spectral Gap Certified: {}\n  Theorem 220 Enforced: {}",
+        rep.laplacian_eigenvalue_lambda2,
+        rep.cheeger_conductance_lower_bound,
+        rep.gossip_mixing_time_upper_bound,
+        rep.spectral_gap_certified,
+        rep.theorem_220_cheeger_bound_verified
+    );
+
+    Ok(success(
+        "swarm spectral-cheeger-audit",
+        json!({
+            "spectral_report": rep,
+            "theorems": [220]
         }),
         text,
     ))

@@ -321,8 +321,8 @@ fn test_subsystems_cockpit_web_routes_and_olympus_overview() {
     // 6. Olympus Overview
     let (code, overview) = query_http(port, "/api/olympus/overview");
     assert_eq!(code, 200);
-    assert_eq!(overview["architecture_version"], "4.1.7");
-    assert_eq!(overview["total_theorems_enforced"], 217);
+    assert_eq!(overview["architecture_version"], "4.1.8");
+    assert_eq!(overview["total_theorems_enforced"], 226);
     assert_eq!(overview["codename"], "THANATOS");
     assert_eq!(overview["cognitive"]["status"], "ready");
     assert_eq!(overview["governance"]["status"], "ready");

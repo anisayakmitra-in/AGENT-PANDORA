@@ -51,8 +51,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "fe-security-audit" => fe_security_audit(&args[1..]),
         "io-obfuscate" => io_obfuscate(&args[1..]),
         "io-punctured-audit" => io_punctured_audit(&args[1..]),
+        "linear-token-eval" => linear_token_eval(&args[1..]),
+        "non-interference-audit" => non_interference_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh', 'fe-inner-product', 'fe-security-audit', 'io-obfuscate', 'io-punctured-audit', 'linear-token-eval', 'non-interference-audit'"
         ))),
     }
 }
@@ -1264,6 +1266,104 @@ fn io_punctured_audit(args: &[String]) -> Result<CommandResult, CliError> {
             "punctured_prf": rep,
             "soundness": soundness,
             "theorems": [213, 214]
+        }),
+        display,
+    ))
+}
+
+fn linear_token_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "token-id",
+            "operations",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let token_id = parsed.value("token-id").unwrap_or("lin_cap_tok_001");
+    let operations = parsed
+        .value("operations")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+
+    let engine = pandora_runtime::linear_capability::LinearCapabilityEngine::default();
+    let rep = engine.evaluate_token_linearity(token_id, operations);
+
+    let display = format!(
+        "Linear Logic Capability Token Evaluation:\n\
+         Token ID: {}\n\
+         Operations Executed: {}\n\
+         Duplication Attempts Rejected: {}\n\
+         Zero Capability Leakage: {}\n\
+         Theorems: 221 (Linear Resource Soundness)",
+        rep.token_id,
+        rep.operations_executed,
+        rep.duplication_attempts_rejected,
+        rep.zero_leakage_certified
+    );
+
+    Ok(success(
+        "crypto linear-token-eval",
+        json!({
+            "linear_token": rep,
+            "theorems": [221]
+        }),
+        display,
+    ))
+}
+
+fn non_interference_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "high-domain",
+            "low-domain",
+            "allocated",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let high = parsed.value("high-domain").unwrap_or("top_secret_enclave");
+    let low = parsed.value("low-domain").unwrap_or("public_observer");
+    let allocated = parsed
+        .value("allocated")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+
+    let engine = pandora_runtime::linear_capability::LinearCapabilityEngine::default();
+    let rep = engine.audit_non_interference(high, low);
+    let recl = engine.evaluate_affine_reclamation(allocated);
+
+    let display = format!(
+        "Non-Interference & Affine Reclamation Audit:\n\
+         High Security Domain: {}\n\
+         Low Security Domain: {}\n\
+         Covert Channel Bandwidth: {:.2} bits\n\
+         Bisimulation Equivalence Holds: {}\n\
+         Reclaimed Tokens Count: {}\n\
+         Deadlock-Free Progress: {}\n\
+         Theorems: 222 (Non-Interference Confinement), 223 (Affine Memory Reclamation)",
+        rep.high_security_domain,
+        rep.low_security_domain,
+        rep.covert_channel_bandwidth_bits,
+        rep.bisimulation_equivalence_holds,
+        recl.reclaimed_tokens_count,
+        recl.deadlock_free_progress
+    );
+
+    Ok(success(
+        "crypto non-interference-audit",
+        json!({
+            "non_interference": rep,
+            "affine_reclamation": recl,
+            "theorems": [222, 223]
         }),
         display,
     ))

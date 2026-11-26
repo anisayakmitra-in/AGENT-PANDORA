@@ -137,6 +137,11 @@ impl CryptoSubsystem {
         crate::indistinguishability_obfuscation::IndistinguishabilityObfuscationEngine::default()
     }
 
+    /// Access the Linear Logic Capability Monads & Non-Interference engine (Theorems 221–223).
+    pub fn linear_capability(&self) -> crate::linear_capability::LinearCapabilityEngine {
+        crate::linear_capability::LinearCapabilityEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -152,7 +157,7 @@ impl CryptoSubsystem {
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
                 132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160, 167, 168, 169, 176, 177,
-                178, 185, 186, 187, 194, 195, 196, 203, 204, 205, 212, 213, 214,
+                178, 185, 186, 187, 194, 195, 196, 203, 204, 205, 212, 213, 214, 221, 222, 223,
             ],
         }
     }

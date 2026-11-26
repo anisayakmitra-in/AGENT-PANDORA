@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, and `v4.1.7`. The active release identity
-is `v4.1.7`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, `v4.1.5`, `v4.1.6`, `v4.1.7`, and `v4.1.8`. The active release identity
+is `v4.1.8`.
 
 ## Source-bound release scope
 
@@ -33,6 +33,15 @@ Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
 
+
+## v4.1.8
+
+This release delivers Phases 82–84 of the architectural roadmap under codename **THANATOS**:
+- **Phase 82: Simplicial Complex Swarm Homology & Persistent Topology** (`simplicial_homology.rs`, Theorems 218–220, Betti number invariance $\beta_k = \dim H_k(X)$ under simplicial homeomorphisms, Vietoris-Rips nerve homotopy equivalence $\|VR(X, r)\| \simeq X$, and spectral Cheeger conductance gap $\frac{h^2}{2} \le \lambda_2(\mathcal{L}) \le 2h$, CLI `pandora swarm betti-numbers|spectral-cheeger-audit`, REST `/api/swarm/simplicial-homology`).
+- **Phase 83: Linear Logic Capability Monads & Non-Interference** (`linear_capability.rs`, Theorems 221–223, linear token conservation with zero-duplication guarantee $\forall t \in \text{Tokens}: \sum \text{eval}(t) \le 1$, information-flow non-interference $\forall s, s': s \sim_L s' \implies \text{eval}(s) \sim_L \text{eval}(s')$, and affine capability reclamation $\text{res} \multimap \mathbf{1}$, CLI `pandora crypto linear-token-eval|non-interference-audit`, REST `/api/crypto/linear-capability`).
+- **Phase 84: Sheaf-Theoretic Context Consistency & Cohomology Obstruction** (`sheaf_context.rs`, Theorems 224–226, sheaf gluing axiom $\mathcal{F}(U \cup V) \cong \mathcal{F}(U) \times_{\mathcal{F}(U \cap V)} \mathcal{F}(V)$, Čech cohomology obstruction sound classification $\check{H}^1(\mathcal{U}, \mathcal{F}) = 0 \iff$ global consistency, and minimal cocycle repair distance bounded by cocycle defect norm, CLI `pandora cognitive sheaf-gluing-check|cohomology-obstruction`, REST `/api/cognitive/sheaf-context`).
+- **Tripartite Governance & Centennial Suite**: Expanded constitutional permits to `(1..=226)`, updated Parliament assertions to 226 theorems, and machine-checked Lean 4 & Coq formal proofs for Theorems 218, 221, 224.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/simplicial-homology`, `/api/crypto/linear-capability`, `/api/cognitive/sheaf-context`, and updated `/api/cockpit/overview` (`architecture_version: "4.1.8"`, `codename: "THANATOS"`, `total_theorems_enforced: 226`).
 
 ## v4.1.7
 
