@@ -48,7 +48,7 @@ impl OlympusSystemOverview {
         let formal = FormalProofEngine::new().verify_centennial_suite(ProofDialect::Lean4);
 
         Self {
-            architecture_version: "4.1.4".to_string(),
+            architecture_version: "4.1.5".to_string(),
             codename: "THANATOS".to_string(),
             cognitive: cog.status(),
             governance: gov.status(),
@@ -56,7 +56,7 @@ impl OlympusSystemOverview {
             swarm: swm.status(),
             memory: mem.status(),
             formal_verification: formal,
-            total_theorems_enforced: 190,
+            total_theorems_enforced: 199,
         }
     }
 }

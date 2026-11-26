@@ -95,8 +95,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "parity-audit" => parity_audit(&args[1..]),
         "pt-spectrum-eval" => pt_spectrum_eval(&args[1..]),
         "exceptional-audit" => exceptional_audit(&args[1..]),
+        "hoti-quadrupole-eval" => hoti_quadrupole_eval(&args[1..]),
+        "corner-state-audit" => corner_state_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit"
+            "unknown swarm command '{unknown}'. Available subcommands: connect, status, propose, vote, sync-gradients, pipeline, bft, crdt, gossip, secret-share, mpc-eval, mesh, cross-commit, anneal, qubo-schedule, qec-syndrome, qec-decode, magic-distill, magic-state-audit, anyon-braid, anyon-fuse, tqft-knot, tqft-entropy, berry-curvature, quantum-metric, anyonic-braid, syndrome-fusion, majorana-braid, parity-audit, pt-spectrum-eval, exceptional-audit, hoti-quadrupole-eval, corner-state-audit"
         ))),
     }
 }
@@ -1800,6 +1802,124 @@ fn exceptional_audit(args: &[String]) -> Result<CommandResult, CliError> {
             "exceptional_point": ep,
             "skin_effect": skin,
             "theorems": [183, 184]
+        }),
+        text,
+    ))
+}
+
+fn hoti_quadrupole_eval(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "intracell",
+            "intercell",
+            "tx",
+            "ty",
+            "lx",
+            "ly",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "format",
+            "out",
+            "verbose",
+        ],
+    )?;
+
+    let tx = parsed
+        .value("tx")
+        .or_else(|| parsed.value("intracell"))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let ty = parsed
+        .value("ty")
+        .or_else(|| parsed.value("intracell"))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let lx = parsed
+        .value("lx")
+        .or_else(|| parsed.value("intercell"))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+    let ly = parsed
+        .value("ly")
+        .or_else(|| parsed.value("intercell"))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.5);
+
+    let engine = pandora_runtime::higher_order_topology::HigherOrderTopologyEngine::default();
+    let rep = engine.evaluate_quadrupole(tx, ty, lx, ly);
+
+    let text = format!(
+        "Higher-Order Topological Insulator Quadrupole Evaluation:\n  Intracell Hopping (tx, ty): ({:.2}, {:.2})\n  Intercell Hopping (lx, ly): ({:.2}, {:.2})\n  Bulk Band Gap: {:.4}\n  Quantized Quadrupole Moment qxy: {:.2}\n  Topological Phase: {}\n  Reflection Anticommutation Verified: {}\n  Theorem 191 Enforced: {}",
+        rep.intracell_tx,
+        rep.intracell_ty,
+        rep.intercell_lx,
+        rep.intercell_ly,
+        rep.bulk_gap,
+        rep.quantized_quadrupole_qxy,
+        rep.is_topological_phase,
+        rep.reflection_anticommutation_verified,
+        rep.theorem_191_quadrupole_verified
+    );
+
+    Ok(success(
+        "swarm hoti-quadrupole-eval",
+        json!({
+            "quadrupole": rep,
+            "theorems": [191]
+        }),
+        text,
+    ))
+}
+
+fn corner_state_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "grid-size",
+            "grid",
+            "disorder",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+            "format",
+            "out",
+            "verbose",
+        ],
+    )?;
+
+    let grid_size = parsed
+        .value("grid-size")
+        .or_else(|| parsed.value("grid"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
+    let disorder = parsed
+        .value("disorder")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.2);
+
+    let engine = pandora_runtime::higher_order_topology::HigherOrderTopologyEngine::default();
+    let audit = engine.audit_corner_states(grid_size, disorder);
+
+    let text = format!(
+        "HOTI Corner Zero-Mode Degeneracy & Chiral Robustness Audit:\n  Grid Dimension: {}x{}\n  Total Lattice Sites: {}\n  Zero Modes Detected: {}\n  Corner Localization Ratio: {:.2}%\n  Localization Length xi: {:.3}\n  Max Corner Energy Deviation: {:.2e}\n  Theorems: 192 (Corner Modes), 193 (Chiral Robustness)",
+        audit.grid_dimension,
+        audit.grid_dimension,
+        audit.total_sites,
+        audit.num_zero_modes,
+        audit.corner_localization_ratio * 100.0,
+        audit.localization_length_xi,
+        audit.max_corner_energy_deviation
+    );
+
+    Ok(success(
+        "swarm corner-state-audit",
+        json!({
+            "corner_state_audit": audit,
+            "theorems": [192, 193]
         }),
         text,
     ))

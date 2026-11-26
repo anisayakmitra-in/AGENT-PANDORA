@@ -15,8 +15,8 @@ recommended install targets.
 
 The canonical published prerelease tags for this line are `v2.0.0-alpha.1`
 through `v2.0.0-alpha.6`, followed by `v2.0.0-beta.1` through `v2.0.0-beta.10`,
-and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, and `v4.1.4`. The active release identity
-is `v4.1.4`.
+and the stable releases `v2.0.0`, `v3.0.0`, `v3.0.1`, `v3.0.2`, `v3.0.3`, `v3.0.4`, `v3.0.5`, `v3.0.6`, `v3.0.7`, `v3.0.8`, `v3.0.9`, `v3.0.10`, `v3.1.0`, `v3.1.1`, `v3.1.2`, `v3.1.3`, `v3.1.4`, `v3.1.5`, `v4.0.0`, `v4.0.1`, `v4.0.2`, `v4.0.3`, `v4.0.4`, `v4.0.5`, `v4.0.6`, `v4.0.7`, `v4.0.8`, `v4.0.9`, `v4.0.10`, `v4.1.0`, `v4.1.1`, `v4.1.2`, `v4.1.3`, `v4.1.4`, and `v4.1.5`. The active release identity
+is `v4.1.5`.
 
 ## Source-bound release scope
 
@@ -32,6 +32,16 @@ other value.
 Release-candidate and stable use the same `cli-only` boundary as alpha and beta.
 No release channel requires a platform signature: binaries are not
 Authenticode- or codesign-signed and are not notarized.
+
+
+## v4.1.5
+
+This release delivers Phases 73–75 of the architectural roadmap under codename **THANATOS**:
+- **Phase 73: Higher-Order Topological Insulators (HOTI) & Corner-State Swarm Localization** (`higher_order_topology.rs`, Theorems 191–193, quantized bulk quadrupole moment $q_{xy} = 1/2 \pmod 1$ protected by anticommuting reflection symmetries $\{M_x, M_y\} = 0$, nested Wannier polarization $\nu_{xy} = 1$ dictating 4 mid-gap corner zero-modes $\psi \sim e^{-x/\xi_x} e^{-y/\xi_y}$, and chiral disorder immunity pinning corner mode eigenvalues at zero, CLI `pandora swarm hoti-quadrupole-eval|corner-state-audit`, REST `/api/swarm/hoti-topology`).
+- **Phase 74: Dynamic Proactive Secret Sharing (DPSS) & Asynchronous Redistribution** (`proactive_secret_redistribution.rs`, Theorems 194–196, Feldman-Pedersen bivariate polynomial redistribution without dealer reconstruction, epoch-based zero-sharing polynomial rotation $H(0) = 0$ breaking cross-epoch mobile adversary collusion, and asynchronous Lagrange interpolation invariance across dynamic committee churn, CLI `pandora crypto dpss-redistribute|proactive-refresh`, REST `/api/crypto/proactive-reshare`).
+- **Phase 75: Nonlinear Koopman Operator Neural Dynamics & Spectral Decomposition** (`koopman_operator.rs`, Theorems 197–199, infinite-dimensional linear semigroup lift $(\mathcal{K}_t g)(x) = g(\Phi_t(x))$ on observable Hilbert space $\mathcal{H}$, Extended Dynamic Mode Decomposition (EDMD) with strong operator convergence $\|K - \mathcal{K}_{\Delta t}\| \le \mathcal{O}(K^{-\alpha} + M^{-1/2})$, and global continuous eigenmode stability certification $\text{Re}(\lambda_j) \le 0$, CLI `pandora cognitive koopman-decompose|spectral-stability-audit`, REST `/api/cognitive/koopman-spectrum`).
+- **Constitutional Governance & Formal Proofs**: Upgraded Parliament and Tripartite Governance to issue `ConstitutionalPermit` validating all **199 Centennial Theorems** (`(1..=199)`). Formal Proof Engine verified in Lean 4 and Coq up to Theorem 199.
+- **Cockpit Web Micro-Server REST Endpoints**: Added `/api/swarm/hoti-topology`, `/api/crypto/proactive-reshare`, `/api/cognitive/koopman-spectrum`, and updated `/api/cockpit/overview` (`architecture_version: "4.1.5"`, `codename: "THANATOS"`, `total_theorems_enforced: 199`).
 
 
 ## v4.1.4

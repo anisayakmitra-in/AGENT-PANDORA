@@ -3387,6 +3387,39 @@ fn handle_connection(
             });
             write_json_response(&mut stream, 200, "OK", &resp)?;
         }
+        ("GET", "/api/swarm/hoti-topology") => {
+            let engine = crate::higher_order_topology::HigherOrderTopologyEngine::default();
+            let quadrupole = engine.evaluate_quadrupole(0.5, 0.5, 1.5, 1.5);
+            let corner_states = engine.audit_corner_states(8, 0.2);
+            let resp = serde_json::json!({
+                "quadrupole": quadrupole,
+                "corner_states": corner_states,
+                "theorems_enforced": [191, 192, 193]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/crypto/proactive-reshare") => {
+            let engine = crate::proactive_secret_redistribution::ProactiveSecretRedistributionEngine::default();
+            let redistribution = engine.redistribute_secret(424242, 4, 2, 7, 3);
+            let epochs = engine.simulate_epoch_rotations(424242, 5, 5, 2);
+            let resp = serde_json::json!({
+                "redistribution": redistribution,
+                "epoch_rotations": epochs,
+                "theorems_enforced": [194, 195, 196]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
+        ("GET", "/api/cognitive/koopman-spectrum") => {
+            let engine = crate::koopman_operator::KoopmanOperatorEngine::default();
+            let decomposition = engine.decompose_dynamics(4, 100, 16);
+            let stability = engine.audit_spectral_stability(6, 0.15);
+            let resp = serde_json::json!({
+                "koopman_decomposition": decomposition,
+                "spectral_stability": stability,
+                "theorems_enforced": [197, 198, 199]
+            });
+            write_json_response(&mut stream, 200, "OK", &resp)?;
+        }
         ("GET", "/api/events") | ("GET", "/events") => {
             let headers = "HTTP/1.1 200 OK\r\nServer: pandora-cockpit-web/3.0.10\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache, no-transform\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nX-Accel-Buffering: no\r\n\r\n";
             stream.write_all(headers.as_bytes())?;

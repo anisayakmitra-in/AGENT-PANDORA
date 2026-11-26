@@ -41,8 +41,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "free-energy-audit" => free_energy_audit(&args[1..]),
         "hamiltonian-eval" => hamiltonian_eval(&args[1..]),
         "casimir-audit" => casimir_audit(&args[1..]),
+        "koopman-decompose" => koopman_decompose(&args[1..]),
+        "spectral-stability-audit" => spectral_stability_audit(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit'"
+            "unknown cognitive subcommand '{unknown}'. Available: 'status', 'speculate', 'synthesize', 'audit', 'do-calculus', 'counterfactual', 'vcg-auction', 'shapley-credit', 'mckean-vlasov', 'swarm-hjb', 'jump-diffuse', 'hjb-ide-control', 'symplectic-step', 'energy-audit', 'mfg-master-solve', 'lions-derivative', 'jump-simulate', 'generator-audit', 'jarzynski-eval', 'free-energy-audit', 'hamiltonian-eval', 'casimir-audit', 'koopman-decompose', 'spectral-stability-audit'"
         ))),
     }
 }
@@ -966,6 +968,118 @@ fn casimir_audit(args: &[String]) -> Result<CommandResult, CliError> {
             "casimir_invariants": casimir,
             "consensus": consensus,
             "theorems": [189, 190]
+        }),
+        display,
+    ))
+}
+
+fn koopman_decompose(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "dimension",
+            "dim",
+            "snapshots",
+            "dictionary-size",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let dimension = parsed
+        .value("dimension")
+        .or_else(|| parsed.value("dim"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+    let snapshots = parsed
+        .value("snapshots")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+    let dictionary_size = parsed
+        .value("dictionary-size")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16);
+
+    let engine = pandora_runtime::koopman_operator::KoopmanOperatorEngine::default();
+    let rep = engine.decompose_dynamics(dimension, snapshots, dictionary_size);
+
+    let display = format!(
+        "Nonlinear Koopman Operator Decomposition (EDMD):\n\
+         State Dimension: {}\n\
+         Observable Dictionary Size: {}\n\
+         Snapshot Count: {}\n\
+         EDMD Residual Norm: {:.6}\n\
+         Operator Norm Bound: {:.4}\n\
+         Linearity Defect: {:.2e}\n\
+         Theorems: 197 (Linear Semigroup Lift: {}), 198 (EDMD Convergence: {})",
+        rep.state_dimension,
+        rep.dictionary_size,
+        rep.snapshot_count,
+        rep.edmd_residual_norm,
+        rep.operator_norm_bound,
+        rep.linearity_defect,
+        rep.theorem_197_linear_lift_verified,
+        rep.theorem_198_edmd_convergence_verified
+    );
+
+    Ok(success(
+        "cognitive koopman-decompose",
+        json!({
+            "decomposition": rep,
+            "theorems": [197, 198]
+        }),
+        display,
+    ))
+}
+
+fn spectral_stability_audit(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "modes",
+            "damping",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let modes = parsed
+        .value("modes")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(6);
+    let damping = parsed
+        .value("damping")
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(0.15);
+
+    let engine = pandora_runtime::koopman_operator::KoopmanOperatorEngine::default();
+    let rep = engine.audit_spectral_stability(modes, damping);
+
+    let display = format!(
+        "Koopman Spectral Stability & Eigenmode Audit:\n\
+         Active Modes: {}\n\
+         Max Real Eigenvalue Re(lambda_max): {:.6}\n\
+         Spectral Radius: {:.4}\n\
+         Globally Asymptotically Stable: {}\n\
+         Forecast Horizon Steps: {}\n\
+         Theorem 199 (Spectral Stability) Enforced: {}",
+        rep.num_modes,
+        rep.max_real_eigenvalue,
+        rep.spectral_radius,
+        rep.is_globally_stable,
+        rep.forecast_horizon_steps,
+        rep.theorem_199_spectral_stability_verified
+    );
+
+    Ok(success(
+        "cognitive spectral-stability-audit",
+        json!({
+            "spectral_stability": rep,
+            "theorems": [199]
         }),
         display,
     ))

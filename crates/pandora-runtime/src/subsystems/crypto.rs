@@ -116,6 +116,13 @@ impl CryptoSubsystem {
         crate::quantum_mip::QuantumMipEngine::default()
     }
 
+    /// Access the Dynamic Proactive Secret Sharing (DPSS) & Redistribution engine (Theorems 194–196).
+    pub fn proactive_secret_redistribution(
+        &self,
+    ) -> crate::proactive_secret_redistribution::ProactiveSecretRedistributionEngine {
+        crate::proactive_secret_redistribution::ProactiveSecretRedistributionEngine::default()
+    }
+
     /// Returns high-level operational status of the Crypto Subsystem.
     pub fn status(&self) -> CryptoSubsystemStatus {
         let mpc_rep = self.mpc.audit(133742, 3, 5);
@@ -131,7 +138,7 @@ impl CryptoSubsystem {
             theorems_enforced: vec![
                 48, 49, 77, 78, 79, 83, 84, 85, 101, 102, 103, 113, 114, 115, 122, 123, 124, 131,
                 132, 133, 140, 141, 142, 149, 150, 151, 158, 159, 160, 167, 168, 169, 176, 177,
-                178, 185, 186, 187,
+                178, 185, 186, 187, 194, 195, 196,
             ],
         }
     }

@@ -45,8 +45,10 @@ pub fn execute(args: &[String]) -> Result<CommandResult, CliError> {
         "vdf-verify" => vdf_verify(&args[1..]),
         "chsh-evaluate" => chsh_evaluate(&args[1..]),
         "mip-verify" => mip_verify(&args[1..]),
+        "dpss-redistribute" => dpss_redistribute(&args[1..]),
+        "proactive-refresh" => proactive_refresh(&args[1..]),
         unknown => Err(CliError::usage(format!(
-            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify'"
+            "unknown crypto subcommand '{unknown}'. Available: 'status', 'pq-sign', 'mpc-eval', 'zk-rollup', 'zk-verify', 'fed-aggregate', 'fed-verify', 'kzg-commit', 'kzg-verify', 'ckks-encrypt', 'ckks-rescale', 'tfhe-keygen', 'tfhe-partial-decrypt', 'fe-keygen', 'fe-decrypt', 'blind-ot', 'mpc-multiply', 'lattice-prove', 'lattice-verify', 'vdf-evaluate', 'vdf-verify', 'chsh-evaluate', 'mip-verify', 'dpss-redistribute', 'proactive-refresh'"
         ))),
     }
 }
@@ -902,6 +904,141 @@ fn mip_verify(args: &[String]) -> Result<CommandResult, CliError> {
             "relativistic_mip": mip,
             "rigidity": rigidity,
             "theorems": [186, 187]
+        }),
+        display,
+    ))
+}
+
+fn dpss_redistribute(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "secret",
+            "old-nodes",
+            "old-threshold",
+            "new-nodes",
+            "new-threshold",
+            "threshold",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let secret = parsed
+        .value("secret")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(424242);
+    let old_nodes = parsed
+        .value("old-nodes")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(4);
+    let old_threshold = parsed
+        .value("old-threshold")
+        .or_else(|| parsed.value("threshold"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+    let new_nodes = parsed
+        .value("new-nodes")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(7);
+    let new_threshold = parsed
+        .value("new-threshold")
+        .or_else(|| parsed.value("threshold"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3);
+
+    let engine = pandora_runtime::proactive_secret_redistribution::ProactiveSecretRedistributionEngine::default();
+    let rep =
+        engine.redistribute_secret(secret, old_nodes, old_threshold, new_nodes, new_threshold);
+
+    let display = format!(
+        "DPSS Bivariate Polynomial Share Redistribution:\n\
+         Old Committee: {} nodes (threshold {})\n\
+         New Committee: {} nodes (threshold {})\n\
+         Total Bivariate Sub-Shares: {}\n\
+         Reconstructed Secret: {}\n\
+         Secret Invariance Preserved: {}\n\
+         Zero-Knowledge Pedersen Verified: {}\n\
+         Theorem 194 (Bivariate Resharing) Enforced: {}",
+        rep.old_committee_size,
+        rep.old_threshold,
+        rep.new_committee_size,
+        rep.new_threshold,
+        rep.bivariate_subshares_count,
+        rep.reconstructed_secret,
+        rep.secret_invariant_verified,
+        rep.zero_knowledge_pedersen_verified,
+        rep.theorem_194_bivariate_reshare_verified
+    );
+
+    Ok(success(
+        "crypto dpss-redistribute",
+        json!({
+            "redistribution": rep,
+            "theorems": [194]
+        }),
+        display,
+    ))
+}
+
+fn proactive_refresh(args: &[String]) -> Result<CommandResult, CliError> {
+    let parsed = parse_options(
+        args,
+        &[
+            "secret",
+            "epochs",
+            "nodes",
+            "threshold",
+            "config",
+            "data-dir",
+            "workspace",
+            "json",
+        ],
+    )?;
+
+    let secret = parsed
+        .value("secret")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(9998887);
+    let epochs = parsed
+        .value("epochs")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5);
+    let nodes = parsed
+        .value("nodes")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5);
+    let threshold = parsed
+        .value("threshold")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(2);
+
+    let engine = pandora_runtime::proactive_secret_redistribution::ProactiveSecretRedistributionEngine::default();
+    let rep = engine.simulate_epoch_rotations(secret, epochs, nodes, threshold);
+
+    let display = format!(
+        "Proactive Secret Sharing Epoch Rotation & Anti-Mobile Adversary Audit:\n\
+         Epoch Window: {} -> {}\n\
+         Total Rotations: {}\n\
+         Active Committee Threshold: {}\n\
+         Secret Preservation Fidelity: {:.4}\n\
+         Mobile Adversary Immunity: {}\n\
+         Theorems: 195 (Epoch Security), 196 (Async Reconstruction)",
+        rep.initial_epoch,
+        rep.target_epoch,
+        rep.total_rotations,
+        rep.active_threshold,
+        rep.secret_preservation_fidelity,
+        rep.mobile_adversary_immunity_certified
+    );
+
+    Ok(success(
+        "crypto proactive-refresh",
+        json!({
+            "epoch_rotation": rep,
+            "theorems": [195, 196]
         }),
         display,
     ))
